@@ -1,201 +1,129 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useRef } from "react";
+import Link from "next/link";
+import { io } from "socket.io-client";
+import { GLOTConnection } from "@/lib/webrtc";
+
+const ROOM_ID = "glot-demo";
 
 export default function CallPage() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const glotRef = useRef<GLOTConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: false,
-        });
+    const socket = io("http://localhost:3001");
+    const glot = new GLOTConnection();
+    glotRef.current = glot;
+    const pc = glot.getConnection();
+    let remoteUserId: string | null = null;
 
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-      } catch (error) {
-        console.error("No se pudo acceder a la cámara:", error);
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
       }
+    };
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && remoteUserId) {
+        socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
+      }
+    };
+
+    async function start() {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+      glot.addLocalStream(stream);
+      socket.emit("join-room", ROOM_ID);
     }
 
-    startCamera();
+    socket.on("user-joined", async (userId: string) => {
+      remoteUserId = userId;
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { to: userId, offer });
+    });
+
+    socket.on("offer", async ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
+      remoteUserId = from;
+      await pc.setRemoteDescription(offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit("answer", { to: from, answer });
+    });
+
+    socket.on("answer", async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
+      await pc.setRemoteDescription(answer);
+    });
+
+    socket.on("ice-candidate", async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+      await pc.addIceCandidate(candidate);
+    });
+
+    start();
 
     return () => {
-      if (localVideoRef.current?.srcObject) {
-        const stream = localVideoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      glot.close();
+      socket.disconnect();
     };
   }, []);
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-950 text-white">
-
-      {/* Navbar */}
       <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-
-        {/* Branding */}
-        <Link
-          href="/"
-          className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-        >
-          {/* Logo AZUL original */}
-          <img
-            src="/LOGO GLOT BLUE.png"
-            alt="GLOT"
-            className="h-10 w-auto"
-          />
-
-          {/* Texto BLANCO */}
-          <span className="text-3xl font-bold tracking-tight text-white">
-            GLOT
-          </span>
+        <Link href="/" className="hover:opacity-80 transition-opacity">
+          <img src="/LOGO GLOT BLUE.png" alt="GLOT" className="h-8 w-auto" />
         </Link>
-
-        {/* Estado */}
         <div className="flex items-center gap-3">
-
-          <span className="text-sm text-gray-400">
-            Sala:
-          </span>
-
-          <span className="text-sm font-mono bg-gray-800 px-3 py-1 rounded-lg text-gray-200">
-            glot-demo
-          </span>
-
+          <span className="text-sm text-gray-400">Sala:</span>
+          <span className="text-sm font-mono bg-gray-800 px-3 py-1 rounded-lg text-gray-200">{ROOM_ID}</span>
           <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-
-          <span className="text-xs text-green-400">
-            En línea
-          </span>
-
+          <span className="text-xs text-green-400">En linea</span>
         </div>
       </nav>
-
-      {/* Área principal */}
       <main className="flex flex-col flex-1 items-center justify-center gap-6 p-6">
-
-        {/* Paneles de vídeo */}
         <div className="flex gap-4 w-full max-w-5xl">
-
-          {/* Tu cámara */}
-          <div className="flex-1 aspect-video bg-gray-900 rounded-3xl overflow-hidden relative border border-gray-800 shadow-2xl">
-
-            <video
-              ref={localVideoRef}
-              autoPlay
-              muted
-              playsInline
-              className="w-full h-full object-cover"
-            />
-
-            <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-sm flex items-center gap-2">
-
+          <div className="flex-1 aspect-video bg-gray-900 rounded-2xl overflow-hidden relative shadow-lg">
+            <video ref={localVideoRef} autoPlay muted playsInline className="w-full h-full object-cover" />
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-xl">
               <div className="w-2 h-2 rounded-full bg-green-400" />
-
-              Tú
-
+              <span className="text-xs font-medium text-white">Tu</span>
             </div>
           </div>
-
-          {/* Participante fake */}
-          <div className="flex-1 aspect-video bg-gray-900 rounded-3xl border border-gray-800 flex flex-col items-center justify-center relative shadow-2xl">
-
-            <div className="w-16 h-16 rounded-full bg-blue-950 flex items-center justify-center text-3xl text-gray-400 mb-4">
-              👤
-            </div>
-
-            <p className="text-gray-500">
-              Esperando participante...
-            </p>
-
-            <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-sm">
-              Participante
+          <div className="flex-1 aspect-video bg-gray-900 rounded-2xl overflow-hidden relative shadow-lg">
+            <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
+            <div className="absolute bottom-3 left-3 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-3 py-1.5 rounded-xl">
+              <div className="w-2 h-2 rounded-full bg-gray-500" />
+              <span className="text-xs font-medium text-gray-400">Participante</span>
             </div>
           </div>
         </div>
-
-        {/* Subtítulos */}
-        <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-3xl p-6 shadow-xl">
-
-          <div className="flex items-center justify-between mb-4">
-
-            <h3 className="text-lg font-semibold text-gray-200">
-              Subtítulos
-            </h3>
-
-            <span className="text-xs text-gray-500">
-              Traducción en tiempo real
-            </span>
-
-          </div>
-
-          <div className="bg-black/30 rounded-2xl p-4 min-h-[80px] flex items-center">
-
-            <p className="text-gray-500 italic">
-              Los subtítulos aparecerán aquí cuando empiece la llamada...
-            </p>
-
-          </div>
+        <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 min-h-20 flex flex-col gap-1 shadow-lg">
+          <span className="text-xs text-gray-600 font-medium uppercase tracking-widest">Subtitulos</span>
+          <p className="text-gray-500 text-sm italic">Los subtitulos apareceran aqui cuando empiece la llamada...</p>
         </div>
-
-        {/* Controles */}
-        <div className="flex items-center gap-4 bg-gray-900 border border-gray-800 px-6 py-4 rounded-3xl shadow-2xl">
-
-          <button className="flex flex-col items-center gap-2 bg-gray-800 hover:bg-gray-700 transition-colors px-6 py-4 rounded-2xl min-w-[90px]">
-
-            <span className="text-2xl">
-              🎤
-            </span>
-
-            <span className="text-sm text-gray-300">
-              Micrófono
-            </span>
-
+        <div className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 shadow-lg">
+          <button className="flex flex-col items-center gap-1 bg-gray-800 hover:bg-gray-700 transition-colors px-5 py-3 rounded-xl">
+            <span className="text-lg">🎤</span>
+            <span className="text-xs text-gray-400">Microfono</span>
           </button>
-
-          <button className="flex flex-col items-center gap-2 bg-gray-800 hover:bg-gray-700 transition-colors px-6 py-4 rounded-2xl min-w-[90px]">
-
-            <span className="text-2xl">
-              📷
-            </span>
-
-            <span className="text-sm text-gray-300">
-              Cámara
-            </span>
-
+          <button className="flex flex-col items-center gap-1 bg-gray-800 hover:bg-gray-700 transition-colors px-5 py-3 rounded-xl">
+            <span className="text-lg">📷</span>
+            <span className="text-xs text-gray-400">Camara</span>
           </button>
-
-          <button className="flex flex-col items-center gap-2 bg-gray-800 hover:bg-gray-700 transition-colors px-6 py-4 rounded-2xl min-w-[90px]">
-
-            <span className="text-2xl">
-              💬
-            </span>
-
-            <span className="text-sm text-gray-300">
-              Subtítulos
-            </span>
-
+          <button className="flex flex-col items-center gap-1 bg-gray-800 hover:bg-gray-700 transition-colors px-5 py-3 rounded-xl">
+            <span className="text-lg">💬</span>
+            <span className="text-xs text-gray-400">Subtitulos</span>
           </button>
-
-          <div className="w-px h-12 bg-gray-700" />
-
-          <button className="flex flex-col items-center gap-2 bg-red-600 hover:bg-red-500 transition-colors px-6 py-4 rounded-2xl min-w-[90px]">
-
-            <span className="text-2xl">
-              🚫
-            </span>
-
-            <span className="text-sm text-white">
-              Colgar
-            </span>
-
+          <div className="w-px h-10 bg-gray-700 mx-1" />
+          <button className="flex flex-col items-center gap-1 bg-red-600 hover:bg-red-500 transition-colors px-5 py-3 rounded-xl">
+            <span className="text-lg">📵</span>
+            <span className="text-xs text-red-200">Colgar</span>
           </button>
-
         </div>
       </main>
     </div>
