@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { io } from "socket.io-client";
 import { GLOTConnection } from "@/lib/webrtc";
@@ -12,6 +12,40 @@ export default function CallPage() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const glotRef = useRef<GLOTConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const [subtitle, setSubtitle] = useState("Los subtitulos apareceran aqui cuando empiece la llamada...");
+  const [listening, setListening] = useState(false);
+
+  function startSpeechRecognition() {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = "es-ES";
+
+    recognition.onresult = (event: any) => {
+      let text = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        text += event.results[i][0].transcript;
+      }
+      setSubtitle(text);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("[GLOT] Speech error:", event.error);
+    };
+
+    recognition.start();
+    recognitionRef.current = recognition;
+    setListening(true);
+  }
+
+  function stopSpeechRecognition() {
+    recognitionRef.current?.stop();
+    setListening(false);
+  }
 
   useEffect(() => {
     const socket = io("http://localhost:3001");
@@ -69,6 +103,7 @@ export default function CallPage() {
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
       glot.close();
       socket.disconnect();
+      stopSpeechRecognition();
     };
   }, []);
 
@@ -103,8 +138,18 @@ export default function CallPage() {
           </div>
         </div>
         <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 min-h-20 flex flex-col gap-1 shadow-lg">
-          <span className="text-xs text-gray-600 font-medium uppercase tracking-widest">Subtitulos</span>
-          <p className="text-gray-500 text-sm italic">Los subtitulos apareceran aqui cuando empiece la llamada...</p>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-600 font-medium uppercase tracking-widest">Subtitulos</span>
+            {listening && (
+              <span className="flex items-center gap-1 text-xs text-green-400">
+                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                Escuchando
+              </span>
+            )}
+          </div>
+          <p className={`text-sm ${listening ? "text-white" : "text-gray-500 italic"}`}>
+            {subtitle}
+          </p>
         </div>
         <div className="flex items-center gap-3 bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 shadow-lg">
           <button className="flex flex-col items-center gap-1 bg-gray-800 hover:bg-gray-700 transition-colors px-5 py-3 rounded-xl">
@@ -115,7 +160,10 @@ export default function CallPage() {
             <span className="text-lg">📷</span>
             <span className="text-xs text-gray-400">Camara</span>
           </button>
-          <button className="flex flex-col items-center gap-1 bg-gray-800 hover:bg-gray-700 transition-colors px-5 py-3 rounded-xl">
+          <button
+            onClick={listening ? stopSpeechRecognition : startSpeechRecognition}
+            className={`flex flex-col items-center gap-1 transition-colors px-5 py-3 rounded-xl ${listening ? "bg-green-600 hover:bg-green-500" : "bg-gray-800 hover:bg-gray-700"}`}
+          >
             <span className="text-lg">💬</span>
             <span className="text-xs text-gray-400">Subtitulos</span>
           </button>
