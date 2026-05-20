@@ -7,6 +7,17 @@ import { GLOTConnection } from "@/lib/webrtc";
 
 const ROOM_ID = "glot-demo";
 
+async function translate(text: string, from: string, to: string): Promise<string> {
+  if (!text.trim()) return "";
+  try {
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${from}|${to}`);
+    const data = await res.json();
+    return data.responseData.translatedText || text;
+  } catch {
+    return text;
+  }
+}
+
 export default function CallPage() {
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
@@ -15,6 +26,8 @@ export default function CallPage() {
   const recognitionRef = useRef<any>(null);
   const [subtitle, setSubtitle] = useState("Los subtitulos apareceran aqui cuando empiece la llamada...");
   const [listening, setListening] = useState(false);
+  const [fromLang, setFromLang] = useState("es");
+  const [toLang, setToLang] = useState("en");
 
   function startSpeechRecognition() {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -23,14 +36,19 @@ export default function CallPage() {
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = "es-ES";
+    recognition.lang = fromLang === "es" ? "es-ES" : fromLang === "en" ? "en-US" : fromLang === "fr" ? "fr-FR" : "de-DE";
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = async (event: any) => {
       let text = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         text += event.results[i][0].transcript;
       }
-      setSubtitle(text);
+      if (fromLang !== toLang) {
+        const translated = await translate(text, fromLang, toLang);
+        setSubtitle(translated);
+      } else {
+        setSubtitle(text);
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -137,15 +155,30 @@ export default function CallPage() {
             </div>
           </div>
         </div>
-        <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 min-h-20 flex flex-col gap-1 shadow-lg">
+        <div className="w-full max-w-5xl bg-gray-900 border border-gray-800 rounded-2xl px-6 py-4 min-h-20 flex flex-col gap-2 shadow-lg">
           <div className="flex items-center justify-between">
             <span className="text-xs text-gray-600 font-medium uppercase tracking-widest">Subtitulos</span>
-            {listening && (
-              <span className="flex items-center gap-1 text-xs text-green-400">
-                <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                Escuchando
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              <select value={fromLang} onChange={(e) => setFromLang(e.target.value)} className="bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded-lg border border-gray-700">
+                <option value="es">Espanol</option>
+                <option value="en">Ingles</option>
+                <option value="fr">Frances</option>
+                <option value="de">Aleman</option>
+              </select>
+              <span className="text-gray-600 text-xs">→</span>
+              <select value={toLang} onChange={(e) => setToLang(e.target.value)} className="bg-gray-800 text-xs text-gray-300 px-2 py-1 rounded-lg border border-gray-700">
+                <option value="en">Ingles</option>
+                <option value="es">Espanol</option>
+                <option value="fr">Frances</option>
+                <option value="de">Aleman</option>
+              </select>
+              {listening && (
+                <span className="flex items-center gap-1 text-xs text-green-400">
+                  <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+                  Escuchando
+                </span>
+              )}
+            </div>
           </div>
           <p className={`text-sm ${listening ? "text-white" : "text-gray-500 italic"}`}>
             {subtitle}
