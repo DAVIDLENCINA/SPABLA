@@ -2,35 +2,17 @@ import Link from "next/link";
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-[#020817] text-white flex flex-col items-center justify-center px-6">
-
-      <div className="text-center max-w-xl">
-
-        <img
-          src="/LOGO GLOT BLUE.png"
-          alt="GLOT"
-          className="w-28 mx-auto mb-8 rounded-3xl shadow-2xl"
-        />
-
-        <h1 className="text-6xl font-bold tracking-tight">
-          GLOT
-        </h1>
-
-        <p className="mt-6 text-xl text-gray-400 leading-relaxed">
-          Habla tu idioma.
-          <br />
-          Entiende el mundo.
-        </p>
-
-        <Link
-          href="/call"
-          className="inline-block mt-10 bg-blue-600 hover:bg-blue-500 transition-all px-8 py-4 rounded-2xl text-lg font-medium shadow-lg"
-        >
-          Nueva llamada
-        </Link>
-
-      </div>
-
+    <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gray-950">
+      <img src="/LOGOTIPO_GLOT.png" alt="GLOT" className="h-16 w-auto" />
+      <p className="text-gray-400 text-lg">
+        Habla tu idioma. Entiende el mundo.
+      </p>
+      <Link
+        href="/call"
+        className="bg-blue-600 hover:bg-blue-500 transition-colors px-6 py-3 rounded-xl font-semibold text-white"
+      >
+        Nueva llamada
+      </Link>
     </main>
   );
 }
