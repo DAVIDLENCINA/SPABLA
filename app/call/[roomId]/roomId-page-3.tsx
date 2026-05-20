@@ -53,15 +53,12 @@ export default function CallPage() {
     setCamOn((p) => !p);
   }
 
- function hangUp() {
-  localStreamRef.current?.getTracks().forEach((t) => t.stop());
-  localStreamRef.current = null;
-  glotRef.current?.close();
-  glotRef.current = null;
-  recognitionRef.current?.stop();
-  window.location.href = "/";
-}
-  
+  function hangUp() {
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    glotRef.current?.close();
+    recognitionRef.current?.stop();
+    router.push("/");
+  }
 
   function startSpeechRecognition() {
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
