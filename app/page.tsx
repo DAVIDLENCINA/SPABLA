@@ -1,9 +1,11 @@
+import Link from "next/link";
+
 export default function Home() {
   return (
     <main className="min-h-screen bg-[#020817] text-white flex flex-col items-center justify-center px-6">
-      
+
       <div className="text-center max-w-xl">
-        
+
         <img
           src="/LOGO GLOT BLUE.png"
           alt="GLOT"
@@ -20,9 +22,12 @@ export default function Home() {
           Entiende el mundo.
         </p>
 
-        <button className="mt-10 bg-blue-600 hover:bg-blue-500 transition-all px-8 py-4 rounded-2xl text-lg font-medium shadow-lg">
+        <Link
+          href="/call"
+          className="inline-block mt-10 bg-blue-600 hover:bg-blue-500 transition-all px-8 py-4 rounded-2xl text-lg font-medium shadow-lg"
+        >
           Nueva llamada
-        </button>
+        </Link>
 
       </div>
 
