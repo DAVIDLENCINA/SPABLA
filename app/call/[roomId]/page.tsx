@@ -88,7 +88,7 @@ export default function CallPage() {
 
   useEffect(() => {
     if (!roomId) return;
-    const socket = io("http://localhost:3001");
+    const socket = io("https://spabla-production.up.railway.app");
     const glot = new GLOTConnection();
     glotRef.current = glot;
     const pc = glot.getConnection();
