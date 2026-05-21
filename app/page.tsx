@@ -16,7 +16,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-6 bg-gray-950">
-      <img src="/LOGOTIPO_GLOT.png" alt="GLOT" className="h-16 w-auto" />
+      <img src="/LOGOTIPO_SPABLA.png" alt="SPABLA" className="h-16 w-auto" />
       <p className="text-gray-400 text-lg">
         Habla tu idioma. Entiende el mundo.
       </p>

@@ -75,7 +75,7 @@ export default function CallPage() {
       for (let i = e.resultIndex; i < e.results.length; i++) text += e.results[i][0].transcript;
       setSubtitle(fromLang !== toLang ? await translate(text, fromLang, toLang) : text);
     };
-    r.onerror = (e: any) => console.error("[GLOT]", e.error);
+    r.onerror = (e: any) => console.error("[SPABLA]", e.error);
     r.start();
     recognitionRef.current = r;
     setListening(true);
@@ -147,7 +147,7 @@ export default function CallPage() {
     <div className="flex flex-col min-h-screen bg-gray-950 text-white">
       <nav className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
         <Link href="/" className="hover:opacity-80 transition-opacity">
-          <img src="/LOGOTIPO_GLOT.png" alt="GLOT" className="h-10 w-auto" />
+          <img src="/LOGOTIPO_SPABLA.png" alt="SPABLA" className="h-10 w-auto" />
         </Link>
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400">Sala:</span>

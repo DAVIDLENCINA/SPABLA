@@ -9,14 +9,14 @@ export class GLOTConnection {
 
   constructor() {
     this.pc = new RTCPeerConnection(ICE_SERVERS);
-    console.log("[GLOT] RTCPeerConnection creada");
+    console.log("[SPABLA] RTCPeerConnection creada");
   }
 
   addLocalStream(stream: MediaStream): void {
     stream.getTracks().forEach((track) => {
       this.pc.addTrack(track, stream);
     });
-    console.log("[GLOT] Stream local añadido");
+    console.log("[SPABLA] Stream local añadido");
   }
 
   getConnection(): RTCPeerConnection {
@@ -25,6 +25,6 @@ export class GLOTConnection {
 
   close(): void {
     this.pc.close();
-    console.log("[GLOT] Conexión cerrada");
+    console.log("[SPABLA] Conexión cerrada");
   }
 }

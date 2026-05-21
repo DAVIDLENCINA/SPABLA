@@ -8,12 +8,12 @@ const io = new Server(httpServer, {
 });
 
 io.on("connection", (socket) => {
-  console.log("[GLOT] Usuario conectado:", socket.id);
+  console.log("[SPABLA] Usuario conectado:", socket.id);
 
   socket.on("join-room", (roomId: string) => {
     socket.join(roomId);
     socket.to(roomId).emit("user-joined", socket.id);
-    console.log(`[GLOT] ${socket.id} entró en sala: ${roomId}`);
+    console.log(`[SPABLA] ${socket.id} entró en sala: ${roomId}`);
   });
 
   socket.on("offer", (data: { to: string; offer: RTCSessionDescriptionInit }) => {
@@ -29,10 +29,10 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log("[GLOT] Usuario desconectado:", socket.id);
+    console.log("[SPABLA] Usuario desconectado:", socket.id);
   });
 });
 
 httpServer.listen(3001, () => {
-  console.log("[GLOT] Servidor de señalización en puerto 3001");
+  console.log("[SPABLA] Servidor de señalización en puerto 3001");
 });
