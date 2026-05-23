@@ -416,53 +416,46 @@ export default function CallPage() {
         </div>
 
         {/* translation card — z:30 */}
-        <div style={{ position:"absolute", bottom:148, left:24, right:24, zIndex:30 }}>
+        <div style={{ position:"absolute", bottom:148, left:28, right:28, zIndex:30 }}>
           <div style={{
-            background:"rgba(6,7,12,.72)",
-            backdropFilter:"blur(32px)", WebkitBackdropFilter:"blur(32px)",
-            borderRadius:20, border:"0.5px solid rgba(255,255,255,.07)",
-            overflow:"hidden", animation:"glow 4.5s ease-in-out infinite",
+            background:"rgba(0,0,0,0.45)",
+            backdropFilter:"blur(24px)", WebkitBackdropFilter:"blur(24px)",
+            borderRadius:28,
+            border:"0.5px solid rgba(255,255,255,.1)",
+            overflow:"hidden",
           }}>
-            <div style={{ height:1,
-              background:`linear-gradient(90deg, transparent 0%, ${C} 30%, ${R} 70%, transparent 100%)`,
-              opacity:.5 }}/>
-
-            <div style={{ padding:"8px 12px 10px" }}>
-              {/* lang row */}
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
+            <div style={{ padding:"12px 16px 14px" }}>
+              {/* lang row — compact and minimal */}
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8 }}>
                 <LangPill code={fromLang} accent={C} bg={C8} border={C30} onPress={()=>setShowLang(true)}/>
-                <div style={{ display:"flex",alignItems:"center",gap:3,opacity:.35 }}>
-                  <div style={{ width:20,height:.5,background:`linear-gradient(90deg,${C},${R})` }}/>
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none"
-                    stroke="rgba(255,255,255,.5)" strokeWidth="2.5"
-                    strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12h14M12 5l7 7-7 7"/>
-                  </svg>
-                  <div style={{ width:20,height:.5,background:`linear-gradient(90deg,${C},${R})` }}/>
-                </div>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
+                  stroke="rgba(255,255,255,.3)" strokeWidth="2.5"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M5 12h14M12 5l7 7-7 7"/>
+                </svg>
                 <LangPill code={toLang} accent={R} bg={R8} border={R30} onPress={()=>setShowLang(true)}/>
               </div>
 
               {/* translated text / remote subtitle / waveform */}
-              <div style={{ minHeight:36, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <div style={{ minHeight:32, display:"flex", alignItems:"center", justifyContent:"center" }}>
                 {subtitle ? (
                   <p style={{
-                    margin:0, fontSize:18, fontWeight:600, lineHeight:1.25,
-                    letterSpacing:"-.022em", textAlign:"center",
+                    margin:0, fontSize:17, fontWeight:600, lineHeight:1.3,
+                    letterSpacing:"-.02em", textAlign:"center",
                     background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 42%, ${R} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
                     backgroundClip:"text", animation:"rise .28s ease",
                   }}>{subtitle}</p>
                 ) : remoteSubtitle ? (
                   <p style={{
-                    margin:0, fontSize:18, fontWeight:600, lineHeight:1.25,
-                    letterSpacing:"-.022em", textAlign:"center",
+                    margin:0, fontSize:17, fontWeight:600, lineHeight:1.3,
+                    letterSpacing:"-.02em", textAlign:"center",
                     background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 42%, ${C} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
                     backgroundClip:"text", animation:"rise .28s ease", opacity:.85,
                   }}>{remoteSubtitle}</p>
                 ) : (
-                  <div style={{ display:"flex", alignItems:"center", gap:2.5, height:36 }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:2.5, height:32 }}>
                     {WAVE_H.map((h,i) => (
                       <span key={i} style={{
                         display:"block", width:2.5, height:h, borderRadius:2,
@@ -683,11 +676,11 @@ function LangPill({ code, accent, bg, border, onPress }: {
     <button onClick={onPress} style={{
       display:"flex", alignItems:"center", gap:5,
       background:bg, border:`0.5px solid ${border}`,
-      borderRadius:20, padding:"4px 9px",
+      borderRadius:20, padding:"3px 8px",
       cursor:"pointer", WebkitTapHighlightColor:"transparent",
     }}>
-      <span style={{ fontSize:11 }}>{LANG[code]?.flag}</span>
-      <span style={{ fontSize:11,fontWeight:600,color:accent,letterSpacing:".05em" }}>
+      <span style={{ fontSize:10 }}>{LANG[code]?.flag}</span>
+      <span style={{ fontSize:10,fontWeight:700,color:accent,letterSpacing:".06em" }}>
         {LANG[code]?.label}
       </span>
     </button>
