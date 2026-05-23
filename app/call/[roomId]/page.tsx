@@ -418,10 +418,10 @@ export default function CallPage() {
         {/* translation card — z:30 */}
         <div style={{ position:"absolute", bottom:148, left:28, right:28, zIndex:30 }}>
           <div style={{
-            background:"rgba(0,0,0,0.45)",
-            backdropFilter:"blur(24px)", WebkitBackdropFilter:"blur(24px)",
+            background:"rgba(0,0,0,0.28)",
+            backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
             borderRadius:28,
-            border:"0.5px solid rgba(255,255,255,.1)",
+            border:"0.5px solid rgba(255,255,255,.08)",
             overflow:"hidden",
           }}>
             <div style={{ padding:"12px 16px 14px" }}>
@@ -675,12 +675,14 @@ function LangPill({ code, accent, bg, border, onPress }: {
   return (
     <button onClick={onPress} style={{
       display:"flex", alignItems:"center", gap:5,
-      background:bg, border:`0.5px solid ${border}`,
+      background:"rgba(0,0,0,0.28)",
+      backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+      border:"0.5px solid rgba(255,255,255,.18)",
       borderRadius:20, padding:"3px 8px",
       cursor:"pointer", WebkitTapHighlightColor:"transparent",
     }}>
       <span style={{ fontSize:10 }}>{LANG[code]?.flag}</span>
-      <span style={{ fontSize:10,fontWeight:700,color:accent,letterSpacing:".06em" }}>
+      <span style={{ fontSize:10,fontWeight:700,color:"rgba(255,255,255,.9)",letterSpacing:".06em" }}>
         {LANG[code]?.label}
       </span>
     </button>
