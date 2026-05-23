@@ -417,14 +417,8 @@ export default function CallPage() {
 
         {/* translation card — z:30 */}
         <div style={{ position:"absolute", bottom:148, left:28, right:28, zIndex:30 }}>
-          <div style={{
-            background:"rgba(0,0,0,0.28)",
-            backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)",
-            borderRadius:28,
-            border:"0.5px solid rgba(255,255,255,.08)",
-            overflow:"hidden",
-          }}>
-            <div style={{ padding:"12px 16px 14px" }}>
+          <div style={{ padding:"0" }}>
+            <div style={{ padding:"0 4px 0" }}>
               {/* lang row — compact and minimal */}
               <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:8 }}>
                 <LangPill code={fromLang} accent={C} bg={C8} border={C30} onPress={()=>setShowLang(true)}/>
@@ -445,6 +439,7 @@ export default function CallPage() {
                     background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 42%, ${R} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
                     backgroundClip:"text", animation:"rise .28s ease",
+                    filter:"drop-shadow(0 1px 4px rgba(0,0,0,0.8))",
                   }}>{subtitle}</p>
                 ) : remoteSubtitle ? (
                   <p style={{
@@ -453,6 +448,7 @@ export default function CallPage() {
                     background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 42%, ${C} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
                     backgroundClip:"text", animation:"rise .28s ease", opacity:.85,
+                    filter:"drop-shadow(0 1px 4px rgba(0,0,0,0.8))",
                   }}>{remoteSubtitle}</p>
                 ) : (
                   <div style={{ display:"flex", alignItems:"center", gap:2.5, height:32 }}>
