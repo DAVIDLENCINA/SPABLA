@@ -365,14 +365,24 @@ export default function CallPage() {
             </div>
           </div>
 
-          <Pill onPress={shareWhatsApp}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="rgba(255,255,255,.75)" strokeWidth="1.9"
+          <button
+            onClick={shareWhatsApp}
+            style={{
+              display:"flex", alignItems:"center", gap:6,
+              background:"rgba(37,211,102,0.9)",
+              backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+              border:"none",
+              borderRadius:999, padding:"8px 14px",
+              cursor:"pointer", WebkitTapHighlightColor:"transparent",
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="#fff" strokeWidth="2"
               strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>
             </svg>
-            <span style={{ fontSize:11,fontWeight:500,color:"rgba(255,255,255,.75)" }}>Invitar</span>
-          </Pill>
+            <span style={{ fontSize:12,fontWeight:600,color:"#fff",letterSpacing:".01em" }}>Invitar</span>
+          </button>
         </div>
 
         {/* local self-view — z:25 */}
@@ -406,7 +416,7 @@ export default function CallPage() {
         </div>
 
         {/* translation card — z:30 */}
-        <div style={{ position:"absolute", bottom:120, left:18, right:18, zIndex:30 }}>
+        <div style={{ position:"absolute", bottom:148, left:24, right:24, zIndex:30 }}>
           <div style={{
             background:"rgba(6,7,12,.72)",
             backdropFilter:"blur(32px)", WebkitBackdropFilter:"blur(32px)",
@@ -417,9 +427,9 @@ export default function CallPage() {
               background:`linear-gradient(90deg, transparent 0%, ${C} 30%, ${R} 70%, transparent 100%)`,
               opacity:.5 }}/>
 
-            <div style={{ padding:"10px 14px 12px" }}>
+            <div style={{ padding:"8px 12px 10px" }}>
               {/* lang row */}
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
+              <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8 }}>
                 <LangPill code={fromLang} accent={C} bg={C8} border={C30} onPress={()=>setShowLang(true)}/>
                 <div style={{ display:"flex",alignItems:"center",gap:3,opacity:.35 }}>
                   <div style={{ width:20,height:.5,background:`linear-gradient(90deg,${C},${R})` }}/>
@@ -432,16 +442,6 @@ export default function CallPage() {
                 </div>
                 <LangPill code={toLang} accent={R} bg={R8} border={R30} onPress={()=>setShowLang(true)}/>
               </div>
-
-              {/* original / interim text */}
-              <p style={{
-                margin:"0 0 8px", fontSize:13, lineHeight:1.4,
-                color:"rgba(255,255,255,.32)", textAlign:"center",
-                fontStyle:"italic", minHeight:18,
-                animation: rawSubtitle ? "rise .2s ease" : "none",
-              }}>
-                {rawSubtitle || (listening ? "…" : "")}
-              </p>
 
               {/* translated text / remote subtitle / waveform */}
               <div style={{ minHeight:36, display:"flex", alignItems:"center", justifyContent:"center" }}>
@@ -480,15 +480,6 @@ export default function CallPage() {
                 )}
               </div>
 
-              {/* AI footer */}
-              <div style={{ display:"flex",alignItems:"center",justifyContent:"center",gap:5,marginTop:10 }}>
-                <svg width="9" height="9" viewBox="0 0 24 24" fill={C} opacity=".45">
-                  <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/>
-                </svg>
-                <span style={{ fontSize:10,letterSpacing:".07em",color:"rgba(255,255,255,.2)",textTransform:"uppercase" }}>
-                  Traducción en tiempo real
-                </span>
-              </div>
             </div>
           </div>
         </div>
