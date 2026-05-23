@@ -88,7 +88,7 @@ export default function CallPage() {
 
   function shareWhatsApp() {
     const url = window.location.href;
-    const msg = `Te llamo por SPABLA — hablamos en nuestros idiomas sin barreras.\nÚnete aquí: ${url}`;
+    const msg = `¡Te invito a una llamada en SPABLA! Podemos hablar en nuestros idiomas y entendernos en tiempo real.\n\nÚnete aquí: ${url}`;
     window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
   }
 
@@ -365,15 +365,13 @@ export default function CallPage() {
             </div>
           </div>
 
-          <Pill>
+          <Pill onPress={shareWhatsApp}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="rgba(255,255,255,.6)" strokeWidth="1.9"
+              stroke="rgba(255,255,255,.75)" strokeWidth="1.9"
               strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-              <circle cx="9" cy="7" r="4"/>
-              <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+              <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>
             </svg>
-            <span style={{ fontSize:12,fontWeight:500,color:"rgba(255,255,255,.65)" }}>2</span>
+            <span style={{ fontSize:11,fontWeight:500,color:"rgba(255,255,255,.75)" }}>Invitar</span>
           </Pill>
         </div>
 
@@ -408,7 +406,7 @@ export default function CallPage() {
         </div>
 
         {/* translation card — z:30 */}
-        <div style={{ position:"absolute", bottom:138, left:18, right:18, zIndex:30 }}>
+        <div style={{ position:"absolute", bottom:120, left:18, right:18, zIndex:30 }}>
           <div style={{
             background:"rgba(6,7,12,.72)",
             backdropFilter:"blur(32px)", WebkitBackdropFilter:"blur(32px)",
@@ -419,7 +417,7 @@ export default function CallPage() {
               background:`linear-gradient(90deg, transparent 0%, ${C} 30%, ${R} 70%, transparent 100%)`,
               opacity:.5 }}/>
 
-            <div style={{ padding:"14px 18px 16px" }}>
+            <div style={{ padding:"10px 14px 12px" }}>
               {/* lang row */}
               <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12 }}>
                 <LangPill code={fromLang} accent={C} bg={C8} border={C30} onPress={()=>setShowLang(true)}/>
@@ -446,10 +444,10 @@ export default function CallPage() {
               </p>
 
               {/* translated text / remote subtitle / waveform */}
-              <div style={{ minHeight:44, display:"flex", alignItems:"center", justifyContent:"center" }}>
+              <div style={{ minHeight:36, display:"flex", alignItems:"center", justifyContent:"center" }}>
                 {subtitle ? (
                   <p style={{
-                    margin:0, fontSize:22, fontWeight:600, lineHeight:1.25,
+                    margin:0, fontSize:18, fontWeight:600, lineHeight:1.25,
                     letterSpacing:"-.022em", textAlign:"center",
                     background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 42%, ${R} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
@@ -457,7 +455,7 @@ export default function CallPage() {
                   }}>{subtitle}</p>
                 ) : remoteSubtitle ? (
                   <p style={{
-                    margin:0, fontSize:22, fontWeight:600, lineHeight:1.25,
+                    margin:0, fontSize:18, fontWeight:600, lineHeight:1.25,
                     letterSpacing:"-.022em", textAlign:"center",
                     background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 42%, ${C} 100%)`,
                     WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent",
@@ -694,11 +692,11 @@ function LangPill({ code, accent, bg, border, onPress }: {
     <button onClick={onPress} style={{
       display:"flex", alignItems:"center", gap:5,
       background:bg, border:`0.5px solid ${border}`,
-      borderRadius:20, padding:"5px 11px",
+      borderRadius:20, padding:"4px 9px",
       cursor:"pointer", WebkitTapHighlightColor:"transparent",
     }}>
-      <span style={{ fontSize:13 }}>{LANG[code]?.flag}</span>
-      <span style={{ fontSize:12,fontWeight:600,color:accent,letterSpacing:".05em" }}>
+      <span style={{ fontSize:11 }}>{LANG[code]?.flag}</span>
+      <span style={{ fontSize:11,fontWeight:600,color:accent,letterSpacing:".05em" }}>
         {LANG[code]?.label}
       </span>
     </button>
