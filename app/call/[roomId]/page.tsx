@@ -230,7 +230,8 @@ export default function CallPage() {
 
         {/* remote video */}
         <video ref={remoteVideoMobileRef} autoPlay playsInline style={{
-          position:"absolute", inset:0, width:"100%", height:"100%",
+          position:"absolute", top:0, left:0,
+          width:"100%", height:"100%",
           objectFit:"cover", zIndex:0,
           filter:"brightness(.88) contrast(1.02) saturate(.9)",
         }}/>
@@ -255,7 +256,8 @@ export default function CallPage() {
           position:"absolute",top:0,left:0,right:0,zIndex:30,
           paddingTop:"env(safe-area-inset-top,50px)",
           padding:"env(safe-area-inset-top,50px) 16px 0",
-          display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:8,
+          display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:6,
+          flexWrap:"nowrap",
         }}>
           {/* back chevron */}
           <button onClick={hangUp} style={{
@@ -280,7 +282,7 @@ export default function CallPage() {
             backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",
             border:"0.5px solid rgba(255,255,255,.14)",
             borderRadius:999,padding:"7px 13px",
-            flex:1,justifyContent:"center",
+            flex:1,justifyContent:"center",minWidth:0,
           }}>
             {/* mini waveform */}
             <div style={{display:"flex",alignItems:"center",gap:2,height:12,flexShrink:0}}>
