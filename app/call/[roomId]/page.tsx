@@ -26,8 +26,8 @@ const LANG: Record<string, { label: string; flag: string; full: string }> = {
 /* ─── tokens ──────────────────────────────────────────────── */
 const C   = "#00D4E8";
 const R   = "#FF5C6A";
-const C15 = "rgba(0,212,232,0.15)";
-const C30 = "rgba(0,212,232,0.30)";
+const C15 = "rgba(0,212,232,0.12)";
+const C30 = "rgba(0,212,232,0.22)";
 const R15 = "rgba(255,92,106,0.15)";
 
 /* ═══════════════════════════════════════════════════════════ */
@@ -47,6 +47,7 @@ export default function CallPage() {
   const dgLangRef            = useRef<string>("es");
 
   const [subtitle,      setSubtitle]      = useState("");
+  const [rawSubtitle,   setRawSubtitle]   = useState("");
   const [remoteSubtitle,setRemoteSubtitle]= useState("");
   const [remoteRaw,     setRemoteRaw]     = useState("");
   const [listening,     setListening]     = useState(false);
@@ -146,10 +147,11 @@ export default function CallPage() {
       const lang = dgLangRef.current;
       if (isFinal) {
         setWaveActive(true);
-        setSubtitle(""); // clear first
+        setSubtitle(""); setRawSubtitle("");
         const tr = lang !== toLang ? await translate(text, lang, toLang) : text;
+        setRawSubtitle(text);
         setSubtitle(tr);
-        setTimeout(() => { setSubtitle(""); setWaveActive(false); }, 5000);
+        setTimeout(() => { setSubtitle(""); setRawSubtitle(""); setWaveActive(false); }, 5000);
         socketRef.current?.emit("subtitle", { roomId, originalText: text, translatedText: tr, fromLang: lang, toLang, ts: Date.now() });
       }
     });
@@ -158,7 +160,7 @@ export default function CallPage() {
 
   function stopSpeechRecognition() {
     teardownAudio();
-    setListening(false); setSubtitle(""); setWaveActive(false);
+    setListening(false); setSubtitle(""); setRawSubtitle(""); setWaveActive(false);
   }
 
   /* WebRTC */
@@ -194,9 +196,10 @@ export default function CallPage() {
     });
     socket.on("answer", async ({ answer }: { answer: RTCSessionDescriptionInit }) => { await pc.setRemoteDescription(answer); });
     socket.on("ice-candidate", async ({ candidate }: { candidate: RTCIceCandidateInit }) => { await pc.addIceCandidate(candidate); });
-    socket.on("subtitle", (data: { translatedText: string; fromLang: string }) => {
+    socket.on("subtitle", (data: { translatedText: string; originalText: string; fromLang: string }) => {
+      setRemoteRaw(data.originalText);
       setRemoteSubtitle(data.translatedText);
-      setTimeout(() => setRemoteSubtitle(""), 6000);
+      setTimeout(() => { setRemoteSubtitle(""); setRemoteRaw(""); }, 5000);
     });
     start();
     return () => {
@@ -215,7 +218,7 @@ export default function CallPage() {
         @keyframes sway    { 0%,100%{transform:scaleY(.4);opacity:.35} 50%{transform:scaleY(1);opacity:1} }
         @keyframes rise    { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
         @keyframes halo    { 0%,100%{opacity:.5;transform:scale(1)} 50%{opacity:1;transform:scale(1.03)} }
-        @keyframes pip     { 0%,100%{box-shadow:0 4px 20px rgba(0,0,0,.6)} 50%{box-shadow:0 4px 20px rgba(0,0,0,.6),0 0 0 1.5px rgba(0,212,232,.3)} }
+        @keyframes pip     { 0%,100%{box-shadow:0 4px 20px rgba(0,0,0,.6)} 50%{box-shadow:0 4px 20px rgba(0,0,0,.6),0 0 0 1px rgba(0,212,232,.18)} }
         @keyframes livedot { 0%,100%{opacity:.3;transform:scale(.7)} 50%{opacity:1;transform:scale(1)} }
         @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
         @keyframes slideUp { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
@@ -224,7 +227,7 @@ export default function CallPage() {
 
       {/* ═══════════════ MOBILE ════════════════════════════ */}
       <div className="md:hidden" style={{
-        position:"fixed", inset:0, background:"#05050a", overflow:"hidden",
+        position:"fixed", inset:0, background:"#03040d", overflow:"hidden",
         fontFamily:"-apple-system,'SF Pro Display',sans-serif",
         WebkitFontSmoothing:"antialiased",
       }}>
@@ -239,18 +242,18 @@ export default function CallPage() {
 
         {/* vignette */}
         <div style={{ position:"absolute",inset:0,pointerEvents:"none",zIndex:1,
-          background:"radial-gradient(ellipse 75% 65% at 50% 38%, transparent 0%, rgba(5,5,10,.6) 100%)" }}/>
+          background:"radial-gradient(ellipse 75% 65% at 50% 38%, transparent 0%, rgba(3,4,13,.65) 100%)" }}/>
         {/* top scrim */}
         <div style={{ position:"absolute",top:0,left:0,right:0,height:200,pointerEvents:"none",zIndex:1,
-          background:"linear-gradient(to bottom, rgba(5,5,10,.78) 0%, rgba(5,5,10,.15) 70%, transparent 100%)" }}/>
+          background:"linear-gradient(to bottom, rgba(3,4,13,.82) 0%, rgba(3,4,13,.12) 70%, transparent 100%)" }}/>
         {/* bottom scrim */}
         <div style={{ position:"absolute",bottom:0,left:0,right:0,height:420,pointerEvents:"none",zIndex:1,
-          background:"linear-gradient(to top, rgba(5,5,10,.98) 0%, rgba(5,5,10,.82) 38%, rgba(5,5,10,.35) 65%, transparent 100%)" }}/>
-        {/* ambient glows */}
+          background:"linear-gradient(to top, rgba(3,4,13,.98) 0%, rgba(3,4,13,.85) 38%, rgba(3,4,13,.38) 65%, transparent 100%)" }}/>
+        {/* ambient glows — reduced 30% */}
         <div style={{ position:"absolute",bottom:-50,left:-40,width:220,height:220,borderRadius:"50%",
-          background:"radial-gradient(circle, rgba(0,212,232,.06) 0%, transparent 70%)",pointerEvents:"none",zIndex:1 }}/>
+          background:"radial-gradient(circle, rgba(0,212,232,.04) 0%, transparent 70%)",pointerEvents:"none",zIndex:1 }}/>
         <div style={{ position:"absolute",bottom:-30,right:-50,width:200,height:200,borderRadius:"50%",
-          background:"radial-gradient(circle, rgba(255,92,106,.05) 0%, transparent 70%)",pointerEvents:"none",zIndex:1 }}/>
+          background:"radial-gradient(circle, rgba(255,92,106,.035) 0%, transparent 70%)",pointerEvents:"none",zIndex:1 }}/>
 
         {/* ── TOP BAR ── */}
         <div style={{
@@ -301,16 +304,16 @@ export default function CallPage() {
             {/* live dot */}
             <span style={{
               width:5,height:5,borderRadius:"50%",background:C,flexShrink:0,
-              boxShadow:`0 0 5px ${C}`,animation:"livedot 2s ease-in-out infinite",display:"inline-block",
+              boxShadow:`0 0 3px ${C}`,animation:"livedot 2s ease-in-out infinite",display:"inline-block",
             }}/>
           </div>
 
           {/* invitar button */}
           <button onClick={shareWhatsApp} style={{
             display:"flex",alignItems:"center",gap:5,flexShrink:0,
-            background:"rgba(37,211,102,0.88)",
+            background:"rgba(18,130,65,0.82)",
             backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",
-            border:"none",borderRadius:999,padding:"7px 12px",
+            border:"0.5px solid rgba(37,211,102,0.2)",borderRadius:999,padding:"7px 12px",
             cursor:"pointer",WebkitTapHighlightColor:"transparent",
           }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -352,68 +355,87 @@ export default function CallPage() {
             position:"absolute",bottom:4,right:4,
             width:5,height:5,borderRadius:"50%",
             background: micOn ? C : R,
-            boxShadow: micOn ? `0 0 5px ${C}` : `0 0 5px ${R}`,
+            boxShadow: micOn ? `0 0 4px ${C}` : `0 0 4px ${R}`,
           }}/>
         </div>
 
         {/* ── CONVERSATION / SUBTITLE AREA ── */}
         <div style={{
-          position:"absolute",bottom:158,left:0,right:0,zIndex:30,
-          padding:"0 22px",
+          position:"absolute",bottom:165,left:0,right:0,zIndex:30,
+          padding:"0 24px",
         }}>
-          {/* User line — my speech translated */}
-          {subtitle && (
-            <div style={{marginBottom:16,animation:"rise .25s ease"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-                <span style={{fontSize:11,fontWeight:500,color:C,opacity:.85}}>Tú</span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.28)"}}>·</span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.28)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
+        {/* ── MI MENSAJE: mi idioma arriba, traducción abajo ── */}
+          {(rawSubtitle || subtitle) && (
+            <div style={{marginBottom:20,animation:"rise .25s ease"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:500,color:C,opacity:.75}}>Tú</span>
+                <span style={{fontSize:10,color:"rgba(255,255,255,.2)"}}>·</span>
+                <span style={{fontSize:10,color:"rgba(255,255,255,.2)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
               </div>
-              <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[toLang]?.flag}</span>
-                <p style={{
-                  margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
-                  background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 45%, ${R} 100%)`,
-                  WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",
-                  filter:"drop-shadow(0 1px 6px rgba(0,0,0,.9))",
-                }}>{subtitle}</p>
-              </div>
-              {/* cyan divider */}
-              <div style={{
-                height:1,marginTop:10,
-                background:`linear-gradient(90deg, transparent, ${C}88, transparent)`,
-              }}/>
+              {/* línea 1: lo que dije (mi idioma) */}
+              {rawSubtitle && (
+                <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{LANG[fromLang]?.flag}</span>
+                  <p style={{
+                    margin:0,fontSize:15,fontWeight:400,lineHeight:1.4,
+                    color:"rgba(255,255,255,.55)",fontStyle:"italic",
+                    filter:"drop-shadow(0 1px 4px rgba(0,0,0,.8))",
+                  }}>{rawSubtitle}</p>
+                </div>
+              )}
+              {/* línea 2: la traducción (idioma del participante) */}
+              {subtitle && (
+                <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                  <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{LANG[toLang]?.flag}</span>
+                  <p style={{
+                    margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
+                    background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 45%, ${R} 100%)`,
+                    WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",
+                    filter:"drop-shadow(0 1px 6px rgba(0,0,0,.9))",
+                  }}>{subtitle}</p>
+                </div>
+              )}
+              <div style={{height:1,marginTop:10,background:`linear-gradient(90deg, transparent, ${C}66, transparent)`}}/>
             </div>
           )}
 
-          {/* Remote line — their speech translated */}
-          {remoteSubtitle && (
-            <div style={{marginBottom:12,animation:"rise .25s ease"}}>
-              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:5}}>
-                <span style={{fontSize:11,fontWeight:500,color:R,opacity:.85}}>Participante</span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.28)"}}>·</span>
-                <span style={{fontSize:10,color:"rgba(255,255,255,.28)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
+          {/* ── PARTICIPANTE: su idioma arriba, traducción abajo ── */}
+          {(remoteRaw || remoteSubtitle) && (
+            <div style={{marginBottom:16,animation:"rise .25s ease"}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                <span style={{fontSize:11,fontWeight:500,color:R,opacity:.75}}>Participante</span>
+                <span style={{fontSize:10,color:"rgba(255,255,255,.2)"}}>·</span>
+                <span style={{fontSize:10,color:"rgba(255,255,255,.2)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
               </div>
-              <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[fromLang]?.flag}</span>
-                <p style={{
-                  margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
-                  background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 45%, ${C} 100%)`,
-                  WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",
-                  filter:"drop-shadow(0 1px 6px rgba(0,0,0,.9))",
-                  opacity:.9,
-                }}>{remoteSubtitle}</p>
-              </div>
-              {/* coral divider */}
-              <div style={{
-                height:1,marginTop:10,
-                background:`linear-gradient(90deg, transparent, ${R}88, transparent)`,
-              }}/>
+              {/* línea 1: lo que dijo (su idioma) */}
+              {remoteRaw && (
+                <div style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:6}}>
+                  <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{LANG[toLang]?.flag}</span>
+                  <p style={{
+                    margin:0,fontSize:15,fontWeight:400,lineHeight:1.4,
+                    color:"rgba(255,255,255,.55)",fontStyle:"italic",
+                    filter:"drop-shadow(0 1px 4px rgba(0,0,0,.8))",
+                  }}>{remoteRaw}</p>
+                </div>
+              )}
+              {/* línea 2: la traducción (mi idioma) */}
+              {remoteSubtitle && (
+                <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+                  <span style={{fontSize:15,flexShrink:0,marginTop:1}}>{LANG[fromLang]?.flag}</span>
+                  <p style={{
+                    margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
+                    background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 45%, ${C} 100%)`,
+                    WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",backgroundClip:"text",
+                    filter:"drop-shadow(0 1px 6px rgba(0,0,0,.9))",opacity:.9,
+                  }}>{remoteSubtitle}</p>
+                </div>
+              )}
+              <div style={{height:1,marginTop:10,background:`linear-gradient(90deg, transparent, ${R}66, transparent)`}}/>
             </div>
           )}
 
           {/* waveform when listening but no text yet */}
-          {listening && !subtitle && !remoteSubtitle && (
+          {listening && !rawSubtitle && !subtitle && !remoteRaw && !remoteSubtitle && (
             <div style={{display:"flex",alignItems:"center",gap:2.5,height:28,justifyContent:"center"}}>
               {WAVE_H.map((h,i)=>(
                 <span key={i} style={{
@@ -426,22 +448,7 @@ export default function CallPage() {
             </div>
           )}
 
-          {/* status */}
-          {listening && (
-            <div style={{display:"flex",alignItems:"center",gap:5,justifyContent:"center",marginTop:6}}>
-              <div style={{display:"flex",alignItems:"center",gap:1.5,height:10}}>
-                {[3,6,9,6,3].map((h,i)=>(
-                  <span key={i} style={{
-                    display:"block",width:1.5,height:h,borderRadius:1,background:C,
-                    animation:`sway .9s ease-in-out ${i*.08}s infinite`,opacity:.7,
-                  }}/>
-                ))}
-              </div>
-              <span style={{fontSize:11,color:"rgba(255,255,255,.35)"}}>
-                Hablando en {LANG[fromLang]?.full?.toLowerCase()}
-              </span>
-            </div>
-          )}
+          {/* status line removed for cleaner UI */}
         </div>
 
         {/* ── LANGUAGE SHEET ── */}
@@ -502,7 +509,7 @@ export default function CallPage() {
                 background:"linear-gradient(150deg,#ff4e5f,#e5303e)",
                 border:"none",display:"flex",alignItems:"center",justifyContent:"center",
                 cursor:"pointer",WebkitTapHighlightColor:"transparent",
-                boxShadow:"0 5px 24px rgba(229,48,62,.45), 0 2px 8px rgba(229,48,62,.25)",
+                boxShadow:"0 4px 18px rgba(229,48,62,.35), 0 2px 6px rgba(229,48,62,.18)",
                 animation:"halo 3.2s ease-in-out infinite",
               }}>
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
@@ -667,7 +674,7 @@ function Btn({ onPress, children, label, bg, glow, border, labelColor }: {
         width:52,height:52,borderRadius:"50%",background:bg,
         backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
         border:`0.5px solid ${border??"rgba(255,255,255,.09)"}`,
-        boxShadow: glow ? `0 0 18px ${glow}, 0 3px 10px rgba(0,0,0,.38)` : "0 3px 10px rgba(0,0,0,.38)",
+        boxShadow: glow ? `0 0 12px ${glow}, 0 3px 10px rgba(0,0,0,.38)` : "0 3px 10px rgba(0,0,0,.38)",
         display:"flex",alignItems:"center",justifyContent:"center",
         cursor:"pointer",WebkitTapHighlightColor:"transparent",
       }}>{children}</button>
@@ -678,10 +685,10 @@ function Btn({ onPress, children, label, bg, glow, border, labelColor }: {
 }
 
 /* ─── icons ─────────────────────────────────────────────── */
-const ip = (c="rgba(255,255,255,.85)") => ({
-  width:19,height:19,viewBox:"0 0 24 24",
-  fill:"none" as const,stroke:c,strokeWidth:1.75,
-  strokeLinecap:"round" as const,strokeLinejoin:"round" as const,
+const ip = (c="rgba(255,255,255,.82)") => ({
+  width:20, height:20, viewBox:"0 0 24 24",
+  fill:"none" as const, stroke:c, strokeWidth:1.75,
+  strokeLinecap:"round" as const, strokeLinejoin:"round" as const,
 });
 function IcoMic()    { return <svg {...ip()}><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/></svg>; }
 function IcoMicOff() { return <svg {...ip()}><line x1="2" y1="2" x2="22" y2="22"/><path d="M18.89 13.23A7 7 0 0019 12v-2M5 10a7 7 0 0010.17 6.38M15 9.34V5a3 3 0 00-5.68-1.33M9 9v3a3 3 0 005.12 2.12M12 19v3M9 22h6"/></svg>; }
@@ -691,5 +698,5 @@ function IcoCC({ color="rgba(255,255,255,.85)" }:{ color?:string }) {
   return <svg {...ip(color)}><rect x="2" y="5" width="20" height="14" rx="2.5"/><path d="M7 12.5c.45-.9 1.4-1.5 2.5-1.5s2.05.6 2.5 1.5M14 12.5c.45-.9 1.4-1.5 2.5-1.5s2.05.6 2.5 1.5"/></svg>;
 }
 function IcoLang() {
-  return <svg {...ip()}><path d="M5 8l4 4-4 4M11 12h8M15 8l4 4-4 4"/></svg>;
+  return <svg {...ip()}><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>;
 }
