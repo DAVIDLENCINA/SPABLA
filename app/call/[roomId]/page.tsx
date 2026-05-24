@@ -272,20 +272,10 @@ export default function CallPage() {
           flexWrap:"nowrap",
         }}>
           {/* back chevron */}
-          <button onClick={hangUp} style={{
-            width:38,height:38,borderRadius:"50%",flexShrink:0,
-            background:"rgba(255,255,255,.08)",
-            backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",
-            border:"0.5px solid rgba(255,255,255,.12)",
-            display:"flex",alignItems:"center",justifyContent:"center",
-            cursor:"pointer",WebkitTapHighlightColor:"transparent",
-          }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
-              stroke="rgba(255,255,255,.8)" strokeWidth="2.5"
-              strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 9l6 6 6-6"/>
-            </svg>
-          </button>
+          {/* logo */}
+          <img src="/SPABLA_LOGO.png" alt="SPABLA" style={{
+            height:26, width:"auto", opacity:.92, flexShrink:0,
+          }}/>
 
           {/* centre pill: traducción en tiempo real */}
           <div style={{
@@ -636,17 +626,8 @@ export default function CallPage() {
           padding:"20px 28px 0",
           display:"flex",alignItems:"center",justifyContent:"space-between",
         }}>
-          {/* logo + wordmark */}
-          <div style={{display:"flex",alignItems:"center",gap:9}}>
-            <svg width="26" height="26" viewBox="0 0 32 22" fill="none">
-              <ellipse cx="10" cy="11" rx="10" ry="10" fill={C} opacity=".88"/>
-              <ellipse cx="22" cy="11" rx="10" ry="10" fill={R} opacity=".82"/>
-              <ellipse cx="16" cy="11" rx="5.5" ry="5.5" fill="rgba(3,4,13,.65)"/>
-            </svg>
-            <span style={{fontSize:17,fontWeight:700,letterSpacing:".1em",color:"#fff",textTransform:"uppercase"}}>
-              SPABLA
-            </span>
-          </div>
+          {/* logo */}
+          <img src="/SPABLA_LOGO.png" alt="SPABLA" style={{height:28,width:"auto",opacity:.95}}/>
 
           {/* centre pill */}
           <div style={{
