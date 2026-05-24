@@ -17,10 +17,10 @@ async function translate(text: string, from: string, to: string): Promise<string
 
 /* ─── language metadata ───────────────────────────────────── */
 const LANG: Record<string, { label: string; flag: string; full: string }> = {
-  es: { label: "ES", flag: "🇪🇸", full: "Español" },
-  en: { label: "EN", flag: "🇬🇧", full: "English" },
-  fr: { label: "FR", flag: "🇫🇷", full: "Français" },
-  de: { label: "DE", flag: "🇩🇪", full: "Deutsch" },
+  es: { label: "ES", flag: "🇪🇸", full: "español" },
+  en: { label: "EN", flag: "🇬🇧", full: "inglés" },
+  fr: { label: "FR", flag: "🇫🇷", full: "francés" },
+  de: { label: "DE", flag: "🇩🇪", full: "alemán" },
 };
 
 /* ─── tokens ──────────────────────────────────────────────── */
@@ -146,9 +146,10 @@ export default function CallPage() {
       const lang = dgLangRef.current;
       if (isFinal) {
         setWaveActive(true);
+        setSubtitle(""); // clear first
         const tr = lang !== toLang ? await translate(text, lang, toLang) : text;
         setSubtitle(tr);
-        setTimeout(() => setWaveActive(false), 2000);
+        setTimeout(() => { setSubtitle(""); setWaveActive(false); }, 5000);
         socketRef.current?.emit("subtitle", { roomId, originalText: text, translatedText: tr, fromLang: lang, toLang, ts: Date.now() });
       }
     });
@@ -295,7 +296,7 @@ export default function CallPage() {
               ))}
             </div>
             <span style={{fontSize:11,fontWeight:500,color:"rgba(255,255,255,.75)",letterSpacing:".02em",whiteSpace:"nowrap"}}>
-              Traducción en tiempo real
+              Traducción activa
             </span>
             {/* live dot */}
             <span style={{
@@ -369,7 +370,7 @@ export default function CallPage() {
                 <span style={{fontSize:10,color:"rgba(255,255,255,.28)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
               </div>
               <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[fromLang]?.flag}</span>
+                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[toLang]?.flag}</span>
                 <p style={{
                   margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
                   background:`linear-gradient(130deg, ${C} 0%, rgba(255,255,255,.95) 45%, ${R} 100%)`,
@@ -394,7 +395,7 @@ export default function CallPage() {
                 <span style={{fontSize:10,color:"rgba(255,255,255,.28)",fontVariantNumeric:"tabular-nums"}}>{fmt(callDuration)}</span>
               </div>
               <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[toLang]?.flag}</span>
+                <span style={{fontSize:16,flexShrink:0,marginTop:2}}>{LANG[fromLang]?.flag}</span>
                 <p style={{
                   margin:0,fontSize:18,fontWeight:600,lineHeight:1.3,letterSpacing:"-.02em",
                   background:`linear-gradient(130deg, ${R} 0%, rgba(255,255,255,.95) 45%, ${C} 100%)`,
