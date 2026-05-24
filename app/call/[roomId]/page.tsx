@@ -54,6 +54,7 @@ export default function CallPage() {
   const [fromLang,      setFromLang]      = useState("es");
   const [toLang,        setToLang]        = useState("en");
   const [copied,        setCopied]        = useState(false);
+  const [toastVisible,  setToastVisible]  = useState(false);
   const [micOn,         setMicOn]         = useState(true);
   const [camOn,         setCamOn]         = useState(true);
   const [showLang,      setShowLang]      = useState(false);
@@ -75,10 +76,17 @@ export default function CallPage() {
     setCopied(true); setTimeout(() => setCopied(false), 2000);
   }
 
-  function shareWhatsApp() {
-    const url = window.location.href;
-    const msg = `¡Te invito a una llamada en SPABLA! Podemos hablar en nuestros idiomas y entendernos en tiempo real.\n\nÚnete aquí: ${url}`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+  function shareConversation() {
+    const url  = window.location.href;
+    const text = "Únete a mi conversación en SPABLA. Podemos hablar en nuestros idiomas y entendernos en tiempo real.";
+    if (navigator.share) {
+      navigator.share({ title: "SPABLA — Conversación en tiempo real", text, url }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(url).then(() => {
+        setToastVisible(true);
+        setTimeout(() => setToastVisible(false), 2200);
+      });
+    }
   }
 
   function toggleMic() {
@@ -308,19 +316,26 @@ export default function CallPage() {
             }}/>
           </div>
 
-          {/* invitar button */}
-          <button onClick={shareWhatsApp} style={{
-            display:"flex",alignItems:"center",gap:5,flexShrink:0,
-            background:"rgba(18,130,65,0.82)",
-            backdropFilter:"blur(12px)",WebkitBackdropFilter:"blur(12px)",
-            border:"0.5px solid rgba(37,211,102,0.2)",borderRadius:999,padding:"7px 12px",
+          {/* compartir button — dark premium pill */}
+          <button onClick={shareConversation} style={{
+            display:"flex",alignItems:"center",gap:6,flexShrink:0,
+            background:"rgba(255,255,255,.08)",
+            backdropFilter:"blur(16px)",WebkitBackdropFilter:"blur(16px)",
+            border:"0.5px solid rgba(255,255,255,.16)",
+            borderRadius:999,padding:"7px 13px",
             cursor:"pointer",WebkitTapHighlightColor:"transparent",
           }}>
+            {/* iOS-style share icon */}
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/>
+              stroke="rgba(255,255,255,.82)" strokeWidth="1.9"
+              strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/>
+              <polyline points="16 6 12 2 8 6"/>
+              <line x1="12" y1="2" x2="12" y2="15"/>
             </svg>
-            <span style={{fontSize:11,fontWeight:600,color:"#fff",letterSpacing:".01em"}}>Invitar</span>
+            <span style={{fontSize:12,fontWeight:500,color:"rgba(255,255,255,.82)",letterSpacing:".01em"}}>
+              Compartir
+            </span>
           </button>
         </div>
 
@@ -556,6 +571,31 @@ export default function CallPage() {
             </span>
           </div>
         </div>
+
+        {/* toast — enlace copiado */}
+        {toastVisible && (
+          <div style={{
+            position:"absolute",
+            top:"calc(env(safe-area-inset-top,50px) + 58px)",
+            left:"50%",transform:"translateX(-50%)",
+            zIndex:50,
+            background:"rgba(20,22,32,.88)",
+            backdropFilter:"blur(20px)",WebkitBackdropFilter:"blur(20px)",
+            border:"0.5px solid rgba(255,255,255,.14)",
+            borderRadius:999,padding:"9px 18px",
+            display:"flex",alignItems:"center",gap:7,
+            animation:"rise .2s ease",whiteSpace:"nowrap",
+          }}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+              stroke={C} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span style={{fontSize:12,fontWeight:500,color:"rgba(255,255,255,.82)"}}>
+              Enlace copiado
+            </span>
+          </div>
+        )}
+
       </div>
       {/* end mobile */}
 
@@ -569,8 +609,8 @@ export default function CallPage() {
             <button onClick={copyLink} className="text-xs bg-gray-800 hover:bg-gray-700 transition-colors px-3 py-1 rounded-lg text-gray-300">
               {copied?"Copiado!":"Copiar enlace"}
             </button>
-            <button onClick={shareWhatsApp} className="text-xs bg-green-700 hover:bg-green-600 transition-colors px-3 py-1 rounded-lg text-white font-medium">
-              WhatsApp
+            <button onClick={shareConversation} className="text-xs bg-gray-800 hover:bg-gray-700 transition-colors px-3 py-1 rounded-lg text-white font-medium">
+              Compartir
             </button>
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"/>
             <span className="text-xs text-green-400">En linea</span>
