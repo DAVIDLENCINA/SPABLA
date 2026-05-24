@@ -606,11 +606,18 @@ export default function CallPage() {
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-400">Sala:</span>
             <span className="text-sm font-mono bg-gray-800 px-3 py-1 rounded-lg text-gray-200">{roomId}</span>
-            <button onClick={copyLink} className="text-xs bg-gray-800 hover:bg-gray-700 transition-colors px-3 py-1 rounded-lg text-gray-300">
-              {copied?"Copiado!":"Copiar enlace"}
-            </button>
             <button onClick={shareConversation} className="text-xs bg-gray-800 hover:bg-gray-700 transition-colors px-3 py-1 rounded-lg text-white font-medium">
               Compartir
+            </button>
+            <button onClick={copyLink} className="text-xs bg-gray-800 hover:bg-gray-700 transition-colors px-3 py-1 rounded-lg text-gray-300">
+              {copied ? "Copiado!" : "Copiar enlace"}
+            </button>
+            <button onClick={() => {
+              const url = window.location.href;
+              const msg = `¡Únete a mi conversación en SPABLA! Podemos hablar en nuestros idiomas en tiempo real.\n\n${url}`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+            }} className="text-xs bg-green-700 hover:bg-green-600 transition-colors px-3 py-1 rounded-lg text-white font-medium">
+              WhatsApp
             </button>
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"/>
             <span className="text-xs text-green-400">En linea</span>
