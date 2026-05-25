@@ -1,7 +1,5 @@
 const ICE_SERVERS: RTCConfiguration = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-  ],
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
 };
 
 export class GLOTConnection {
@@ -13,9 +11,37 @@ export class GLOTConnection {
   }
 
   addLocalStream(stream: MediaStream): void {
+    if (!this.pc) return;
+
+    if (
+      this.pc.signalingState === "closed" ||
+      this.pc.connectionState === "closed" ||
+      this.pc.connectionState === "failed"
+    ) {
+      console.warn("[SPABLA] PeerConnection no disponible", {
+        signalingState: this.pc.signalingState,
+        connectionState: this.pc.connectionState,
+      });
+      return;
+    }
+
+    const existingTrackIds = new Set(
+      this.pc
+        .getSenders()
+        .map((sender) => sender.track?.id)
+        .filter(Boolean)
+    );
+
     stream.getTracks().forEach((track) => {
-      this.pc.addTrack(track, stream);
+      if (existingTrackIds.has(track.id)) return;
+
+      try {
+        this.pc.addTrack(track, stream);
+      } catch (error) {
+        console.warn("[SPABLA] Error añadiendo track", error);
+      }
     });
+
     console.log("[SPABLA] Stream local añadido");
   }
 
