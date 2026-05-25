@@ -30,9 +30,7 @@ async function translate(text: string, from: string, to: string): Promise<string
     );
     const data = await res.json();
     return data?.responseData?.translatedText || text;
-  } catch {
-    return text;
-  }
+  } catch { return text; }
 }
 function nowTime() {
   const d = new Date();
@@ -82,11 +80,7 @@ export default function CallPage() {
   async function share() {
     try {
       if (navigator.share) {
-        await navigator.share({
-          title: "SPABLA",
-          text: "Únete a mi conversación traducida en tiempo real.",
-          url: inviteUrl,
-        });
+        await navigator.share({ title: "SPABLA", text: "Únete a mi conversación traducida en tiempo real.", url: inviteUrl });
       } else {
         await navigator.clipboard.writeText(inviteUrl);
         showToast("Enlace copiado");
@@ -94,16 +88,10 @@ export default function CallPage() {
     } catch {}
   }
   function toggleMic() {
-    localStreamRef.current?.getAudioTracks().forEach((track) => {
-      track.enabled = !track.enabled;
-      setMicOn(track.enabled);
-    });
+    localStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !track.enabled; setMicOn(track.enabled); });
   }
   function toggleCam() {
-    localStreamRef.current?.getVideoTracks().forEach((track) => {
-      track.enabled = !track.enabled;
-      setCamOn(track.enabled);
-    });
+    localStreamRef.current?.getVideoTracks().forEach((track) => { track.enabled = !track.enabled; setCamOn(track.enabled); });
   }
   function stopDeepgram() {
     socketRef.current?.emit("transcribe-stop");
@@ -122,9 +110,7 @@ export default function CallPage() {
   }
   function addSubtitle(entry: SubtitleEntry) {
     setSubtitles((prev) => [...prev.slice(-1), entry]);
-    window.setTimeout(() => {
-      setSubtitles((prev) => prev.filter((item) => item.id !== entry.id));
-    }, 6000);
+    window.setTimeout(() => { setSubtitles((prev) => prev.filter((item) => item.id !== entry.id)); }, 6000);
   }
   function startDeepgram(lang: string) {
     const socket = socketRef.current;
@@ -141,9 +127,7 @@ export default function CallPage() {
     processor.onaudioprocess = (event) => {
       const f32 = event.inputBuffer.getChannelData(0);
       const i16 = new Int16Array(f32.length);
-      for (let i = 0; i < f32.length; i += 1) {
-        i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768));
-      }
+      for (let i = 0; i < f32.length; i += 1) { i16[i] = Math.max(-32768, Math.min(32767, f32[i] * 32768)); }
       socket.emit("audio-chunk", i16.buffer);
     };
     source.connect(processor);
@@ -153,9 +137,7 @@ export default function CallPage() {
     if (!roomId) return;
     let mounted = true;
     let remoteUserId: string | null = null;
-    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001", {
-      transports: ["polling"],
-    });
+    const socket = io(process.env.NEXT_PUBLIC_SERVER_URL || "http://localhost:3001", { transports: ["polling"] });
     socketRef.current = socket;
     const glot = new GLOTConnection();
     glotRef.current = glot;
@@ -177,41 +159,22 @@ export default function CallPage() {
       }
     };
     pc.onicecandidate = (event) => {
-      if (event.candidate && remoteUserId) {
-        socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate });
-      }
+      if (event.candidate && remoteUserId) { socket.emit("ice-candidate", { to: remoteUserId, candidate: event.candidate }); }
     };
     socket.on("connect", () => setConnectionState("waiting"));
     socket.on("transcript-result", async ({ text, isFinal }: { text: string; isFinal: boolean }) => {
       if (!text.trim() || !isFinal) return;
       const translated = await translate(text, fromLang, toLang);
-      addSubtitle({
-        id: ++subtitleIdRef.current,
-        speaker: "local",
-        original: text,
-        translated,
-        flag: LANGS[fromLang]?.flag,
-        time: nowTime(),
-      });
+      addSubtitle({ id: ++subtitleIdRef.current, speaker: "local", original: text, translated, flag: LANGS[fromLang]?.flag, time: nowTime() });
     });
     socket.on("subtitle", async ({ text, lang }: { text: string; lang: string }) => {
       if (!text.trim()) return;
       const translated = await translate(text, lang, toLang);
-      addSubtitle({
-        id: ++subtitleIdRef.current,
-        speaker: "remote",
-        original: text,
-        translated,
-        flag: LANGS[lang]?.flag || "🌐",
-        time: nowTime(),
-      });
+      addSubtitle({ id: ++subtitleIdRef.current, speaker: "remote", original: text, translated, flag: LANGS[lang]?.flag || "🌐", time: nowTime() });
     });
     async function start() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: mode === "video",
-          audio: true,
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: mode === "video", audio: true });
         if (!mounted) return;
         localStreamRef.current = stream;
         setCamOn(mode === "video" && stream.getVideoTracks().some((track) => track.enabled));
@@ -220,9 +183,7 @@ export default function CallPage() {
         glot.addLocalStream(stream);
         socket.emit("join-room", roomId);
         startDeepgram(fromLang);
-      } catch {
-        showToast("No se pudo acceder a cámara o micrófono");
-      }
+      } catch { showToast("No se pudo acceder a cámara o micrófono"); }
     }
     socket.on("user-joined", async (userId: string) => {
       remoteUserId = userId;
@@ -239,12 +200,8 @@ export default function CallPage() {
       await pc.setLocalDescription(answer);
       socket.emit("answer", { to: from, answer });
     });
-    socket.on("answer", async ({ answer }: any) => {
-      await pc.setRemoteDescription(answer);
-    });
-    socket.on("ice-candidate", async ({ candidate }: any) => {
-      await pc.addIceCandidate(candidate);
-    });
+    socket.on("answer", async ({ answer }: any) => { await pc.setRemoteDescription(answer); });
+    socket.on("ice-candidate", async ({ candidate }: any) => { await pc.addIceCandidate(candidate); });
     start();
     return () => {
       mounted = false;
@@ -254,17 +211,29 @@ export default function CallPage() {
       socket.disconnect();
     };
   }, [roomId, mode]);
+
   return (
     <main className="fixed inset-0 isolate h-[100svh] w-screen overflow-hidden bg-black text-white antialiased">
       <CallStyles />
-      <VideoLayer
-        mode={mode}
-        remoteVideoRef={remoteVideoRef}
-        localBackgroundRef={localBackgroundRef}
-        hasRemoteVideo={hasRemoteVideo}
-        connectionState={connectionState}
-      />
+
+      {/* WaitingLayer: visible cuando no hay vídeo remoto */}
+      <div
+        className="absolute inset-0 transition-opacity duration-700"
+        style={{ opacity: hasRemoteVideo ? 0 : 1, pointerEvents: hasRemoteVideo ? "none" : "auto", zIndex: hasRemoteVideo ? 0 : 10 }}
+      >
+        <WaitingLayer localBackgroundRef={localBackgroundRef} mode={mode} onShare={share} />
+      </div>
+
+      {/* ActiveLayer: visible cuando hay vídeo remoto */}
+      <div
+        className="absolute inset-0 transition-opacity duration-700"
+        style={{ opacity: hasRemoteVideo ? 1 : 0, pointerEvents: hasRemoteVideo ? "auto" : "none", zIndex: hasRemoteVideo ? 10 : 0 }}
+      >
+        <ActiveLayer remoteVideoRef={remoteVideoRef} />
+      </div>
+
       <TopBar elapsed={elapsed} onShare={share} />
+
       <LocalPreview
         refVideo={localPreviewRef}
         mode={mode}
@@ -272,13 +241,15 @@ export default function CallPage() {
         micOn={micOn}
         flag={LANGS[fromLang]?.flag}
       />
-      {ccOn && (
+
+      {ccOn && hasRemoteVideo && (
         <SubtitleStack
           subtitles={subtitles}
           fallbackState={connectionState}
           fromLabel={LANGS[fromLang]?.label}
         />
       )}
+
       <BottomControls
         micOn={micOn}
         camOn={camOn}
@@ -291,6 +262,7 @@ export default function CallPage() {
         onToggleCc={() => setCcOn((prev) => !prev)}
         onChangeLanguage={() => setShowLangModal(true)}
       />
+
       {showLangModal && (
         <LanguageModal
           fromLang={fromLang}
@@ -304,61 +276,93 @@ export default function CallPage() {
     </main>
   );
 }
-function VideoLayer({
-  mode,
-  remoteVideoRef,
+
+// ── WAITING LAYER ──────────────────────────────────────────────────────────────
+function WaitingLayer({
   localBackgroundRef,
-  hasRemoteVideo,
-  connectionState,
+  mode,
+  onShare,
 }: {
-  mode: CallMode;
-  remoteVideoRef: React.RefObject<HTMLVideoElement>;
   localBackgroundRef: React.RefObject<HTMLVideoElement>;
-  hasRemoteVideo: boolean;
-  connectionState: ConnectionState;
+  mode: CallMode;
+  onShare: () => void;
 }) {
   return (
-    <section className="absolute inset-0 z-0 overflow-hidden">
-      <video
-        ref={remoteVideoRef}
-        autoPlay
-        playsInline
-        className={`absolute inset-0 h-full w-full scale-[1.02] object-cover transition-opacity duration-500 ${
-          hasRemoteVideo ? "opacity-100" : "opacity-0"
-        }`}
-        style={{ filter: "brightness(.75) contrast(.92) saturate(.70)" }}
-      />
+    <section className="absolute inset-0 overflow-hidden">
+      {/* Local video as full-screen background */}
       <video
         ref={localBackgroundRef}
         autoPlay
         muted
         playsInline
-        className={`absolute inset-0 h-full w-full scale-110 object-cover transition-opacity duration-500 ${
-          hasRemoteVideo || mode === "voice" ? "opacity-35 blur-xl" : "opacity-60 blur-md"
-        }`}
-        style={{ filter: "brightness(.5) contrast(.85) saturate(.55)" }}
+        className="absolute inset-0 h-full w-full scale-105 object-cover"
+        style={{ filter: "brightness(.55) contrast(.88) saturate(.65)" }}
       />
-      {mode === "voice" && <VoiceOnlyAura />}
+      {/* Cinematic overlays */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.40)_0%,rgba(0,0,0,.10)_30%,rgba(0,0,0,.60)_68%,rgba(0,0,0,.97)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(0,0,0,.65)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_80%,rgba(0,212,232,.09),transparent_32%),radial-gradient(circle_at_80%_85%,rgba(255,92,106,.07),transparent_28%)]" />
 
-      {/* CAMBIO 1: overlay más oscuro con más peso en el bottom */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.30)_0%,rgba(0,0,0,.04)_22%,rgba(0,0,0,.55)_60%,rgba(0,0,0,.97)_100%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(0,0,0,.60)_100%)]" />
-
-      {/* CAMBIO 4: ambient glow suave en esquinas inferiores */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_92%,rgba(0,212,232,.07),transparent_26%),radial-gradient(circle_at_88%_95%,rgba(255,92,106,.06),transparent_24%)]" />
-
-      {!hasRemoteVideo && (
-        <div className="absolute left-1/2 top-[38%] -translate-x-1/2 -translate-y-1/2 text-center">
-          <div className="mx-auto mb-4 h-16 w-16 rounded-full border border-white/10 bg-white/[.06] backdrop-blur-xl shadow-[0_0_60px_rgba(0,212,232,.16)]" />
-          <p className="text-sm font-medium text-white/70">
-            {connectionState === "connecting" ? "Conectando…" : "Esperando participante"}
-          </p>
-          <p className="mt-2 text-xs text-white/35">Comparte el enlace para empezar.</p>
+      {/* Center content */}
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center gap-6 text-center px-6 w-full max-w-sm">
+        {/* Animated rings */}
+        <div className="relative flex items-center justify-center">
+          <div className="h-20 w-20 rounded-full border border-white/10 bg-white/[.04] backdrop-blur-xl shadow-[0_0_80px_rgba(0,212,232,.18)]" />
+          <div className="absolute h-32 w-32 animate-spablaPulse rounded-full border border-cyan-300/10" />
+          <div className="absolute h-44 w-44 animate-spablaPulseSlow rounded-full border border-cyan-300/[.05]" />
+          <svg className="absolute" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.45)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+            <circle cx="12" cy="7" r="4"/>
+          </svg>
         </div>
-      )}
+
+        <div className="flex flex-col gap-2">
+          <p className="text-lg font-semibold text-white/90 tracking-tight">Esperando participante</p>
+          <p className="text-sm text-white/40 leading-relaxed">
+            Comparte el enlace para iniciar<br />la conversación traducida
+          </p>
+        </div>
+
+        {/* Share CTA */}
+        <button
+          onClick={onShare}
+          className="flex items-center gap-2.5 rounded-full border border-cyan-300/35 bg-cyan-400/15 px-6 py-3 text-sm font-medium text-cyan-200 shadow-[0_0_32px_rgba(0,212,232,.18)] backdrop-blur-xl transition-transform active:scale-95"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+            <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+          Compartir enlace
+        </button>
+      </div>
     </section>
   );
 }
+
+// ── ACTIVE LAYER ───────────────────────────────────────────────────────────────
+function ActiveLayer({
+  remoteVideoRef,
+}: {
+  remoteVideoRef: React.RefObject<HTMLVideoElement>;
+}) {
+  return (
+    <section className="absolute inset-0 overflow-hidden">
+      <video
+        ref={remoteVideoRef}
+        autoPlay
+        playsInline
+        className="absolute inset-0 h-full w-full scale-[1.02] object-cover"
+        style={{ filter: "brightness(.75) contrast(.92) saturate(.70)" }}
+      />
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.30)_0%,rgba(0,0,0,.04)_22%,rgba(0,0,0,.55)_60%,rgba(0,0,0,.97)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(0,0,0,.60)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_12%_92%,rgba(0,212,232,.07),transparent_26%),radial-gradient(circle_at_88%_95%,rgba(255,92,106,.06),transparent_24%)]" />
+    </section>
+  );
+}
+
+// ── REST OF COMPONENTS (unchanged) ────────────────────────────────────────────
 function VoiceOnlyAura() {
   return (
     <div className="absolute inset-0 flex items-center justify-center">
@@ -397,17 +401,10 @@ function StatusPill() {
   );
 }
 function LocalPreview({
-  refVideo,
-  mode,
-  camOn,
-  micOn,
-  flag,
+  refVideo, mode, camOn, micOn, flag,
 }: {
   refVideo: React.RefObject<HTMLVideoElement>;
-  mode: CallMode;
-  camOn: boolean;
-  micOn: boolean;
-  flag: string;
+  mode: CallMode; camOn: boolean; micOn: boolean; flag: string;
 }) {
   if (mode === "voice") {
     return (
@@ -418,7 +415,6 @@ function LocalPreview({
     );
   }
   return (
-    // CAMBIO 2: glow cyan reducido ~60% (de .18/.15 a .07/.06)
     <aside className="absolute right-4 top-[max(68px,calc(env(safe-area-inset-top)+54px))] z-30 aspect-[3/4] w-[clamp(90px,22vw,140px)] overflow-hidden rounded-[clamp(12px,3vw,18px)] border-2 border-cyan-300/40 shadow-[0_0_0_1px_rgba(0,212,232,.07),0_12px_40px_rgba(0,0,0,.85),0_0_12px_rgba(0,212,232,.06)]">
       <video ref={refVideo} autoPlay muted playsInline className="h-full w-full object-cover" />
       {!camOn && (
@@ -439,14 +435,8 @@ function MicDot({ active }: { active: boolean }) {
     />
   );
 }
-function SubtitleStack({
-  subtitles,
-  fallbackState,
-  fromLabel,
-}: {
-  subtitles: SubtitleEntry[];
-  fallbackState: ConnectionState;
-  fromLabel: string;
+function SubtitleStack({ subtitles, fallbackState, fromLabel }: {
+  subtitles: SubtitleEntry[]; fallbackState: ConnectionState; fromLabel: string;
 }) {
   if (subtitles.length === 0) {
     return (
@@ -463,11 +453,7 @@ function SubtitleStack({
   return (
     <section className="pointer-events-none absolute bottom-[clamp(155px,22vh,215px)] left-0 right-0 z-20 flex flex-col gap-[clamp(6px,1.5vw,10px)] px-[clamp(16px,4vw,24px)]">
       {subtitles.map((subtitle, index) => (
-        <SubtitleCard
-          key={subtitle.id}
-          subtitle={subtitle}
-          isLast={index === subtitles.length - 1}
-        />
+        <SubtitleCard key={subtitle.id} subtitle={subtitle} isLast={index === subtitles.length - 1} />
       ))}
     </section>
   );
@@ -476,35 +462,19 @@ function SubtitleCard({ subtitle, isLast }: { subtitle: SubtitleEntry; isLast: b
   const isLocal = subtitle.speaker === "local";
   const accent = isLocal ? C : R;
   return (
-    <article
-      className={`max-w-[calc(100vw-48px)] transition duration-300 ${
-        isLast ? "animate-subIn opacity-100" : "scale-[.97] opacity-40"
-      }`}
-    >
+    <article className={`max-w-[calc(100vw-48px)] transition duration-300 ${isLast ? "animate-subIn opacity-100" : "scale-[.97] opacity-40"}`}>
       <div className="mb-1 flex items-center gap-1.5 pl-0.5">
-        <span
-          className="text-[clamp(10px,2.5vw,12px)] font-bold uppercase tracking-[.05em]"
-          style={{ color: accent }}
-        >
+        <span className="text-[clamp(10px,2.5vw,12px)] font-bold uppercase tracking-[.05em]" style={{ color: accent }}>
           {isLocal ? "Tú" : "Participante"}
         </span>
         <span className="text-[clamp(9px,2vw,10px)] text-white/30">· {subtitle.time}</span>
       </div>
-      {/* CAMBIO 3: padding reducido, border-radius más compacto, sombra más suave */}
-      <div
-        className="rounded-[clamp(10px,2.5vw,14px)] border-l-[3px] bg-black/60 px-[clamp(10px,2.5vw,14px)] py-[clamp(7px,1.8vw,10px)] shadow-[0_2px_16px_rgba(0,0,0,.40)] backdrop-blur-2xl"
-        style={{ borderLeftColor: accent }}
-      >
+      <div className="rounded-[clamp(10px,2.5vw,14px)] border-l-[3px] bg-black/60 px-[clamp(10px,2.5vw,14px)] py-[clamp(7px,1.8vw,10px)] shadow-[0_2px_16px_rgba(0,0,0,.40)] backdrop-blur-2xl" style={{ borderLeftColor: accent }}>
         <div className="mb-1 flex items-center gap-2">
           <span className="shrink-0 text-[clamp(14px,3.5vw,18px)] leading-none">{subtitle.flag}</span>
-          <p className="text-[clamp(10px,2.5vw,12px)] italic leading-snug text-white/40">
-            {subtitle.original}
-          </p>
+          <p className="text-[clamp(10px,2.5vw,12px)] italic leading-snug text-white/40">{subtitle.original}</p>
         </div>
-        <p
-          className="pl-[clamp(20px,4.5vw,26px)] text-[clamp(15px,4vw,20px)] font-bold leading-snug tracking-[-.01em] text-white"
-          style={{ textShadow: `0 0 20px ${accent}30` }}
-        >
+        <p className="pl-[clamp(20px,4.5vw,26px)] text-[clamp(15px,4vw,20px)] font-bold leading-snug tracking-[-.01em] text-white" style={{ textShadow: `0 0 20px ${accent}30` }}>
           {subtitle.translated}
         </p>
         <div className="mt-1.5 h-[1px] rounded-full" style={{ background: `linear-gradient(to right, ${accent}60, transparent)` }} />
@@ -513,145 +483,71 @@ function SubtitleCard({ subtitle, isLast }: { subtitle: SubtitleEntry; isLast: b
   );
 }
 function BottomControls({
-  micOn,
-  camOn,
-  ccOn,
-  mode,
-  fromLabel,
-  onToggleMic,
-  onToggleCam,
-  onHangUp,
-  onToggleCc,
-  onChangeLanguage,
+  micOn, camOn, ccOn, mode, fromLabel,
+  onToggleMic, onToggleCam, onHangUp, onToggleCc, onChangeLanguage,
 }: {
-  micOn: boolean;
-  camOn: boolean;
-  ccOn: boolean;
-  mode: CallMode;
-  fromLabel: string;
-  onToggleMic: () => void;
-  onToggleCam: () => void;
-  onHangUp: () => void;
-  onToggleCc: () => void;
-  onChangeLanguage: () => void;
+  micOn: boolean; camOn: boolean; ccOn: boolean; mode: CallMode; fromLabel: string;
+  onToggleMic: () => void; onToggleCam: () => void; onHangUp: () => void;
+  onToggleCc: () => void; onChangeLanguage: () => void;
 }) {
   return (
     <footer className="absolute bottom-0 left-0 right-0 z-30 flex max-w-[100vw] flex-col items-center gap-[clamp(10px,2vh,16px)] overflow-hidden px-4 pb-[max(24px,calc(env(safe-area-inset-bottom)+18px))]">
       <div className="flex items-center gap-1.5">
         <WaveIcon color={C} />
-        <span className="text-[clamp(10px,2.5vw,12px)] text-cyan-300/80">
-          Hablando en {fromLabel}
-        </span>
+        <span className="text-[clamp(10px,2.5vw,12px)] text-cyan-300/80">Hablando en {fromLabel}</span>
       </div>
       <nav className="flex max-w-[calc(100vw-32px)] items-center gap-[clamp(8px,2.5vw,14px)] overflow-hidden rounded-[clamp(20px,5vw,32px)] border border-white/10 bg-[#080912]/80 px-[clamp(14px,4vw,24px)] py-[clamp(12px,3vw,16px)] shadow-[0_-4px_48px_rgba(0,0,0,.55),inset_0_1px_0_rgba(255,255,255,.07)] backdrop-blur-3xl">
-        <RoundButton onClick={onToggleMic} label="Micrófono" danger={!micOn}>
-          <MicIcon muted={!micOn} />
-        </RoundButton>
-        <RoundButton onClick={onToggleCam} label="Cámara" danger={!camOn} disabled={mode === "voice"}>
-          <CameraIcon off={!camOn || mode === "voice"} />
-        </RoundButton>
+        <RoundButton onClick={onToggleMic} label="Micrófono" danger={!micOn}><MicIcon muted={!micOn} /></RoundButton>
+        <RoundButton onClick={onToggleCam} label="Cámara" danger={!camOn} disabled={mode === "voice"}><CameraIcon off={!camOn || mode === "voice"} /></RoundButton>
         <div className="flex shrink-0 flex-col items-center gap-1.5">
-          <button
-            onClick={onHangUp}
-            className="flex h-[clamp(52px,14vw,68px)] w-[clamp(52px,14vw,68px)] items-center justify-center rounded-full bg-gradient-to-br from-[#ff3f55] to-[#ff5c6a] shadow-[0_0_0_1px_rgba(255,92,106,.35),0_6px_28px_rgba(255,60,80,.55)] active:scale-95"
-          >
+          <button onClick={onHangUp} className="flex h-[clamp(52px,14vw,68px)] w-[clamp(52px,14vw,68px)] items-center justify-center rounded-full bg-gradient-to-br from-[#ff3f55] to-[#ff5c6a] shadow-[0_0_0_1px_rgba(255,92,106,.35),0_6px_28px_rgba(255,60,80,.55)] active:scale-95">
             <PhoneIcon />
           </button>
           <span className="whitespace-nowrap text-[clamp(9px,2vw,10px)] tracking-[.04em] text-white/40">Colgar</span>
         </div>
         <RoundButton onClick={onToggleCc} label="Subtítulos" accent={ccOn ? C : undefined}>
-          <span className="text-xs font-extrabold tracking-[.06em]" style={{ color: ccOn ? C : "rgba(255,255,255,.5)" }}>
-            CC
-          </span>
+          <span className="text-xs font-extrabold tracking-[.06em]" style={{ color: ccOn ? C : "rgba(255,255,255,.5)" }}>CC</span>
         </RoundButton>
-        <RoundButton onClick={onChangeLanguage} label="Idioma">
-          <LanguageIcon />
-        </RoundButton>
+        <RoundButton onClick={onChangeLanguage} label="Idioma"><LanguageIcon /></RoundButton>
       </nav>
       <p className="text-[clamp(9px,2vw,11px)] tracking-[.04em] text-white/20">🔒 Conversación privada y segura</p>
     </footer>
   );
 }
-function RoundButton({
-  onClick,
-  label,
-  danger,
-  accent,
-  disabled,
-  children,
-}: {
-  onClick: () => void;
-  label: string;
-  danger?: boolean;
-  accent?: string;
-  disabled?: boolean;
-  children: React.ReactNode;
+function RoundButton({ onClick, label, danger, accent, disabled, children }: {
+  onClick: () => void; label: string; danger?: boolean; accent?: string; disabled?: boolean; children: React.ReactNode;
 }) {
   return (
     <div className="flex shrink-0 flex-col items-center gap-1.5">
-      <button
-        onClick={onClick}
-        disabled={disabled}
+      <button onClick={onClick} disabled={disabled}
         className="flex h-[clamp(46px,11vw,56px)] w-[clamp(46px,11vw,56px)] items-center justify-center rounded-full border-[1.5px] backdrop-blur-xl active:scale-95 disabled:cursor-not-allowed disabled:opacity-35"
         style={{
           background: danger ? "rgba(255,50,70,.80)" : accent ? `${accent}20` : "rgba(255,255,255,.10)",
           borderColor: danger ? "rgba(255,60,80,.55)" : accent ? `${accent}60` : "rgba(255,255,255,.14)",
           boxShadow: accent ? `0 0 20px ${accent}28` : "none",
-        }}
-      >
+        }}>
         {children}
       </button>
-      <span className="whitespace-nowrap text-[clamp(9px,2vw,10px)] tracking-[.03em] text-white/40">
-        {label}
-      </span>
+      <span className="whitespace-nowrap text-[clamp(9px,2vw,10px)] tracking-[.03em] text-white/40">{label}</span>
     </div>
   );
 }
-function LanguageModal({
-  fromLang,
-  toLang,
-  onFromLang,
-  onToLang,
-  onClose,
-}: {
-  fromLang: string;
-  toLang: string;
-  onFromLang: (lang: string) => void;
-  onToLang: (lang: string) => void;
-  onClose: () => void;
+function LanguageModal({ fromLang, toLang, onFromLang, onToLang, onClose }: {
+  fromLang: string; toLang: string; onFromLang: (l: string) => void; onToLang: (l: string) => void; onClose: () => void;
 }) {
   return (
-    <div
-      onClick={onClose}
-      className="absolute inset-0 z-40 flex items-end justify-center bg-black/70 px-4 pb-[max(40px,env(safe-area-inset-bottom))] backdrop-blur-xl"
-    >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        className="w-[min(420px,calc(100vw-32px))] rounded-[28px] border border-white/10 bg-[#0b0c16]/95 px-5 py-6 shadow-[0_-8px_64px_rgba(0,0,0,.65)]"
-      >
+    <div onClick={onClose} className="absolute inset-0 z-40 flex items-end justify-center bg-black/70 px-4 pb-[max(40px,env(safe-area-inset-bottom))] backdrop-blur-xl">
+      <div onClick={(e) => e.stopPropagation()} className="w-[min(420px,calc(100vw-32px))] rounded-[28px] border border-white/10 bg-[#0b0c16]/95 px-5 py-6 shadow-[0_-8px_64px_rgba(0,0,0,.65)]">
         <p className="mb-5 text-center text-[11px] uppercase tracking-[.10em] text-white/30">Idiomas</p>
         <LanguageGroup label="Tú hablas" value={fromLang} accent={C} onChange={onFromLang} />
         <LanguageGroup label="Traducir a" value={toLang} accent={R} onChange={onToLang} />
-        <button
-          onClick={onClose}
-          className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[.07] py-3 text-[15px] text-white/80"
-        >
-          Listo
-        </button>
+        <button onClick={onClose} className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[.07] py-3 text-[15px] text-white/80">Listo</button>
       </div>
     </div>
   );
 }
-function LanguageGroup({
-  label,
-  value,
-  accent,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  accent: string;
-  onChange: (lang: string) => void;
+function LanguageGroup({ label, value, accent, onChange }: {
+  label: string; value: string; accent: string; onChange: (l: string) => void;
 }) {
   return (
     <div className="mb-4">
@@ -660,17 +556,13 @@ function LanguageGroup({
         {Object.entries(LANGS).map(([key, lang]) => {
           const active = value === key;
           return (
-            <button
-              key={key}
-              onClick={() => onChange(key)}
-              className="rounded-full border-[1.5px] px-4 py-2 text-sm"
+            <button key={key} onClick={() => onChange(key)} className="rounded-full border-[1.5px] px-4 py-2 text-sm"
               style={{
                 background: active ? `${accent}22` : "rgba(255,255,255,.06)",
                 borderColor: active ? accent : "rgba(255,255,255,.10)",
                 color: active ? "#fff" : "rgba(255,255,255,.48)",
                 boxShadow: active ? `0 0 18px ${accent}30` : "none",
-              }}
-            >
+              }}>
               {lang.flag} {lang.label}
             </button>
           );
@@ -690,17 +582,9 @@ function WaveIcon({ color }: { color: string }) {
   return (
     <svg width="12" height="8" viewBox="0 0 12 8" fill="none" aria-hidden="true">
       {[2, 3, 2, 5, 3, 4, 2, 3, 2].map((h, i) => (
-        <rect
-          key={i}
-          x={i * 1.3}
-          y={(8 - h) / 2}
-          width=".9"
-          height={h}
-          rx=".4"
-          fill={color}
+        <rect key={i} x={i * 1.3} y={(8 - h) / 2} width=".9" height={h} rx=".4" fill={color}
           className="animate-wavePulse"
-          style={{ animationDuration: `${1 + i * 0.18}s`, animationDelay: `${i * 0.1}s` }}
-        />
+          style={{ animationDuration: `${1 + i * 0.18}s`, animationDelay: `${i * 0.1}s` }} />
       ))}
     </svg>
   );
@@ -708,35 +592,16 @@ function WaveIcon({ color }: { color: string }) {
 function MicIcon({ muted }: { muted: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      {muted ? (
-        <>
-          <line x1="1" y1="1" x2="23" y2="23" />
-          <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" />
-          <path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6" />
-        </>
-      ) : (
-        <>
-          <rect x="9" y="2" width="6" height="11" rx="3" />
-          <path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6" />
-        </>
-      )}
+      {muted ? (<><line x1="1" y1="1" x2="23" y2="23" /><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" /><path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6" /></>)
+        : (<><rect x="9" y="2" width="6" height="11" rx="3" /><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6" /></>)}
     </svg>
   );
 }
 function CameraIcon({ off }: { off: boolean }) {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      {off ? (
-        <>
-          <line x1="1" y1="1" x2="23" y2="23" />
-          <path d="M21 21H3a2 2 0 01-2-2V8m3-3h10l2 3h1a2 2 0 012 2v6.5" />
-        </>
-      ) : (
-        <>
-          <path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14" />
-          <rect x="2" y="7" width="13" height="10" rx="2" />
-        </>
-      )}
+      {off ? (<><line x1="1" y1="1" x2="23" y2="23" /><path d="M21 21H3a2 2 0 01-2-2V8m3-3h10l2 3h1a2 2 0 012 2v6.5" /></>)
+        : (<><path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14" /><rect x="2" y="7" width="13" height="10" rx="2" /></>)}
     </svg>
   );
 }
@@ -760,26 +625,11 @@ function CallStyles() {
       *, *::before, *::after { box-sizing: border-box; }
       html, body { width: 100%; min-height: 100%; overflow-x: hidden; background: #000; }
       body { overscroll-behavior: none; }
-      @keyframes subIn {
-        from { opacity: 0; transform: translateY(10px) scale(.98); }
-        to { opacity: 1; transform: translateY(0) scale(1); }
-      }
-      @keyframes wavePulse {
-        0%, 100% { opacity: .38; }
-        50% { opacity: 1; }
-      }
-      @keyframes toastIn {
-        from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-        to { opacity: 1; transform: translateX(-50%) translateY(0); }
-      }
-      @keyframes spablaPulse {
-        0%, 100% { transform: scale(1); opacity: .45; }
-        50% { transform: scale(1.08); opacity: .75; }
-      }
-      @keyframes spablaPulseSlow {
-        0%, 100% { transform: scale(1); opacity: .35; }
-        50% { transform: scale(1.12); opacity: .62; }
-      }
+      @keyframes subIn { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+      @keyframes wavePulse { 0%, 100% { opacity: .38; } 50% { opacity: 1; } }
+      @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+      @keyframes spablaPulse { 0%, 100% { transform: scale(1); opacity: .45; } 50% { transform: scale(1.08); opacity: .75; } }
+      @keyframes spablaPulseSlow { 0%, 100% { transform: scale(1); opacity: .35; } 50% { transform: scale(1.12); opacity: .62; } }
       .animate-subIn { animation: subIn .3s ease both; }
       .animate-wavePulse { animation-name: wavePulse; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
       .animate-toastIn { animation: toastIn .25s ease both; }
