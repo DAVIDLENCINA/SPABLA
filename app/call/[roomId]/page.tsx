@@ -152,6 +152,7 @@ export default function CallPage() {
       pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
 
       socket.on("connect", () => { setConnected(true); socket.emit("join-room", roomId); startDeepgram(myLangRef.current); });
+      if (socket.connected) { setConnected(true); socket.emit("join-room", roomId); startDeepgram(myLangRef.current); }
       socket.on("disconnect", () => setConnected(false));
       socket.on("user-joined", async () => { const o = await pc.createOffer(); await pc.setLocalDescription(o); socket.emit("offer", { roomId, offer: o }); });
       socket.on("offer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.offer)); const a = await pc.createAnswer(); await pc.setLocalDescription(a); socket.emit("answer", { roomId, answer: a }); });
