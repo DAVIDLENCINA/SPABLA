@@ -7,16 +7,16 @@ import { io, Socket } from "socket.io-client";
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
 const LANGS = {
-  es: { emoji: "🇪🇸", label: "Español",  deepgram: "es"    },
-  en: { emoji: "🇬🇧", label: "English",  deepgram: "en-US" },
-  fr: { emoji: "🇫🇷", label: "Français", deepgram: "fr"    },
-  de: { emoji: "🇩🇪", label: "Deutsch",  deepgram: "de"    },
-  pt: { emoji: "🇵🇹", label: "Português",deepgram: "pt"    },
-  it: { emoji: "🇮🇹", label: "Italiano", deepgram: "it"    },
-  ja: { emoji: "🇯🇵", label: "日本語",    deepgram: "ja"    },
-  ko: { emoji: "🇰🇷", label: "한국어",    deepgram: "ko"    },
-  zh: { emoji: "🇨🇳", label: "中文",      deepgram: "zh"    },
-  ar: { emoji: "🇸🇦", label: "العربية",  deepgram: "ar"    },
+  es: { emoji: "🇪🇸", flag: "/flags/es.png", label: "Español",  deepgram: "es"    },
+  en: { emoji: "🇬🇧", flag: "/flags/uk.png", label: "English",  deepgram: "en-US" },
+  fr: { emoji: "🇫🇷", flag: "/flags/fr.png", label: "Français", deepgram: "fr"    },
+  de: { emoji: "🇩🇪", flag: "/flags/de.png", label: "Deutsch",  deepgram: "de"    },
+  pt: { emoji: "🇵🇹", flag: "/flags/pt.png", label: "Português",deepgram: "pt"    },
+  it: { emoji: "🇮🇹", flag: "/flags/it.png", label: "Italiano", deepgram: "it"    },
+  ja: { emoji: "🇯🇵", flag: "/flags/ja.png", label: "日本語",    deepgram: "ja"    },
+  ko: { emoji: "🇰🇷", flag: "/flags/ko.png", label: "한국어",    deepgram: "ko"    },
+  zh: { emoji: "🇨🇳", flag: "/flags/zh.png", label: "中文",      deepgram: "zh"    },
+  ar: { emoji: "🇸🇦", flag: "/flags/ar.png", label: "العربية",  deepgram: "ar"    },
 } as const;
 
 type LangCode = keyof typeof LANGS;
@@ -74,7 +74,6 @@ export default function CallPage() {
   const sourceRef      = useRef<MediaStreamAudioSourceNode | null>(null);
   const hideLocalRef   = useRef<number | null>(null);
   const hideRemoteRef  = useRef<number | null>(null);
-  // Ref para acceder al lang actual dentro de closures del socket
   const myLangRef      = useRef<LangCode>("es");
 
   const [myLang,        setMyLang]        = useState<LangCode>("es");
@@ -88,7 +87,6 @@ export default function CallPage() {
   const [hasRemote,     setHasRemote]     = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
 
-  // Sincronizar ref con estado
   useEffect(() => { myLangRef.current = myLang; }, [myLang]);
 
   function showLocal(next: Caption) {
@@ -151,8 +149,16 @@ export default function CallPage() {
       };
       pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
 
-      socket.on("connect", () => { setConnected(true); socket.emit("join-room", roomId); startDeepgram(myLangRef.current); });
-      if (socket.connected) { setConnected(true); socket.emit("join-room", roomId); startDeepgram(myLangRef.current); }
+      socket.on("connect", () => {
+        setConnected(true);
+        socket.emit("join-room", roomId);
+        startDeepgram(myLangRef.current);
+      });
+      if (socket.connected) {
+        setConnected(true);
+        socket.emit("join-room", roomId);
+        startDeepgram(myLangRef.current);
+      }
       socket.on("disconnect", () => setConnected(false));
       socket.on("user-joined", async () => { const o = await pc.createOffer(); await pc.setLocalDescription(o); socket.emit("offer", { roomId, offer: o }); });
       socket.on("offer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.offer)); const a = await pc.createAnswer(); await pc.setLocalDescription(a); socket.emit("answer", { roomId, answer: a }); });
@@ -202,22 +208,17 @@ export default function CallPage() {
     if (navigator.share) navigator.share({ title: "SPABLA", url: window.location.href }).catch(() => {});
     else navigator.clipboard.writeText(window.location.href);
   }
-
   function changeLang(lang: LangCode) {
-    setMyLang(lang);
-    myLangRef.current = lang;
-    stopDeepgram();
-    startDeepgram(lang);
+    setMyLang(lang); myLangRef.current = lang;
+    stopDeepgram(); startDeepgram(lang);
     setShowLangPicker(false);
   }
 
   return (
     <main style={{ background: "#000", width: "100vw", height: "100svh", overflow: "hidden", position: "relative", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
 
-      {/* Vídeo remoto fullscreen */}
       <video ref={remoteVideoRef} autoPlay playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: hasRemote ? 1 : 0, transition: "opacity .5s", zIndex: 1 }}/>
 
-      {/* Vídeo local */}
       <video ref={localVideoRef} autoPlay muted playsInline style={{
         position: "absolute", inset: hasRemote ? "auto" : 0,
         top: hasRemote ? 22 : 0, right: hasRemote ? 22 : 0,
@@ -232,10 +233,8 @@ export default function CallPage() {
         transition: "all .4s ease",
       }}/>
 
-      {/* Overlay */}
-      <div style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none", background: "linear-gradient(to bottom, rgba(0,0,0,.28) 0%, rgba(0,0,0,.0) 30%, rgba(0,0,0,.60) 68%, rgba(0,0,0,.97) 100%)" }}/>
+      <div style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none", background: "linear-gradient(to bottom, rgba(0,0,0,.28) 0%, rgba(0,0,0,.0) 30%, rgba(0,0,0,.65) 68%, rgba(0,0,0,.97) 100%)" }}/>
 
-      {/* Waiting state */}
       {!hasRemote && (
         <section style={{ position: "absolute", inset: 0, zIndex: 8, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
           <div>
@@ -257,35 +256,53 @@ export default function CallPage() {
         </button>
       </div>
 
-      {/* SUBTÍTULOS */}
+      {/* SUBTÍTULOS — estilo imagen referencia */}
       {ccOn && (
-        <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(130px, 19vh, 200px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 20, padding: "0 clamp(16px, 4vw, 28px)" }}>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(140px, 20vh, 210px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 16, padding: "0 clamp(16px, 4vw, 28px)" }}>
           {[localCaption, remoteCaption].map((cap) => {
             if (!cap) return null;
             const isLocal = cap.speaker === "local";
             const accent = isLocal ? "#00E5FF" : "#FF6B8A";
-            const emojiTo = LANGS[cap.to]?.emoji ?? LANGS[cap.from].emoji;
-            const emojiFrom = LANGS[cap.from]?.emoji ?? "🌐";
+            const flagTo   = LANGS[cap.to]?.flag   ?? LANGS[cap.from].flag;
+            const flagFrom = LANGS[cap.from]?.flag ?? flagTo;
             return (
               <div key={cap.speaker} style={{ animation: "captionIn .22s ease-out both" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                  <span style={{ color: accent, fontWeight: 800, fontSize: "clamp(13px, 3vw, 16px)" }}>{isLocal ? "Tú" : "Participante"}</span>
-                  <span style={{ color: "#8E8E93", fontSize: 9 }}>•</span>
-                  <span style={{ color: "#8E8E93", fontSize: "clamp(11px, 2.5vw, 14px)", fontVariantNumeric: "tabular-nums" }}>{cap.time}</span>
+                {/* nombre · hora */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ color: accent, fontWeight: 800, fontSize: "clamp(14px, 3.5vw, 18px)", letterSpacing: ".01em" }}>
+                    {isLocal ? "Tú" : "Participante"}
+                  </span>
+                  <span style={{ color: "#8E8E93", fontSize: 10 }}>•</span>
+                  <span style={{ color: "#8E8E93", fontSize: "clamp(12px, 2.8vw, 15px)", fontVariantNumeric: "tabular-nums" }}>{cap.time}</span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "clamp(10px, 2.5vw, 14px)" }}>
-                  <span style={{ fontSize: "clamp(28px, 7vw, 40px)", lineHeight: 1, flexShrink: 0 }}>{emojiTo}</span>
-                  <span style={{ color: "#fff", fontSize: "clamp(22px, 5.5vw, 36px)", lineHeight: 1.1, fontWeight: 650, letterSpacing: "-.03em", textShadow: "0 3px 20px rgba(0,0,0,.70)", opacity: cap.partial ? 0.6 : 1, transition: "opacity .2s" }}>
+                {/* bandera imagen + texto */}
+                <div style={{ display: "flex", alignItems: "center", gap: "clamp(12px, 3vw, 16px)" }}>
+                  <img src={flagTo} alt={cap.to} style={{
+                    width: "clamp(36px, 9vw, 52px)", height: "clamp(36px, 9vw, 52px)",
+                    borderRadius: 12, objectFit: "cover", flexShrink: 0,
+                    boxShadow: "0 4px 16px rgba(0,0,0,.60)",
+                  }}/>
+                  <span style={{
+                    color: "#fff",
+                    fontSize: "clamp(24px, 6vw, 40px)",
+                    lineHeight: 1.1, fontWeight: 650,
+                    letterSpacing: "-.03em",
+                    textShadow: `0 2px 24px rgba(0,0,0,.80), 0 0 40px ${accent}30`,
+                    opacity: cap.partial ? 0.6 : 1,
+                    transition: "opacity .2s",
+                  }}>
                     {cap.partial ? cap.original : cap.translated}
                   </span>
                 </div>
+                {/* original en cursiva */}
                 {!cap.partial && cap.original !== cap.translated && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingLeft: "clamp(38px, 9vw, 54px)", color: "rgba(255,255,255,.45)", fontSize: "clamp(12px, 2.8vw, 16px)", fontStyle: "italic" }}>
-                    <span style={{ fontSize: "clamp(14px, 3.5vw, 20px)" }}>{emojiFrom}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingLeft: "clamp(48px, 12vw, 68px)", color: "rgba(255,255,255,.42)", fontSize: "clamp(12px, 2.8vw, 16px)", fontStyle: "italic" }}>
+                    <img src={flagFrom} alt={cap.from} style={{ width: "clamp(18px, 4.5vw, 26px)", height: "clamp(18px, 4.5vw, 26px)", borderRadius: 6, objectFit: "cover", flexShrink: 0, opacity: .75 }}/>
                     <span>{cap.original}</span>
                   </div>
                 )}
-                <div style={{ marginTop: 8, height: 2, borderRadius: 999, background: isLocal ? "linear-gradient(90deg, transparent, #00E5FF, transparent)" : "linear-gradient(90deg, transparent, #FF6B8A, transparent)", animation: "wave 2s ease-in-out infinite" }}/>
+                {/* línea animada */}
+                <div style={{ marginTop: 10, height: 2, borderRadius: 999, background: isLocal ? "linear-gradient(90deg, transparent, #00E5FF, transparent)" : "linear-gradient(90deg, transparent, #FF6B8A, transparent)", animation: "wave 2s ease-in-out infinite" }}/>
               </div>
             );
           })}
@@ -293,38 +310,38 @@ export default function CallPage() {
       )}
 
       {/* CONTROLES FLOTANTES */}
-      <nav style={{ position: "absolute", bottom: "max(28px, env(safe-area-inset-bottom, 28px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(12px, 3vw, 20px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
+      <nav style={{ position: "absolute", bottom: "max(32px, env(safe-area-inset-bottom, 32px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(16px, 4.5vw, 28px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
 
         <CtrlBtn onClick={toggleMic} label="Micrófono" danger={!micOn}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             {micOn ? <><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/></> : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6"/></>}
           </svg>
         </CtrlBtn>
 
         <CtrlBtn onClick={toggleCam} label="Cámara" danger={!camOn}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             {camOn ? <><path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14"/><rect x="2" y="7" width="13" height="10" rx="2"/></> : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21H3a2 2 0 01-2-2V8m3-3h10l2 3h1a2 2 0 012 2v6.5"/></>}
           </svg>
         </CtrlBtn>
 
-        {/* Colgar */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
-          <button onClick={hangUp} style={{ width: "clamp(64px, 16vw, 78px)", height: "clamp(64px, 16vw, 78px)", borderRadius: "50%", background: "radial-gradient(circle at 38% 35%, #ff5569, #e8162e)", border: "none", boxShadow: "0 0 0 1px rgba(255,92,106,.40), 0 0 32px rgba(255,40,60,.60), 0 8px 28px rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        {/* Colgar — central grande */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+          <button onClick={hangUp} style={{ width: "clamp(68px, 17vw, 82px)", height: "clamp(68px, 17vw, 82px)", borderRadius: "50%", background: "radial-gradient(circle at 38% 35%, #ff5569, #e8162e)", border: "none", boxShadow: "0 0 0 1px rgba(255,92,106,.40), 0 0 40px rgba(255,40,60,.65), 0 8px 28px rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 0111.82 19a19.5 19.5 0 01-6-6A19.79 19.79 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
             </svg>
           </button>
-          <span style={{ fontSize: 10, color: "rgba(255,255,255,.45)", letterSpacing: ".04em" }}>Colgar</span>
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,.50)", letterSpacing: ".04em" }}>Colgar</span>
         </div>
 
         {/* CC */}
         <CtrlBtn onClick={() => setCcOn(p => !p)} label="Subtítulos" accent={ccOn ? "#00E5FF" : undefined}>
-          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".06em", color: ccOn ? "#00E5FF" : "rgba(255,255,255,.50)" }}>CC</span>
+          <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: ".06em", color: ccOn ? "#00E5FF" : "rgba(255,255,255,.50)" }}>CC</span>
         </CtrlBtn>
 
         {/* Cambiar idioma */}
         <CtrlBtn onClick={() => setShowLangPicker(true)} label="Idioma">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.80)" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.80)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M8 3L4 7l4 4M16 21l4-4-4-4M4 7h16M4 17h16"/>
           </svg>
         </CtrlBtn>
@@ -335,18 +352,18 @@ export default function CallPage() {
       {showLangPicker && (
         <div onClick={() => setShowLangPicker(false)} style={{ position: "absolute", inset: 0, zIndex: 90, background: "rgba(0,0,0,.75)", backdropFilter: "blur(16px)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 16px 40px" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", background: "rgba(12,13,22,.97)", border: "1px solid rgba(255,255,255,.10)", borderRadius: 28, padding: "24px 20px", boxShadow: "0 -8px 64px rgba(0,0,0,.65)" }}>
-            <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,.35)", letterSpacing: ".10em", textTransform: "uppercase", marginBottom: 20 }}>Tú hablas</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 24 }}>
+            <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,.35)", letterSpacing: ".10em", textTransform: "uppercase", marginBottom: 16 }}>Tú hablas</p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
               {(Object.keys(LANGS) as LangCode[]).map(k => (
-                <button key={k} onClick={() => changeLang(k)} style={{ padding: "9px 14px", borderRadius: 999, fontSize: 14, background: myLang === k ? "rgba(0,212,232,.18)" : "rgba(255,255,255,.06)", border: `1.5px solid ${myLang === k ? "#00E5FF" : "rgba(255,255,255,.10)"}`, color: myLang === k ? "#fff" : "rgba(255,255,255,.50)", cursor: "pointer", boxShadow: myLang === k ? "0 0 16px rgba(0,212,232,.25)" : "none" }}>
+                <button key={k} onClick={() => changeLang(k)} style={{ padding: "8px 14px", borderRadius: 999, fontSize: 14, background: myLang === k ? "rgba(0,212,232,.18)" : "rgba(255,255,255,.06)", border: `1.5px solid ${myLang === k ? "#00E5FF" : "rgba(255,255,255,.10)"}`, color: myLang === k ? "#fff" : "rgba(255,255,255,.50)", cursor: "pointer" }}>
                   {LANGS[k].emoji} {LANGS[k].label}
                 </button>
               ))}
             </div>
             <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,.35)", letterSpacing: ".10em", textTransform: "uppercase", marginBottom: 16 }}>Traducir a</p>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
               {(Object.keys(LANGS) as LangCode[]).map(k => (
-                <button key={k} onClick={() => setTargetLang(k)} style={{ padding: "9px 14px", borderRadius: 999, fontSize: 14, background: targetLang === k ? "rgba(255,92,106,.18)" : "rgba(255,255,255,.06)", border: `1.5px solid ${targetLang === k ? "#FF6B8A" : "rgba(255,255,255,.10)"}`, color: targetLang === k ? "#fff" : "rgba(255,255,255,.50)", cursor: "pointer", boxShadow: targetLang === k ? "0 0 16px rgba(255,92,106,.25)" : "none" }}>
+                <button key={k} onClick={() => setTargetLang(k)} style={{ padding: "8px 14px", borderRadius: 999, fontSize: 14, background: targetLang === k ? "rgba(255,92,106,.18)" : "rgba(255,255,255,.06)", border: `1.5px solid ${targetLang === k ? "#FF6B8A" : "rgba(255,255,255,.10)"}`, color: targetLang === k ? "#fff" : "rgba(255,255,255,.50)", cursor: "pointer" }}>
                   {LANGS[k].emoji} {LANGS[k].label}
                 </button>
               ))}
@@ -368,8 +385,17 @@ function CtrlBtn({ onClick, label, danger, accent, children }: {
   onClick: () => void; label: string; danger?: boolean; accent?: string; children: React.ReactNode;
 }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, flexShrink: 0 }}>
-      <button onClick={onClick} style={{ width: "clamp(52px, 13vw, 64px)", height: "clamp(52px, 13vw, 64px)", borderRadius: "50%", background: danger ? "rgba(255,50,70,.80)" : accent ? `${accent}22` : "rgba(255,255,255,.10)", border: `1.5px solid ${danger ? "rgba(255,60,80,.55)" : accent ? `${accent}60` : "rgba(255,255,255,.18)"}`, backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: accent ? `0 0 20px ${accent}40` : "0 4px 20px rgba(0,0,0,.40)" }}>
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, flexShrink: 0 }}>
+      <button onClick={onClick} style={{
+        width: "clamp(56px, 14vw, 68px)", height: "clamp(56px, 14vw, 68px)",
+        borderRadius: "50%",
+        background: danger ? "rgba(255,50,70,.80)" : accent ? `${accent}22` : "rgba(255,255,255,.10)",
+        border: `1.5px solid ${danger ? "rgba(255,60,80,.55)" : accent ? `${accent}60` : "rgba(255,255,255,.18)"}`,
+        backdropFilter: "blur(20px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", flexShrink: 0,
+        boxShadow: accent ? `0 0 24px ${accent}40` : "0 4px 20px rgba(0,0,0,.45)",
+      }}>
         {children}
       </button>
       <span style={{ fontSize: 10, color: "rgba(255,255,255,.42)", letterSpacing: ".03em", whiteSpace: "nowrap" }}>{label}</span>
