@@ -34,9 +34,7 @@ function nowTime() {
 async function translate(text: string, from: LangCode, to: LangCode): Promise<string> {
   if (!text.trim() || from === to) return text;
   try {
-    const res = await fetch(
-      `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${from}|${to}`
-    );
+    const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${from}|${to}`);
     const data = await res.json();
     return data?.responseData?.translatedText || text;
   } catch { return text; }
@@ -63,6 +61,7 @@ export default function CallPage() {
   const [remoteCaption, setRemoteCaption] = useState<Caption | null>(null);
   const [micOn,         setMicOn]         = useState(true);
   const [camOn,         setCamOn]         = useState(true);
+  const [ccOn,          setCcOn]          = useState(true);
   const [connected,     setConnected]     = useState(false);
   const [hasRemote,     setHasRemote]     = useState(false);
 
@@ -174,7 +173,7 @@ export default function CallPage() {
   function switchLang() { setMyLang(otherLang(myLang)); }
   function share() {
     if (navigator.share) navigator.share({ title: "SPABLA", url: window.location.href }).catch(() => {});
-    else { navigator.clipboard.writeText(window.location.href); }
+    else navigator.clipboard.writeText(window.location.href);
   }
 
   return (
@@ -185,14 +184,12 @@ export default function CallPage() {
 
       {/* Vídeo local */}
       <video ref={localVideoRef} autoPlay muted playsInline style={{
-        position: "absolute",
-        inset: hasRemote ? "auto" : 0,
+        position: "absolute", inset: hasRemote ? "auto" : 0,
         top: hasRemote ? 22 : 0, right: hasRemote ? 22 : 0,
         width: hasRemote ? "min(28vw, 180px)" : "100%",
         height: hasRemote ? "auto" : "100%",
         aspectRatio: hasRemote ? "3 / 4" : "auto",
-        objectFit: "cover",
-        borderRadius: hasRemote ? 24 : 0,
+        objectFit: "cover", borderRadius: hasRemote ? 24 : 0,
         border: hasRemote ? "2px solid rgba(0,212,255,.75)" : "none",
         filter: hasRemote ? "none" : "brightness(.62) saturate(.85)",
         zIndex: hasRemote ? 20 : 2,
@@ -213,59 +210,55 @@ export default function CallPage() {
         </section>
       )}
 
-      {/* Header top */}
+      {/* Header */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "max(14px, env(safe-area-inset-top)) 16px 0" }}>
-        {/* Badge idioma */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#fff", fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,.52)", border: "1px solid rgba(255,255,255,.14)", borderRadius: 999, padding: "8px 14px", backdropFilter: "blur(18px)" }}>
           <span>{LANGS[myLang].emoji}</span>
           <span>{LANGS[myLang].label}</span>
           <span style={{ color: connected ? "#41ff9d" : "#ff5c6a", fontSize: 10 }}>●</span>
         </div>
-        {/* Compartir */}
         <button onClick={share} style={{ background: "rgba(0,0,0,.52)", border: "1px solid rgba(255,255,255,.14)", borderRadius: 999, padding: "8px 16px", color: "rgba(255,255,255,.80)", fontSize: 13, fontWeight: 600, cursor: "pointer", backdropFilter: "blur(18px)" }}>
           Compartir
         </button>
       </div>
 
       {/* SUBTÍTULOS */}
-      <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(130px, 19vh, 200px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 20, padding: "0 clamp(16px, 4vw, 28px)" }}>
-        {[localCaption, remoteCaption].map((cap) => {
-          if (!cap) return null;
-          const isLocal = cap.speaker === "local";
-          const accent = isLocal ? "#00E5FF" : "#FF6B8A";
-          const flagTo = FLAG[cap.to] ?? FLAG[cap.from];
-          const flagFrom = FLAG[cap.from];
-          return (
-            <div key={cap.speaker} style={{ animation: "captionIn .22s ease-out both" }}>
-              {/* nombre · hora */}
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ color: accent, fontWeight: 800, fontSize: "clamp(13px, 3vw, 16px)" }}>{isLocal ? "Tú" : "Participante"}</span>
-                <span style={{ color: "#8E8E93", fontSize: 9 }}>•</span>
-                <span style={{ color: "#8E8E93", fontSize: "clamp(11px, 2.5vw, 14px)", fontVariantNumeric: "tabular-nums" }}>{cap.time}</span>
-              </div>
-              {/* emoji bandera + texto */}
-              <div style={{ display: "flex", alignItems: "center", gap: "clamp(10px, 2.5vw, 14px)" }}>
-                <span style={{ fontSize: "clamp(28px, 7vw, 40px)", lineHeight: 1, flexShrink: 0 }}>{flagTo}</span>
-                <span style={{ color: "#fff", fontSize: "clamp(22px, 5.5vw, 36px)", lineHeight: 1.1, fontWeight: 650, letterSpacing: "-.03em", textShadow: "0 3px 20px rgba(0,0,0,.70)", opacity: cap.partial ? 0.6 : 1, transition: "opacity .2s" }}>
-                  {cap.partial ? cap.original : cap.translated}
-                </span>
-              </div>
-              {/* original en cursiva */}
-              {!cap.partial && cap.original !== cap.translated && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingLeft: "clamp(38px, 9vw, 54px)", color: "rgba(255,255,255,.45)", fontSize: "clamp(12px, 2.8vw, 16px)", fontStyle: "italic" }}>
-                  <span style={{ fontSize: "clamp(14px, 3.5vw, 20px)" }}>{flagFrom}</span>
-                  <span>{cap.original}</span>
+      {ccOn && (
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(130px, 19vh, 200px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 20, padding: "0 clamp(16px, 4vw, 28px)" }}>
+          {[localCaption, remoteCaption].map((cap) => {
+            if (!cap) return null;
+            const isLocal = cap.speaker === "local";
+            const accent = isLocal ? "#00E5FF" : "#FF6B8A";
+            const flagTo = FLAG[cap.to] ?? FLAG[cap.from];
+            const flagFrom = FLAG[cap.from];
+            return (
+              <div key={cap.speaker} style={{ animation: "captionIn .22s ease-out both" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <span style={{ color: accent, fontWeight: 800, fontSize: "clamp(13px, 3vw, 16px)" }}>{isLocal ? "Tú" : "Participante"}</span>
+                  <span style={{ color: "#8E8E93", fontSize: 9 }}>•</span>
+                  <span style={{ color: "#8E8E93", fontSize: "clamp(11px, 2.5vw, 14px)", fontVariantNumeric: "tabular-nums" }}>{cap.time}</span>
                 </div>
-              )}
-              {/* línea */}
-              <div style={{ marginTop: 8, height: 2, borderRadius: 999, background: isLocal ? "linear-gradient(90deg, transparent, #00E5FF, transparent)" : "linear-gradient(90deg, transparent, #FF6B8A, transparent)", animation: "wave 2s ease-in-out infinite" }}/>
-            </div>
-          );
-        })}
-      </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "clamp(10px, 2.5vw, 14px)" }}>
+                  <span style={{ fontSize: "clamp(28px, 7vw, 40px)", lineHeight: 1, flexShrink: 0 }}>{flagTo}</span>
+                  <span style={{ color: "#fff", fontSize: "clamp(22px, 5.5vw, 36px)", lineHeight: 1.1, fontWeight: 650, letterSpacing: "-.03em", textShadow: "0 3px 20px rgba(0,0,0,.70)", opacity: cap.partial ? 0.6 : 1, transition: "opacity .2s" }}>
+                    {cap.partial ? cap.original : cap.translated}
+                  </span>
+                </div>
+                {!cap.partial && cap.original !== cap.translated && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, paddingLeft: "clamp(38px, 9vw, 54px)", color: "rgba(255,255,255,.45)", fontSize: "clamp(12px, 2.8vw, 16px)", fontStyle: "italic" }}>
+                    <span style={{ fontSize: "clamp(14px, 3.5vw, 20px)" }}>{flagFrom}</span>
+                    <span>{cap.original}</span>
+                  </div>
+                )}
+                <div style={{ marginTop: 8, height: 2, borderRadius: 999, background: isLocal ? "linear-gradient(90deg, transparent, #00E5FF, transparent)" : "linear-gradient(90deg, transparent, #FF6B8A, transparent)", animation: "wave 2s ease-in-out infinite" }}/>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* CONTROLES FLOTANTES */}
-      <nav style={{ position: "absolute", bottom: "max(28px, env(safe-area-inset-bottom, 28px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(14px, 3.5vw, 24px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
+      <nav style={{ position: "absolute", bottom: "max(28px, env(safe-area-inset-bottom, 28px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(12px, 3vw, 20px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
 
         <CtrlBtn onClick={toggleMic} label="Micrófono" danger={!micOn}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
@@ -289,6 +282,11 @@ export default function CallPage() {
           <span style={{ fontSize: 10, color: "rgba(255,255,255,.45)", letterSpacing: ".04em" }}>Colgar</span>
         </div>
 
+        {/* CC — activar/desactivar subtítulos */}
+        <CtrlBtn onClick={() => setCcOn(p => !p)} label="Subtítulos" accent={ccOn ? "#00E5FF" : undefined}>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: ".06em", color: ccOn ? "#00E5FF" : "rgba(255,255,255,.50)" }}>CC</span>
+        </CtrlBtn>
+
         <CtrlBtn onClick={switchLang} label="Cambiar idioma">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.80)" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
             <path d="M8 3L4 7l4 4M16 21l4-4-4-4M4 7h16M4 17h16"/>
@@ -305,10 +303,21 @@ export default function CallPage() {
   );
 }
 
-function CtrlBtn({ onClick, label, danger, children }: { onClick: () => void; label: string; danger?: boolean; children: React.ReactNode; }) {
+function CtrlBtn({ onClick, label, danger, accent, children }: {
+  onClick: () => void; label: string; danger?: boolean; accent?: string; children: React.ReactNode;
+}) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, flexShrink: 0 }}>
-      <button onClick={onClick} style={{ width: "clamp(52px, 13vw, 64px)", height: "clamp(52px, 13vw, 64px)", borderRadius: "50%", background: danger ? "rgba(255,50,70,.80)" : "rgba(255,255,255,.10)", border: `1.5px solid ${danger ? "rgba(255,60,80,.55)" : "rgba(255,255,255,.18)"}`, backdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: "0 4px 20px rgba(0,0,0,.40)" }}>
+      <button onClick={onClick} style={{
+        width: "clamp(52px, 13vw, 64px)", height: "clamp(52px, 13vw, 64px)",
+        borderRadius: "50%",
+        background: danger ? "rgba(255,50,70,.80)" : accent ? `${accent}22` : "rgba(255,255,255,.10)",
+        border: `1.5px solid ${danger ? "rgba(255,60,80,.55)" : accent ? `${accent}60` : "rgba(255,255,255,.18)"}`,
+        backdropFilter: "blur(20px)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", flexShrink: 0,
+        boxShadow: accent ? `0 0 20px ${accent}40` : "0 4px 20px rgba(0,0,0,.40)",
+      }}>
         {children}
       </button>
       <span style={{ fontSize: 10, color: "rgba(255,255,255,.42)", letterSpacing: ".03em", whiteSpace: "nowrap" }}>{label}</span>
