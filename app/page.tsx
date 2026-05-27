@@ -89,7 +89,7 @@ export default function Home() {
 
           <div style={{ display:"flex", alignItems:"center", gap:3, height:40, marginBottom:52, animation:"floatUp .6s ease .35s both" }}>
             {waveHeights.map((h, i) => (
-              <span key={i} style={{ display:"block", width:3, height:h, borderRadius:2, background: i < BARS/2 ? `rgba(0,212,232,${.25+(i/(BARS/2))*.65})` : `rgba(255,92,106,${.9-((i-BARS/2)/(BARS/2))*.5})`, transition:"height .12s ease" }}/>
+              <span key={i} suppressHydrationWarning style={{ display:"block", width:3, height:h, borderRadius:2, background: i < BARS/2 ? `rgba(0,212,232,${.25+(i/(BARS/2))*.65})` : `rgba(255,92,106,${.9-((i-BARS/2)/(BARS/2))*.5})`, transition:"height .12s ease" }}/>
             ))}
           </div>
 
