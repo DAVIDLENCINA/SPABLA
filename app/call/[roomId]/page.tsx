@@ -133,7 +133,7 @@ export default function CallPage() {
     let cancelled = false;
 
     async function startCall() {
-      const socket = io(SERVER_URL, { transports: ["websocket", "polling"] });
+      const socket = io(SERVER_URL, { transports: ["polling"] });
       socketRef.current = socket;
       const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
       pcRef.current = pc;
