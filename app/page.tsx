@@ -50,9 +50,8 @@ const HERO_SLIDES: HeroSlide[] = [
 export default function Home() {
   const router = useRouter();
 
-  const [heroSlide,   setHeroSlide]   = useState(0);
-  const [heroOpacity, setHeroOpacity] = useState(1);
-  const [scrolled,    setScrolled]    = useState(false);
+  const [heroSlide, setHeroSlide] = useState(0);
+  const [scrolled,  setScrolled]  = useState(false);
   const [tick,        setTick]        = useState(0);
   const [demoIdx,     setDemoIdx]     = useState(0);
   const [demoVisible, setDemoVisible] = useState(true);
@@ -76,25 +75,13 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
-  // Autoplay: fade out text → change slide → useEffect fades it back in
   useEffect(() => {
-    const id = setInterval(() => {
-      setHeroOpacity(0);
-      setTimeout(() => setHeroSlide(s => (s + 1) % 3), 450);
-    }, 5000);
+    const id = setInterval(() => setHeroSlide(s => (s + 1) % 3), 5000);
     return () => clearInterval(id);
   }, []);
 
-  // Fade text in after slide changes (50ms ensures new content renders at opacity:0 first)
-  useEffect(() => {
-    const t = setTimeout(() => setHeroOpacity(1), 50);
-    return () => clearTimeout(t);
-  }, [heroSlide]);
-
   function goSlide(i: number) {
-    if (i === heroSlide) return;
-    setHeroOpacity(0);
-    setTimeout(() => setHeroSlide(i), 400);
+    if (i !== heroSlide) setHeroSlide(i);
   }
 
   function handleCta(id: CtaId) {
@@ -122,6 +109,7 @@ export default function Home() {
   return (
     <>
       <style>{`
+        @keyframes heroFadeIn { from{opacity:0} to{opacity:1} }
         @keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.25} }
         @keyframes bob      { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(5px)} }
         @keyframes pulse    { 0%,100%{transform:scale(1);opacity:.7} 50%{transform:scale(1.5);opacity:0} }
@@ -185,39 +173,37 @@ export default function Home() {
         {/* ══════════════════════════════════════════════════
             HERO SLIDER
         ══════════════════════════════════════════════════ */}
-        <section style={{ position:"relative", width:"100%", minHeight:"100vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
+        <section style={{ position:"relative", width:"100%", height:"100vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
 
-          {/* ── Background images — CSS crossfade, estáticas ── */}
-          <div style={{ position:"absolute", inset:0 }}>
-            {(["/hero1.jpg", "/hero2.jpg", "/hero3.jpg"] as const).map((src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt=""
-                style={{
-                  position:"absolute", inset:0,
-                  width:"100%", height:"100%",
-                  objectFit:"cover", objectPosition:"center",
-                  display:"block",
-                  opacity: i === heroSlide ? 1 : 0,
-                  transition: "opacity .8s ease",
-                }}
-              />
-            ))}
-            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(2,3,10,.55) 0%, rgba(2,3,10,.22) 28%, rgba(2,3,10,.48) 62%, rgba(2,3,10,.94) 100%)" }}/>
-          </div>
+          {/* ── Imágenes de fondo: solo la activa es visible ── */}
+          {(["/hero1.jpg", "/hero2.jpg", "/hero3.jpg"] as const).map((src, i) => (
+            <img
+              key={i}
+              src={src}
+              alt=""
+              style={{
+                position: "absolute", top: 0, left: 0,
+                width: "100%", height: "100%",
+                objectFit: "cover", objectPosition: "center",
+                zIndex: 0,
+                opacity:    i === heroSlide ? 1 : 0,
+                visibility: i === heroSlide ? "visible" : "hidden",
+                transition: i === heroSlide
+                  ? "opacity .8s ease, visibility 0s 0s"
+                  : "opacity .8s ease, visibility 0s .8s",
+              }}
+            />
+          ))}
 
-          {/* Cinematic overlays */}
-          <div style={{ position:"absolute", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(2,3,10,.6) 0%, transparent 20%)", pointerEvents:"none" }}/>
-          <div style={{ position:"absolute", inset:0, zIndex:1, background:"linear-gradient(to bottom, rgba(2,3,10,.18) 0%, rgba(2,3,10,.12) 40%, rgba(2,3,10,.55) 65%, rgba(2,3,10,.92) 100%)", pointerEvents:"none" }}/>
+          {/* Overlay gradiente */}
+          <div style={{ position:"absolute", top:0, left:0, right:0, bottom:0, zIndex:1, background:"linear-gradient(to bottom, rgba(2,3,10,.62) 0%, rgba(2,3,10,.18) 30%, rgba(2,3,10,.50) 65%, rgba(2,3,10,.93) 100%)", pointerEvents:"none" }}/>
 
-          {/* Content */}
-          <div style={{
+          {/* Content — key fuerza re-mount en cada cambio, sin solapamiento posible */}
+          <div key={heroSlide} style={{
             position: "relative", zIndex:2, flex:1,
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
             padding: "80px 24px 96px",
-            transition: "opacity .45s ease",
-            opacity: heroOpacity,
+            animation: "heroFadeIn .5s ease forwards",
           }}>
 
             <h1 style={{ fontSize:"clamp(52px, 8.5vw, 90px)", fontWeight:900, lineHeight:1.04, letterSpacing:"-.045em", textAlign:"center", marginBottom:18 }}>
