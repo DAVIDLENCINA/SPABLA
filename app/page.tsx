@@ -26,6 +26,12 @@ const DEMO_PHRASES = [
   { original: "Können wir das morgen besprechen?",   translated: "Can we discuss this tomorrow?",      from: "🇩🇪 Deutsch",  to: "🇬🇧 English" },
 ];
 
+const slides = [
+  { img: "/hero1.jpg" },
+  { img: "/hero2.jpg" },
+  { img: "/hero3.jpg" },
+];
+
 export default function Home() {
   const router = useRouter();
   const [demoIdx, setDemoIdx] = useState(0);
