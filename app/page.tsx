@@ -80,10 +80,6 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
-  function goSlide(i: number) {
-    if (i !== heroSlide) setHeroSlide(i);
-  }
-
   function handleCta(id: CtaId) {
     if      (id === "video-call")       startCall("video");
     else if (id === "scroll-demo")      scrollAnchor("demo");
@@ -110,8 +106,6 @@ export default function Home() {
       <style>{`
         @keyframes heroFadeIn { from{opacity:0} to{opacity:1} }
         @keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.25} }
-        @keyframes bob      { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(5px)} }
-        @keyframes pulse    { 0%,100%{transform:scale(1);opacity:.7} 50%{transform:scale(1.5);opacity:0} }
         * { box-sizing:border-box; margin:0; padding:0; }
         html { scroll-behavior:smooth; }
         body { background:${BG}; overflow-x:hidden; }
@@ -130,8 +124,7 @@ export default function Home() {
         .pbtn-g:hover { opacity:.88; transform:translateY(-1px); }
         .pbtn { transition:opacity .18s; }
         .pbtn:hover { opacity:.88; }
-        .hdot { border:none; outline:none; cursor:pointer; padding:0; transition:all .35s ease; }
-        .store-btn-s { transition:background .2s; }
+.store-btn-s { transition:background .2s; }
         .store-btn-s:hover { background:rgba(255,255,255,.09) !important; }
       `}</style>
 
@@ -192,7 +185,7 @@ export default function Home() {
           ))}
 
           {/* ── Capa 2: overlay único y fijo ── */}
-          <div style={{ position:"absolute", inset:0, zIndex:1, background:"rgba(0,0,0,0.2)", pointerEvents:"none" }}/>
+          <div style={{ position:"absolute", inset:0, zIndex:1, background:"rgba(0,0,0,0.35)", pointerEvents:"none" }}/>
 
           {/* ── Capa 3: texto — key=heroSlide garantiza un único nodo en DOM ── */}
           <div
@@ -220,7 +213,7 @@ export default function Home() {
                     {s.sub}
                   </p>
 
-                  <div style={{ display:"flex", gap:14, flexWrap:"wrap", justifyContent:"center", marginBottom:52 }}>
+                  <div style={{ display:"flex", gap:14, flexWrap:"wrap", justifyContent:"center" }}>
                     {s.ctas.map(cta => (
                       <button key={cta.label} onClick={() => handleCta(cta.id)}
                         className={cta.primary ? "pbtn-g" : "sbtn"}
@@ -246,28 +239,11 @@ export default function Home() {
                       </button>
                     ))}
                   </div>
-
-                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                    {[0,1,2].map(j => (
-                      <button key={j} className="hdot" onClick={() => goSlide(j)} style={{
-                        width:  j === heroSlide ? 28 : 8,
-                        height: 8,
-                        borderRadius:4,
-                        background: j === heroSlide ? CY : "rgba(255,255,255,.28)",
-                        boxShadow: j === heroSlide ? `0 0 14px rgba(0,212,255,.8)` : "none",
-                      }}/>
-                    ))}
-                  </div>
                 </>
               );
             })()}
           </div>
 
-          {/* ── Scroll indicator ── */}
-          <div style={{ position:"absolute", bottom:22, left:"50%", animation:"bob 2.6s ease-in-out infinite", display:"flex", flexDirection:"column", alignItems:"center", gap:5, opacity:.2, zIndex:3, pointerEvents:"none" }}>
-            <span style={{ fontSize:10, letterSpacing:".1em", textTransform:"uppercase" }}>Descubrir</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6"/></svg>
-          </div>
         </section>
 
         {/* ══════════════════════════════════════════════════
