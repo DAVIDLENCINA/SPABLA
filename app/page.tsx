@@ -52,7 +52,6 @@ export default function Home() {
 
   const [heroSlide,   setHeroSlide]   = useState(0);
   const [heroOpacity, setHeroOpacity] = useState(1);
-  const [bgKey,       setBgKey]       = useState(0);
   const [scrolled,    setScrolled]    = useState(false);
   const [tick,        setTick]        = useState(0);
   const [demoIdx,     setDemoIdx]     = useState(0);
@@ -77,22 +76,25 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
+  // Autoplay: fade out text → change slide → useEffect fades it back in
   useEffect(() => {
     const id = setInterval(() => {
       setHeroOpacity(0);
-      setTimeout(() => {
-        setHeroSlide(s => (s + 1) % 3);
-        setBgKey(k => k + 1);
-        setHeroOpacity(1);
-      }, 650);
+      setTimeout(() => setHeroSlide(s => (s + 1) % 3), 450);
     }, 5000);
     return () => clearInterval(id);
   }, []);
 
+  // Fade text in after slide changes (50ms ensures new content renders at opacity:0 first)
+  useEffect(() => {
+    const t = setTimeout(() => setHeroOpacity(1), 50);
+    return () => clearTimeout(t);
+  }, [heroSlide]);
+
   function goSlide(i: number) {
     if (i === heroSlide) return;
     setHeroOpacity(0);
-    setTimeout(() => { setHeroSlide(i); setBgKey(k => k + 1); setHeroOpacity(1); }, 400);
+    setTimeout(() => setHeroSlide(i), 400);
   }
 
   function handleCta(id: CtaId) {
@@ -120,7 +122,6 @@ export default function Home() {
   return (
     <>
       <style>{`
-        @keyframes heroZoom { from{transform:scale(1)} to{transform:scale(1.08)} }
         @keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.25} }
         @keyframes bob      { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(5px)} }
         @keyframes pulse    { 0%,100%{transform:scale(1);opacity:.7} 50%{transform:scale(1.5);opacity:0} }
@@ -186,48 +187,24 @@ export default function Home() {
         ══════════════════════════════════════════════════ */}
         <section style={{ position:"relative", width:"100%", minHeight:"100vh", overflow:"hidden", display:"flex", flexDirection:"column" }}>
 
-          <div key={bgKey} style={{ position:"absolute", inset:0, animation:"heroZoom 6s linear forwards", transformOrigin:"center center" }}>
-
-            {/* ─────────────────────────────────────────────
-                SLIDE 0 — Videollamada: fondo fotográfico hero1.jpg
-            ───────────────────────────────────────────── */}
-            {heroSlide === 0 && (
-              <>
-                <img
-                  src="/hero1.jpg"
-                  alt=""
-                  style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", objectPosition:"center", display:"block" }}
-                />
-                <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(2,3,10,.55) 0%, rgba(2,3,10,.22) 28%, rgba(2,3,10,.48) 62%, rgba(2,3,10,.94) 100%)" }}/>
-              </>
-            )}
-            {/* ─────────────────────────────────────────────
-                SLIDE 1 — Mujer en aeropuerto moderno
-            ───────────────────────────────────────────── */}
-            {heroSlide === 1 && (
-              <>
-                <img
-                  src="/hero2.jpg"
-                  alt=""
-                  style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", objectPosition:"center", display:"block" }}
-                />
-                <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(2,3,10,.55) 0%, rgba(2,3,10,.22) 28%, rgba(2,3,10,.48) 62%, rgba(2,3,10,.94) 100%)" }}/>
-              </>
-            )}
-
-            {/* ─────────────────────────────────────────────
-                SLIDE 2 — Equipo internacional: grid 2×2
-            ───────────────────────────────────────────── */}
-            {heroSlide === 2 && (
-              <>
-                <img
-                  src="/hero3.jpg"
-                  alt=""
-                  style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover", objectPosition:"center", display:"block" }}
-                />
-                <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(2,3,10,.55) 0%, rgba(2,3,10,.22) 28%, rgba(2,3,10,.48) 62%, rgba(2,3,10,.94) 100%)" }}/>
-              </>
-            )}
+          {/* ── Background images — CSS crossfade, estáticas ── */}
+          <div style={{ position:"absolute", inset:0 }}>
+            {(["/hero1.jpg", "/hero2.jpg", "/hero3.jpg"] as const).map((src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt=""
+                style={{
+                  position:"absolute", inset:0,
+                  width:"100%", height:"100%",
+                  objectFit:"cover", objectPosition:"center",
+                  display:"block",
+                  opacity: i === heroSlide ? 1 : 0,
+                  transition: "opacity .8s ease",
+                }}
+              />
+            ))}
+            <div style={{ position:"absolute", inset:0, background:"linear-gradient(to bottom, rgba(2,3,10,.55) 0%, rgba(2,3,10,.22) 28%, rgba(2,3,10,.48) 62%, rgba(2,3,10,.94) 100%)" }}/>
           </div>
 
           {/* Cinematic overlays */}
@@ -239,7 +216,7 @@ export default function Home() {
             position: "relative", zIndex:2, flex:1,
             display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
             padding: "80px 24px 96px",
-            transition: "opacity .65s ease",
+            transition: "opacity .45s ease",
             opacity: heroOpacity,
           }}>
 
