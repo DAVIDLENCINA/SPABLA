@@ -108,6 +108,7 @@ export default function Home() {
   return (
     <>
       <style>{`
+        @keyframes heroFadeIn { from{opacity:0} to{opacity:1} }
         @keyframes blink    { 0%,100%{opacity:1} 50%{opacity:.25} }
         @keyframes bob      { 0%,100%{transform:translateX(-50%) translateY(0)} 50%{transform:translateX(-50%) translateY(5px)} }
         @keyframes pulse    { 0%,100%{transform:scale(1);opacity:.7} 50%{transform:scale(1.5);opacity:0} }
@@ -169,96 +170,101 @@ export default function Home() {
         </nav>
 
         {/* ══════════════════════════════════════════════════
-            HERO SLIDER — cada slide es una unidad autocontenida
+            HERO SLIDER
         ══════════════════════════════════════════════════ */}
         <section style={{ position:"relative", width:"100vw", height:"100vh", overflow:"hidden" }}>
 
-          {HERO_SLIDES.map((s, i) => (
-            <div
-              key={i}
+          {/* ── Capa 1: imágenes (crossfade CSS, siempre en DOM) ── */}
+          {[1,2,3].map(n => (
+            <img
+              key={n}
+              src={`/hero${n}.jpg`}
+              alt=""
               style={{
-                position: "absolute", inset: 0,
-                opacity:    i === heroSlide ? 1 : 0,
-                zIndex:     i === heroSlide ? 1 : 0,
-                transition: "opacity 0.8s ease",
+                position:"absolute", top:0, left:0,
+                width:"100%", height:"100%",
+                objectFit:"cover", objectPosition:"center",
+                zIndex:0,
+                opacity: n - 1 === heroSlide ? 1 : 0,
+                transition:"opacity 0.8s ease",
               }}
-            >
-              {/* Imagen de fondo */}
-              <img
-                src={`/hero${i + 1}.jpg`}
-                alt=""
-                style={{
-                  position: "absolute", top: 0, left: 0,
-                  width: "100%", height: "100%",
-                  objectFit: "cover", objectPosition: "center",
-                }}
-              />
-
-              {/* Overlay mínimo para legibilidad */}
-              <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.2)" }}/>
-
-              {/* Texto del slide — solo existe aquí, nunca fuera */}
-              <div style={{
-                position: "absolute", inset: 0,
-                display: "flex", flexDirection: "column",
-                alignItems: "center", justifyContent: "center",
-                padding: "80px 24px 96px",
-              }}>
-                <h1 style={{ fontSize:"clamp(52px, 8.5vw, 90px)", fontWeight:900, lineHeight:1.04, letterSpacing:"-.045em", textAlign:"center", marginBottom:18 }}>
-                  <span style={{ display:"block", color:"rgba(255,255,255,.92)" }}>{s.headline[0]}</span>
-                  <span style={{ display:"block", background:`linear-gradient(130deg, ${CY} 0%, #ffffff 48%, ${CO} 100%)`, WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", backgroundClip:"text" }}>
-                    {s.headline[1]}
-                  </span>
-                </h1>
-
-                <p style={{ fontSize:"clamp(16px, 2vw, 20px)", color:"rgba(255,255,255,.6)", textAlign:"center", lineHeight:1.68, marginBottom:40, maxWidth:520, fontWeight:400 }}>
-                  {s.sub}
-                </p>
-
-                <div style={{ display:"flex", gap:14, flexWrap:"wrap", justifyContent:"center", marginBottom:52 }}>
-                  {s.ctas.map(cta => (
-                    <button key={cta.label} onClick={() => handleCta(cta.id)}
-                      className={cta.primary ? "pbtn-g" : "sbtn"}
-                      style={cta.primary ? {
-                        padding: "15px 34px",
-                        background: `linear-gradient(135deg, ${CY} 0%, #a78bfa 52%, ${CO} 100%)`,
-                        border: "none", borderRadius: 14, color: "#fff",
-                        fontSize: 16, fontWeight: 700, cursor: "pointer",
-                        outline: "none", WebkitTapHighlightColor: "transparent",
-                        letterSpacing: "-.01em",
-                        boxShadow: "0 4px 24px rgba(0,212,255,.22)",
-                      } : {
-                        padding: "15px 32px",
-                        background: "rgba(255,255,255,.1)",
-                        border: "1px solid rgba(255,255,255,.2)",
-                        borderRadius: 14, color: "rgba(255,255,255,.88)",
-                        fontSize: 16, fontWeight: 600, cursor: "pointer",
-                        outline: "none", WebkitTapHighlightColor: "transparent",
-                        backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
-                        letterSpacing: "-.01em",
-                      }}>
-                      {cta.label}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                  {[0,1,2].map(j => (
-                    <button key={j} className="hdot" onClick={() => goSlide(j)} style={{
-                      width:  j === heroSlide ? 28 : 8,
-                      height: 8,
-                      borderRadius: 4,
-                      background: j === heroSlide ? CY : "rgba(255,255,255,.28)",
-                      boxShadow: j === heroSlide ? `0 0 14px rgba(0,212,255,.8)` : "none",
-                    }}/>
-                  ))}
-                </div>
-              </div>
-            </div>
+            />
           ))}
 
-          {/* Scroll indicator — compartido, fuera de los slides */}
-          <div style={{ position:"absolute", bottom:22, left:"50%", animation:"bob 2.6s ease-in-out infinite", display:"flex", flexDirection:"column", alignItems:"center", gap:5, opacity:.2, zIndex:2, pointerEvents:"none" }}>
+          {/* ── Capa 2: overlay único y fijo ── */}
+          <div style={{ position:"absolute", inset:0, zIndex:1, background:"rgba(0,0,0,0.2)", pointerEvents:"none" }}/>
+
+          {/* ── Capa 3: texto — key=heroSlide garantiza un único nodo en DOM ── */}
+          <div
+            key={heroSlide}
+            style={{
+              position:"absolute", inset:0, zIndex:2,
+              display:"flex", flexDirection:"column",
+              alignItems:"center", justifyContent:"center",
+              padding:"80px 24px 96px",
+              animation:"heroFadeIn 0.5s ease forwards",
+            }}
+          >
+            {(() => {
+              const s = HERO_SLIDES[heroSlide];
+              return (
+                <>
+                  <h1 style={{ fontSize:"clamp(52px, 8.5vw, 90px)", fontWeight:900, lineHeight:1.04, letterSpacing:"-.045em", textAlign:"center", marginBottom:18 }}>
+                    <span style={{ display:"block", color:"rgba(255,255,255,.92)" }}>{s.headline[0]}</span>
+                    <span style={{ display:"block", background:`linear-gradient(130deg, ${CY} 0%, #ffffff 48%, ${CO} 100%)`, WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent", backgroundClip:"text" }}>
+                      {s.headline[1]}
+                    </span>
+                  </h1>
+
+                  <p style={{ fontSize:"clamp(16px, 2vw, 20px)", color:"rgba(255,255,255,.6)", textAlign:"center", lineHeight:1.68, marginBottom:40, maxWidth:520, fontWeight:400 }}>
+                    {s.sub}
+                  </p>
+
+                  <div style={{ display:"flex", gap:14, flexWrap:"wrap", justifyContent:"center", marginBottom:52 }}>
+                    {s.ctas.map(cta => (
+                      <button key={cta.label} onClick={() => handleCta(cta.id)}
+                        className={cta.primary ? "pbtn-g" : "sbtn"}
+                        style={cta.primary ? {
+                          padding:"15px 34px",
+                          background:`linear-gradient(135deg, ${CY} 0%, #a78bfa 52%, ${CO} 100%)`,
+                          border:"none", borderRadius:14, color:"#fff",
+                          fontSize:16, fontWeight:700, cursor:"pointer",
+                          outline:"none", WebkitTapHighlightColor:"transparent",
+                          letterSpacing:"-.01em",
+                          boxShadow:"0 4px 24px rgba(0,212,255,.22)",
+                        } : {
+                          padding:"15px 32px",
+                          background:"rgba(255,255,255,.1)",
+                          border:"1px solid rgba(255,255,255,.2)",
+                          borderRadius:14, color:"rgba(255,255,255,.88)",
+                          fontSize:16, fontWeight:600, cursor:"pointer",
+                          outline:"none", WebkitTapHighlightColor:"transparent",
+                          backdropFilter:"blur(12px)", WebkitBackdropFilter:"blur(12px)",
+                          letterSpacing:"-.01em",
+                        }}>
+                        {cta.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                    {[0,1,2].map(j => (
+                      <button key={j} className="hdot" onClick={() => goSlide(j)} style={{
+                        width:  j === heroSlide ? 28 : 8,
+                        height: 8,
+                        borderRadius:4,
+                        background: j === heroSlide ? CY : "rgba(255,255,255,.28)",
+                        boxShadow: j === heroSlide ? `0 0 14px rgba(0,212,255,.8)` : "none",
+                      }}/>
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          {/* ── Scroll indicator ── */}
+          <div style={{ position:"absolute", bottom:22, left:"50%", animation:"bob 2.6s ease-in-out infinite", display:"flex", flexDirection:"column", alignItems:"center", gap:5, opacity:.2, zIndex:3, pointerEvents:"none" }}>
             <span style={{ fontSize:10, letterSpacing:".1em", textTransform:"uppercase" }}>Descubrir</span>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6"/></svg>
           </div>
