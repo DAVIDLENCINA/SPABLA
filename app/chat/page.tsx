@@ -109,10 +109,9 @@ export default function Chat() {
     alert("Link copiado. Compártelo con la otra persona.");
   };
 
-  // ── NUEVO: genera roomId y navega a la videollamada ──
   const startVideoCall = () => {
     const roomId = Math.random().toString(36).substring(2, 8);
-    router.push(`/chat/${roomId}`);
+    router.push(`/call/${roomId}`); // ← CORREGIDO: /call en lugar de /chat
   };
 
   if (!user) return null;
@@ -134,7 +133,6 @@ export default function Chat() {
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 18 }}>{LANGUAGES[user.language_primary]}</span>
 
-          {/* ── BOTÓN NUEVO: Iniciar videollamada ── */}
           <button
             onClick={startVideoCall}
             style={{
