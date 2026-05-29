@@ -109,10 +109,18 @@ export default function Chat() {
     alert("Link copiado. Compártelo con la otra persona.");
   };
 
+  // ── NUEVO: genera roomId y navega a la videollamada ──
+  const startVideoCall = () => {
+    const roomId = Math.random().toString(36).substring(2, 8);
+    router.push(`/chat/${roomId}`);
+  };
+
   if (!user) return null;
 
   return (
     <div style={{ background: "#0d1117", height: "100vh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif" }}>
+
+      {/* HEADER */}
       <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0d1117" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
@@ -122,14 +130,39 @@ export default function Chat() {
           </svg>
           <span style={{ color: "#fff", fontWeight: 600 }}>Chat</span>
         </div>
+
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 18 }}>{LANGUAGES[user.language_primary]}</span>
-          <button onClick={shareLink} style={{ background: "rgba(62,198,198,0.15)", border: "1px solid rgba(62,198,198,0.3)", borderRadius: 8, padding: "6px 14px", color: "#3ec6c6", fontSize: 13, cursor: "pointer" }}>
+
+          {/* ── BOTÓN NUEVO: Iniciar videollamada ── */}
+          <button
+            onClick={startVideoCall}
+            style={{
+              background: "rgba(232,82,74,0.15)",
+              border: "1px solid rgba(232,82,74,0.35)",
+              borderRadius: 8,
+              padding: "6px 14px",
+              color: "#e8524a",
+              fontSize: 13,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            📹 Llamada
+          </button>
+
+          <button
+            onClick={shareLink}
+            style={{ background: "rgba(62,198,198,0.15)", border: "1px solid rgba(62,198,198,0.3)", borderRadius: 8, padding: "6px 14px", color: "#3ec6c6", fontSize: 13, cursor: "pointer" }}
+          >
             Invitar
           </button>
         </div>
       </div>
 
+      {/* MENSAJES */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
         {messages.length === 0 && (
           <div style={{ textAlign: "center", marginTop: 60 }}>
@@ -162,6 +195,7 @@ export default function Chat() {
         <div ref={bottomRef} />
       </div>
 
+      {/* INPUT */}
       <div style={{ padding: "12px 16px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, background: "#0d1117" }}>
         <input
           value={input}
@@ -170,7 +204,11 @@ export default function Chat() {
           placeholder="Escribe un mensaje..."
           style={{ flex: 1, background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 18px", color: "#fff", fontSize: 15, outline: "none" }}
         />
-        <button onClick={sendMessage} disabled={loading || !input.trim()} style={{ background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 24, padding: "12px 20px", color: "#fff", fontSize: 15, cursor: "pointer", opacity: loading || !input.trim() ? 0.5 : 1 }}>
+        <button
+          onClick={sendMessage}
+          disabled={loading || !input.trim()}
+          style={{ background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 24, padding: "12px 20px", color: "#fff", fontSize: 15, cursor: "pointer", opacity: loading || !input.trim() ? 0.5 : 1 }}
+        >
           →
         </button>
       </div>
