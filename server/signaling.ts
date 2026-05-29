@@ -4,9 +4,21 @@ import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY ?? "");
 
+const ALLOWED_ORIGINS = ["https://spabla.vercel.app", "http://localhost:3000"];
+
 const httpServer = createServer((req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "https://spabla.vercel.app");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST");
+  const origin = req.headers.origin ?? "";
+  const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+
+  res.setHeader("Access-Control-Allow-Origin", allowed);
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -20,10 +32,10 @@ const httpServer = createServer((req, res) => {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: ["https://spabla.vercel.app", "http://localhost:3000"],
+    origin: ALLOWED_ORIGINS,
     methods: ["GET", "POST"],
   },
-  transports: ["polling", "websocket"], // ← añadido websocket
+  transports: ["polling", "websocket"],
 });
 
 type DGConnection = ReturnType<typeof deepgram.listen.live>;
@@ -45,7 +57,6 @@ io.on("connection", (socket: Socket) => {
     console.log(`[SPABLA] ${socket.id} entró en sala: ${roomId}`);
   });
 
-  // ── CORREGIDO: usar roomId en lugar de to ──
   socket.on("offer", (data: { roomId: string; offer: RTCSessionDescriptionInit }) => {
     socket.to(data.roomId).emit("offer", { from: socket.id, offer: data.offer });
   });
