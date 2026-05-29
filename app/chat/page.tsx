@@ -2,6 +2,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
+import { useWebRTC } from "./hooks/useWebRTC";
+import VideoOverlay from "./components/VideoOverlay";
 
 const LANGUAGES: Record<string, string> = {
   es: "🇪🇸", en: "🇬🇧", fr: "🇫🇷", de: "🇩🇪",
@@ -27,7 +29,12 @@ export default function Chat() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showOriginal, setShowOriginal] = useState<string | null>(null);
+  const [videoActive, setVideoActive] = useState(false);
+  const [videoExpanded, setVideoExpanded] = useState(false);
+  const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const webrtc = useWebRTC(roomId);
 
   useEffect(() => {
     const stored = localStorage.getItem("spabla_user");
@@ -109,15 +116,21 @@ export default function Chat() {
     alert("Link copiado. Compártelo con la otra persona.");
   };
 
-  const startVideoCall = () => {
-    const roomId = Math.random().toString(36).substring(2, 8);
-    router.push(`/call/${roomId}`); // ← CORREGIDO: /call en lugar de /chat
+  const startVideo = async () => {
+    await webrtc.startCall();
+    setVideoActive(true);
+  };
+
+  const stopVideo = () => {
+    webrtc.endCall();
+    setVideoActive(false);
+    setVideoExpanded(false);
   };
 
   if (!user) return null;
 
   return (
-    <div style={{ background: "#0d1117", height: "100vh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif" }}>
+    <div style={{ background: "#0d1117", height: "100vh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif", position: "relative" }}>
 
       {/* HEADER */}
       <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0d1117" }}>
@@ -133,14 +146,15 @@ export default function Chat() {
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 18 }}>{LANGUAGES[user.language_primary]}</span>
 
+          {/* Botón videollamada — activa/desactiva overlay */}
           <button
-            onClick={startVideoCall}
+            onClick={videoActive ? stopVideo : startVideo}
             style={{
-              background: "rgba(232,82,74,0.15)",
-              border: "1px solid rgba(232,82,74,0.35)",
+              background: videoActive ? "rgba(62,198,198,0.20)" : "rgba(232,82,74,0.15)",
+              border: `1px solid ${videoActive ? "rgba(62,198,198,0.5)" : "rgba(232,82,74,0.35)"}`,
               borderRadius: 8,
               padding: "6px 14px",
-              color: "#e8524a",
+              color: videoActive ? "#3ec6c6" : "#e8524a",
               fontSize: 13,
               cursor: "pointer",
               display: "flex",
@@ -148,7 +162,7 @@ export default function Chat() {
               gap: 6,
             }}
           >
-            📹 Llamada
+            {videoActive ? "🔴 En llamada" : "📹 Videollamada"}
           </button>
 
           <button
@@ -210,6 +224,16 @@ export default function Chat() {
           →
         </button>
       </div>
+
+      {/* VIDEO OVERLAY — flotante sobre el chat */}
+      {videoActive && (
+        <VideoOverlay
+          webrtc={webrtc}
+          onClose={stopVideo}
+          expanded={videoExpanded}
+          onToggleExpand={() => setVideoExpanded(e => !e)}
+        />
+      )}
     </div>
   );
 }
