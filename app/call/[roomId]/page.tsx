@@ -76,16 +76,17 @@ export default function CallPage() {
   const hideRemoteRef  = useRef<number | null>(null);
   const myLangRef      = useRef<LangCode>("es");
 
-  const [myLang,        setMyLang]        = useState<LangCode>("es");
-  const [targetLang,    setTargetLang]    = useState<LangCode>("en");
-  const [localCaption,  setLocalCaption]  = useState<Caption | null>(null);
-  const [remoteCaption, setRemoteCaption] = useState<Caption | null>(null);
-  const [micOn,         setMicOn]         = useState(true);
-  const [camOn,         setCamOn]         = useState(true);
-  const [ccOn,          setCcOn]          = useState(true);
-  const [connected,     setConnected]     = useState(false);
-  const [hasRemote,     setHasRemote]     = useState(false);
+  const [myLang,         setMyLang]         = useState<LangCode>("es");
+  const [targetLang,     setTargetLang]     = useState<LangCode>("en");
+  const [localCaption,   setLocalCaption]   = useState<Caption | null>(null);
+  const [remoteCaption,  setRemoteCaption]  = useState<Caption | null>(null);
+  const [micOn,          setMicOn]          = useState(true);
+  const [camOn,          setCamOn]          = useState(true);
+  const [ccOn,           setCcOn]           = useState(true);
+  const [connected,      setConnected]      = useState(false);
+  const [hasRemote,      setHasRemote]      = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
+  const [error,          setError]          = useState<string | null>(null); // ← NUEVO
 
   useEffect(() => { myLangRef.current = myLang; }, [myLang]);
 
@@ -131,62 +132,79 @@ export default function CallPage() {
     let cancelled = false;
 
     async function startCall() {
-      const socket = io(SERVER_URL, { transports: ["polling"] });
-      socketRef.current = socket;
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
-      pcRef.current = pc;
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      if (cancelled) return;
-      streamRef.current = stream;
-      setMicOn(stream.getAudioTracks().some((t) => t.enabled));
-      setCamOn(stream.getVideoTracks().some((t) => t.enabled));
-      stream.getTracks().forEach((t) => pc.addTrack(t, stream));
-      if (localVideoRef.current) { localVideoRef.current.srcObject = stream; localVideoRef.current.play().catch(() => {}); }
+      try {
+        const socket = io(SERVER_URL, { transports: ["polling"] });
+        socketRef.current = socket;
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+        pcRef.current = pc;
 
-      pc.ontrack = (e) => {
-        const rs = e.streams[0];
-        if (remoteVideoRef.current) { remoteVideoRef.current.srcObject = rs; remoteVideoRef.current.play().catch(() => {}); setHasRemote(true); }
-      };
-      pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
-
-      socket.on("connect", () => {
-        setConnected(true);
-        socket.emit("join-room", roomId);
-        startDeepgram(myLangRef.current);
-      });
-      if (socket.connected) {
-        setConnected(true);
-        socket.emit("join-room", roomId);
-        startDeepgram(myLangRef.current);
-      }
-      socket.on("disconnect", () => setConnected(false));
-      socket.on("user-joined", async () => { const o = await pc.createOffer(); await pc.setLocalDescription(o); socket.emit("offer", { roomId, offer: o }); });
-      socket.on("offer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.offer)); const a = await pc.createAnswer(); await pc.setLocalDescription(a); socket.emit("answer", { roomId, answer: a }); });
-      socket.on("answer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.answer)); });
-      socket.on("ice-candidate", async (d) => { try { await pc.addIceCandidate(d.candidate); } catch {} });
-
-      socket.on("transcript-result", async ({ text, isFinal, lang }: { text: string; isFinal?: boolean; lang?: string }) => {
-        const original = text?.trim();
-        if (!original) return;
-        const from = normalizeLang(lang || myLangRef.current);
-        const to = targetLang;
-        if (!isFinal) {
-          showLocal({ id: Date.now(), speaker: "local", original, translated: original, from, to, partial: true, time: nowTime() });
+        // ── Pedir cámara y micrófono ──
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        } catch (err: any) {
+          setError(`Sin acceso a cámara/micrófono: ${err?.name} — ${err?.message}`);
           return;
         }
-        const translated = await translate(original, from, to);
-        showLocal({ id: Date.now(), speaker: "local", original, translated, from, to, time: nowTime() });
-        socket.emit("subtitle", { roomId, original, lang: from });
-      });
 
-      socket.on("subtitle", async (payload: { original?: string; text?: string; lang?: string }) => {
-        const original = (payload.original || payload.text || "").trim();
-        if (!original) return;
-        const from = normalizeLang(payload.lang);
-        const to = myLangRef.current;
-        const translated = await translate(original, from, to);
-        showRemote({ id: Date.now(), speaker: "remote", original, translated, from, to, time: nowTime() });
-      });
+        if (cancelled) return;
+        streamRef.current = stream;
+        setMicOn(stream.getAudioTracks().some((t) => t.enabled));
+        setCamOn(stream.getVideoTracks().some((t) => t.enabled));
+        stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+          localVideoRef.current.play().catch((e) => setError(`Video play error: ${e?.message}`));
+        }
+
+        pc.ontrack = (e) => {
+          const rs = e.streams[0];
+          if (remoteVideoRef.current) { remoteVideoRef.current.srcObject = rs; remoteVideoRef.current.play().catch(() => {}); setHasRemote(true); }
+        };
+        pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
+
+        socket.on("connect", () => {
+          setConnected(true);
+          socket.emit("join-room", roomId);
+          startDeepgram(myLangRef.current);
+        });
+        if (socket.connected) {
+          setConnected(true);
+          socket.emit("join-room", roomId);
+          startDeepgram(myLangRef.current);
+        }
+        socket.on("disconnect", () => setConnected(false));
+        socket.on("user-joined", async () => { const o = await pc.createOffer(); await pc.setLocalDescription(o); socket.emit("offer", { roomId, offer: o }); });
+        socket.on("offer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.offer)); const a = await pc.createAnswer(); await pc.setLocalDescription(a); socket.emit("answer", { roomId, answer: a }); });
+        socket.on("answer", async (d) => { await pc.setRemoteDescription(new RTCSessionDescription(d.answer)); });
+        socket.on("ice-candidate", async (d) => { try { await pc.addIceCandidate(d.candidate); } catch {} });
+
+        socket.on("transcript-result", async ({ text, isFinal, lang }: { text: string; isFinal?: boolean; lang?: string }) => {
+          const original = text?.trim();
+          if (!original) return;
+          const from = normalizeLang(lang || myLangRef.current);
+          const to = targetLang;
+          if (!isFinal) {
+            showLocal({ id: Date.now(), speaker: "local", original, translated: original, from, to, partial: true, time: nowTime() });
+            return;
+          }
+          const translated = await translate(original, from, to);
+          showLocal({ id: Date.now(), speaker: "local", original, translated, from, to, time: nowTime() });
+          socket.emit("subtitle", { roomId, original, lang: from });
+        });
+
+        socket.on("subtitle", async (payload: { original?: string; text?: string; lang?: string }) => {
+          const original = (payload.original || payload.text || "").trim();
+          if (!original) return;
+          const from = normalizeLang(payload.lang);
+          const to = myLangRef.current;
+          const translated = await translate(original, from, to);
+          showRemote({ id: Date.now(), speaker: "remote", original, translated, from, to, time: nowTime() });
+        });
+
+      } catch (err: any) {
+        setError(`Error inesperado: ${err?.message}`);
+      }
     }
 
     startCall();
@@ -212,6 +230,22 @@ export default function CallPage() {
     setMyLang(lang); myLangRef.current = lang;
     stopDeepgram(); startDeepgram(lang);
     setShowLangPicker(false);
+  }
+
+  // ── PANTALLA DE ERROR ──
+  if (error) {
+    return (
+      <main style={{ background: "#0d1117", width: "100vw", height: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, fontFamily: "system-ui, sans-serif" }}>
+        <div style={{ background: "rgba(232,82,74,0.12)", border: "1px solid rgba(232,82,74,0.4)", borderRadius: 16, padding: "24px 32px", maxWidth: 480, textAlign: "center" }}>
+          <p style={{ fontSize: 32, margin: "0 0 12px" }}>📷</p>
+          <h2 style={{ color: "#e8524a", fontSize: 18, fontWeight: 700, margin: "0 0 12px" }}>No se puede acceder a la cámara</h2>
+          <p style={{ color: "rgba(255,255,255,0.6)", fontSize: 14, margin: "0 0 20px", lineHeight: 1.6 }}>{error}</p>
+          <button onClick={() => window.location.reload()} style={{ background: "rgba(232,82,74,0.2)", border: "1px solid rgba(232,82,74,0.4)", borderRadius: 8, padding: "10px 24px", color: "#e8524a", fontSize: 14, cursor: "pointer" }}>
+            Reintentar
+          </button>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -256,7 +290,7 @@ export default function CallPage() {
         </button>
       </div>
 
-      {/* SUBTÍTULOS — estilo imagen referencia */}
+      {/* SUBTÍTULOS */}
       {ccOn && (
         <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(140px, 20vh, 210px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 16, padding: "0 clamp(16px, 4vw, 28px)" }}>
           {[localCaption, remoteCaption].map((cap) => {
@@ -267,7 +301,6 @@ export default function CallPage() {
             const flagFrom = LANGS[cap.from]?.flag ?? flagTo;
             return (
               <div key={cap.speaker} style={{ animation: "captionIn .22s ease-out both" }}>
-                {/* nombre · hora */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <span style={{ color: accent, fontWeight: 800, fontSize: "clamp(14px, 3.5vw, 18px)", letterSpacing: ".01em" }}>
                     {isLocal ? "Tú" : "Participante"}
@@ -275,33 +308,18 @@ export default function CallPage() {
                   <span style={{ color: "#8E8E93", fontSize: 10 }}>•</span>
                   <span style={{ color: "#8E8E93", fontSize: "clamp(12px, 2.8vw, 15px)", fontVariantNumeric: "tabular-nums" }}>{cap.time}</span>
                 </div>
-                {/* bandera imagen + texto */}
                 <div style={{ display: "flex", alignItems: "center", gap: "clamp(12px, 3vw, 16px)" }}>
-                  <img src={flagTo} alt={cap.to} style={{
-                    width: "clamp(36px, 9vw, 52px)", height: "clamp(36px, 9vw, 52px)",
-                    borderRadius: 12, objectFit: "cover", flexShrink: 0,
-                    boxShadow: "0 4px 16px rgba(0,0,0,.60)",
-                  }}/>
-                  <span style={{
-                    color: "#fff",
-                    fontSize: "clamp(24px, 6vw, 40px)",
-                    lineHeight: 1.1, fontWeight: 650,
-                    letterSpacing: "-.03em",
-                    textShadow: `0 2px 24px rgba(0,0,0,.80), 0 0 40px ${accent}30`,
-                    opacity: cap.partial ? 0.6 : 1,
-                    transition: "opacity .2s",
-                  }}>
+                  <img src={flagTo} alt={cap.to} style={{ width: "clamp(36px, 9vw, 52px)", height: "clamp(36px, 9vw, 52px)", borderRadius: 12, objectFit: "cover", flexShrink: 0, boxShadow: "0 4px 16px rgba(0,0,0,.60)" }}/>
+                  <span style={{ color: "#fff", fontSize: "clamp(24px, 6vw, 40px)", lineHeight: 1.1, fontWeight: 650, letterSpacing: "-.03em", textShadow: `0 2px 24px rgba(0,0,0,.80), 0 0 40px ${accent}30`, opacity: cap.partial ? 0.6 : 1, transition: "opacity .2s" }}>
                     {cap.partial ? cap.original : cap.translated}
                   </span>
                 </div>
-                {/* original en cursiva */}
                 {!cap.partial && cap.original !== cap.translated && (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, paddingLeft: "clamp(48px, 12vw, 68px)", color: "rgba(255,255,255,.42)", fontSize: "clamp(12px, 2.8vw, 16px)", fontStyle: "italic" }}>
                     <img src={flagFrom} alt={cap.from} style={{ width: "clamp(18px, 4.5vw, 26px)", height: "clamp(18px, 4.5vw, 26px)", borderRadius: 6, objectFit: "cover", flexShrink: 0, opacity: .75 }}/>
                     <span>{cap.original}</span>
                   </div>
                 )}
-                {/* línea animada */}
                 <div style={{ marginTop: 10, height: 2, borderRadius: 999, background: isLocal ? "linear-gradient(90deg, transparent, #00E5FF, transparent)" : "linear-gradient(90deg, transparent, #FF6B8A, transparent)", animation: "wave 2s ease-in-out infinite" }}/>
               </div>
             );
@@ -309,9 +327,8 @@ export default function CallPage() {
         </div>
       )}
 
-      {/* CONTROLES FLOTANTES */}
+      {/* CONTROLES */}
       <nav style={{ position: "absolute", bottom: "max(32px, env(safe-area-inset-bottom, 32px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(16px, 4.5vw, 28px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
-
         <CtrlBtn onClick={toggleMic} label="Micrófono" danger={!micOn}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             {micOn ? <><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/></> : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6"/></>}
@@ -324,7 +341,6 @@ export default function CallPage() {
           </svg>
         </CtrlBtn>
 
-        {/* Colgar — central grande */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <button onClick={hangUp} style={{ width: "clamp(68px, 17vw, 82px)", height: "clamp(68px, 17vw, 82px)", borderRadius: "50%", background: "radial-gradient(circle at 38% 35%, #ff5569, #e8162e)", border: "none", boxShadow: "0 0 0 1px rgba(255,92,106,.40), 0 0 40px rgba(255,40,60,.65), 0 8px 28px rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -334,18 +350,15 @@ export default function CallPage() {
           <span style={{ fontSize: 11, color: "rgba(255,255,255,.50)", letterSpacing: ".04em" }}>Colgar</span>
         </div>
 
-        {/* CC */}
         <CtrlBtn onClick={() => setCcOn(p => !p)} label="Subtítulos" accent={ccOn ? "#00E5FF" : undefined}>
           <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: ".06em", color: ccOn ? "#00E5FF" : "rgba(255,255,255,.50)" }}>CC</span>
         </CtrlBtn>
 
-        {/* Cambiar idioma */}
         <CtrlBtn onClick={() => setShowLangPicker(true)} label="Idioma">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,.80)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
             <path d="M8 3L4 7l4 4M16 21l4-4-4-4M4 7h16M4 17h16"/>
           </svg>
         </CtrlBtn>
-
       </nav>
 
       {/* SELECTOR DE IDIOMA */}
