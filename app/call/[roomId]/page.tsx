@@ -106,6 +106,7 @@ export default function CallPage() {
   const [connected,      setConnected]      = useState(false);
   const [hasRemote,      setHasRemote]      = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
+  const [needsTap,       setNeedsTap]       = useState(false); // ← Safari iOS fix
   const [error,          setError]          = useState<string | null>(null);
 
   useEffect(() => { myLangRef.current = myLang; }, [myLang]);
@@ -148,6 +149,13 @@ export default function CallPage() {
     source.connect(processor); processor.connect(ctx.destination); ctx.resume().catch(() => {});
   }
 
+  // ── Safari iOS: activar vídeo remoto al tocar ──
+  function handleTap() {
+    if (!needsTap) return;
+    remoteVideoRef.current?.play().catch(() => {});
+    setNeedsTap(false);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
@@ -156,7 +164,6 @@ export default function CallPage() {
         const socket = io(SERVER_URL, { transports: ["polling", "websocket"] });
         socketRef.current = socket;
 
-        // ── TURN + STUN ──
         const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
 
@@ -175,17 +182,20 @@ export default function CallPage() {
         stream.getTracks().forEach((t) => pc.addTrack(t, stream));
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          localVideoRef.current.play().catch((e) => setError(`Video play error: ${e?.message}`));
+          localVideoRef.current.play().catch(() => {});
         }
 
         pc.ontrack = (e) => {
           const rs = e.streams[0];
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = rs;
-            remoteVideoRef.current.play().catch(() => {});
-            setHasRemote(true);
-          }
+          if (!remoteVideoRef.current) return;
+          remoteVideoRef.current.srcObject = rs;
+          remoteVideoRef.current.play().catch(() => {
+            // Safari iOS bloqueó autoplay — pedir toque al usuario
+            setNeedsTap(true);
+          });
+          setHasRemote(true);
         };
+
         pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
 
         socket.on("connect", () => {
@@ -273,7 +283,7 @@ export default function CallPage() {
   }
 
   return (
-    <main style={{ background: "#000", width: "100vw", height: "100svh", overflow: "hidden", position: "relative", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
+    <main onClick={handleTap} style={{ background: "#000", width: "100vw", height: "100svh", overflow: "hidden", position: "relative", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
 
       <video ref={remoteVideoRef} autoPlay playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: hasRemote ? 1 : 0, transition: "opacity .5s", zIndex: 1 }}/>
 
@@ -292,6 +302,13 @@ export default function CallPage() {
       }}/>
 
       <div style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none", background: "linear-gradient(to bottom, rgba(0,0,0,.28) 0%, rgba(0,0,0,.0) 30%, rgba(0,0,0,.65) 68%, rgba(0,0,0,.97) 100%)" }}/>
+
+      {/* Banner "toca para ver" — solo aparece en Safari iOS si el autoplay falla */}
+      {needsTap && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 60, background: "rgba(0,0,0,.75)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 20, padding: "20px 32px", textAlign: "center", pointerEvents: "none" }}>
+          <p style={{ color: "#fff", fontSize: 18, fontWeight: 700, margin: 0 }}>Toca para ver el vídeo</p>
+        </div>
+      )}
 
       {!hasRemote && (
         <section style={{ position: "absolute", inset: 0, zIndex: 8, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
