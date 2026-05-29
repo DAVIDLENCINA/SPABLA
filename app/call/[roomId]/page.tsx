@@ -6,6 +6,26 @@ import { io, Socket } from "socket.io-client";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
+const ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  {
+    urls: "turn:openrelay.metered.ca:80",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+  {
+    urls: "turn:openrelay.metered.ca:443?transport=tcp",
+    username: "openrelayproject",
+    credential: "openrelayproject",
+  },
+];
+
 const LANGS = {
   es: { emoji: "🇪🇸", flag: "https://flagcdn.com/es.svg", label: "Español",  deepgram: "es"    },
   en: { emoji: "🇬🇧", flag: "https://flagcdn.com/gb.svg", label: "English",  deepgram: "en-US" },
@@ -86,7 +106,7 @@ export default function CallPage() {
   const [connected,      setConnected]      = useState(false);
   const [hasRemote,      setHasRemote]      = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
-  const [error,          setError]          = useState<string | null>(null); // ← NUEVO
+  const [error,          setError]          = useState<string | null>(null);
 
   useEffect(() => { myLangRef.current = myLang; }, [myLang]);
 
@@ -133,12 +153,13 @@ export default function CallPage() {
 
     async function startCall() {
       try {
-        const socket = io(SERVER_URL, { transports: ["polling"] });
+        const socket = io(SERVER_URL, { transports: ["polling", "websocket"] });
         socketRef.current = socket;
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+        // ── TURN + STUN ──
+        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
         pcRef.current = pc;
 
-        // ── Pedir cámara y micrófono ──
         let stream: MediaStream;
         try {
           stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -159,7 +180,11 @@ export default function CallPage() {
 
         pc.ontrack = (e) => {
           const rs = e.streams[0];
-          if (remoteVideoRef.current) { remoteVideoRef.current.srcObject = rs; remoteVideoRef.current.play().catch(() => {}); setHasRemote(true); }
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = rs;
+            remoteVideoRef.current.play().catch(() => {});
+            setHasRemote(true);
+          }
         };
         pc.onicecandidate = (e) => { if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate }); };
 
@@ -221,7 +246,7 @@ export default function CallPage() {
 
   function toggleMic() { streamRef.current?.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; setMicOn(t.enabled); }); }
   function toggleCam() { streamRef.current?.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; setCamOn(t.enabled); }); }
-  function hangUp() { stopDeepgram(); streamRef.current?.getTracks().forEach((t) => t.stop()); socketRef.current?.disconnect(); pcRef.current?.close(); window.location.href = "/"; }
+  function hangUp() { stopDeepgram(); streamRef.current?.getTracks().forEach((t) => t.stop()); socketRef.current?.disconnect(); pcRef.current?.close(); window.location.href = "/chat"; }
   function share() {
     if (navigator.share) navigator.share({ title: "SPABLA", url: window.location.href }).catch(() => {});
     else navigator.clipboard.writeText(window.location.href);
@@ -232,7 +257,6 @@ export default function CallPage() {
     setShowLangPicker(false);
   }
 
-  // ── PANTALLA DE ERROR ──
   if (error) {
     return (
       <main style={{ background: "#0d1117", width: "100vw", height: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 32, fontFamily: "system-ui, sans-serif" }}>
@@ -278,7 +302,6 @@ export default function CallPage() {
         </section>
       )}
 
-      {/* Header */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 50, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "max(14px, env(safe-area-inset-top)) 16px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#fff", fontSize: 13, fontWeight: 700, background: "rgba(0,0,0,.52)", border: "1px solid rgba(255,255,255,.14)", borderRadius: 999, padding: "8px 14px", backdropFilter: "blur(18px)" }}>
           <span>{LANGS[myLang].emoji}</span>
@@ -290,7 +313,6 @@ export default function CallPage() {
         </button>
       </div>
 
-      {/* SUBTÍTULOS */}
       {ccOn && (
         <div style={{ position: "absolute", left: 0, right: 0, bottom: "clamp(140px, 20vh, 210px)", zIndex: 65, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 16, padding: "0 clamp(16px, 4vw, 28px)" }}>
           {[localCaption, remoteCaption].map((cap) => {
@@ -327,7 +349,6 @@ export default function CallPage() {
         </div>
       )}
 
-      {/* CONTROLES */}
       <nav style={{ position: "absolute", bottom: "max(32px, env(safe-area-inset-bottom, 32px))", left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "flex-end", gap: "clamp(16px, 4.5vw, 28px)", zIndex: 70, maxWidth: "calc(100vw - 32px)" }}>
         <CtrlBtn onClick={toggleMic} label="Micrófono" danger={!micOn}>
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -361,7 +382,6 @@ export default function CallPage() {
         </CtrlBtn>
       </nav>
 
-      {/* SELECTOR DE IDIOMA */}
       {showLangPicker && (
         <div onClick={() => setShowLangPicker(false)} style={{ position: "absolute", inset: 0, zIndex: 90, background: "rgba(0,0,0,.75)", backdropFilter: "blur(16px)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: "0 16px 40px" }}>
           <div onClick={e => e.stopPropagation()} style={{ width: "min(420px, calc(100vw - 32px))", background: "rgba(12,13,22,.97)", border: "1px solid rgba(255,255,255,.10)", borderRadius: 28, padding: "24px 20px", boxShadow: "0 -8px 64px rgba(0,0,0,.65)" }}>
