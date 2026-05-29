@@ -56,8 +56,8 @@ export default function Chat() {
       }
     }
     setConversationId(convId);
-    loadMessages(convId);
-    subscribeToMessages(convId);
+    if (convId) loadMessages(convId);
+    if (convId) subscribeToMessages(convId);
   };
 
   const loadMessages = async (convId: string) => {
