@@ -7,16 +7,16 @@ import { io, Socket } from "socket.io-client";
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
 const LANGS = {
-  es: { emoji: "🇪🇸", flag: "https://flagcdn.com/w40/es.png", label: "Español",  deepgram: "es"    },
-  en: { emoji: "🇬🇧", flag: "https://flagcdn.com/w40/gb.png", label: "English",  deepgram: "en-US" },
-  fr: { emoji: "🇫🇷", flag: "https://flagcdn.com/w40/fr.png", label: "Français", deepgram: "fr"    },
-  de: { emoji: "🇩🇪", flag: "https://flagcdn.com/w40/de.png", label: "Deutsch",  deepgram: "de"    },
-  pt: { emoji: "🇵🇹", flag: "https://flagcdn.com/w40/pt.png", label: "Português",deepgram: "pt"    },
-  it: { emoji: "🇮🇹", flag: "https://flagcdn.com/w40/it.png", label: "Italiano", deepgram: "it"    },
-  ja: { emoji: "🇯🇵", flag: "https://flagcdn.com/w40/jp.png", label: "日本語",    deepgram: "ja"    },
-  ko: { emoji: "🇰🇷", flag: "https://flagcdn.com/w40/kr.png", label: "한국어",    deepgram: "ko"    },
-  zh: { emoji: "🇨🇳", flag: "https://flagcdn.com/w40/cn.png", label: "中文",      deepgram: "zh"    },
-  ar: { emoji: "🇸🇦", flag: "https://flagcdn.com/w40/sa.png", label: "العربية",  deepgram: "ar"    },
+  es: { emoji: "🇪🇸", flag: "https://flagcdn.com/w80/es.png", label: "Español",  deepgram: "es"    },
+  en: { emoji: "🇬🇧", flag: "https://flagcdn.com/w80/gb.png", label: "English",  deepgram: "en-US" },
+  fr: { emoji: "🇫🇷", flag: "https://flagcdn.com/w80/fr.png", label: "Français", deepgram: "fr"    },
+  de: { emoji: "🇩🇪", flag: "https://flagcdn.com/w80/de.png", label: "Deutsch",  deepgram: "de"    },
+  pt: { emoji: "🇵🇹", flag: "https://flagcdn.com/w80/pt.png", label: "Português",deepgram: "pt"    },
+  it: { emoji: "🇮🇹", flag: "https://flagcdn.com/w80/it.png", label: "Italiano", deepgram: "it"    },
+  ja: { emoji: "🇯🇵", flag: "https://flagcdn.com/w80/jp.png", label: "日本語",    deepgram: "ja"    },
+  ko: { emoji: "🇰🇷", flag: "https://flagcdn.com/w80/kr.png", label: "한국어",    deepgram: "ko"    },
+  zh: { emoji: "🇨🇳", flag: "https://flagcdn.com/w80/cn.png", label: "中文",      deepgram: "zh"    },
+  ar: { emoji: "🇸🇦", flag: "https://flagcdn.com/w80/sa.png", label: "العربية",  deepgram: "ar"    },
 } as const;
 
 type LangCode = keyof typeof LANGS;
