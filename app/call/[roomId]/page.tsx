@@ -9,21 +9,9 @@ const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.
 const ICE_SERVERS = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-  {
-    urls: "turn:openrelay.metered.ca:80",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
-  {
-    urls: "turn:openrelay.metered.ca:443?transport=tcp",
-    username: "openrelayproject",
-    credential: "openrelayproject",
-  },
+  { urls: "turn:openrelay.metered.ca:80",        username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443",       username: "openrelayproject", credential: "openrelayproject" },
+  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
 ];
 
 const LANGS = {
@@ -89,12 +77,14 @@ export default function CallPage() {
   const socketRef      = useRef<Socket | null>(null);
   const pcRef          = useRef<RTCPeerConnection | null>(null);
   const streamRef      = useRef<MediaStream | null>(null);
+  const remoteStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef    = useRef<AudioContext | null>(null);
   const processorRef   = useRef<ScriptProcessorNode | null>(null);
   const sourceRef      = useRef<MediaStreamAudioSourceNode | null>(null);
   const hideLocalRef   = useRef<number | null>(null);
   const hideRemoteRef  = useRef<number | null>(null);
   const myLangRef      = useRef<LangCode>("es");
+  const unlockedRef    = useRef(false);
 
   const [myLang,         setMyLang]         = useState<LangCode>("es");
   const [targetLang,     setTargetLang]     = useState<LangCode>("en");
@@ -106,10 +96,25 @@ export default function CallPage() {
   const [connected,      setConnected]      = useState(false);
   const [hasRemote,      setHasRemote]      = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
-  const [needsTap,       setNeedsTap]       = useState(false); // ← Safari iOS fix
   const [error,          setError]          = useState<string | null>(null);
 
   useEffect(() => { myLangRef.current = myLang; }, [myLang]);
+
+  // ── Safari iOS: desbloquear el elemento <video> remoto
+  // en el primer toque del usuario, antes de que llegue el stream ──
+  function unlockRemoteVideo() {
+    if (unlockedRef.current) return;
+    const v = remoteVideoRef.current;
+    if (!v) return;
+    // Asignar stream vacío y hacer play desde gesto de usuario
+    const empty = new MediaStream();
+    v.srcObject = empty;
+    v.play().catch(() => {});
+    // Restaurar inmediatamente
+    v.srcObject = remoteStreamRef.current ?? null;
+    if (remoteStreamRef.current) v.play().catch(() => {});
+    unlockedRef.current = true;
+  }
 
   function showLocal(next: Caption) {
     setLocalCaption(next);
@@ -149,13 +154,6 @@ export default function CallPage() {
     source.connect(processor); processor.connect(ctx.destination); ctx.resume().catch(() => {});
   }
 
-  // ── Safari iOS: activar vídeo remoto al tocar ──
-  function handleTap() {
-    if (!needsTap) return;
-    remoteVideoRef.current?.play().catch(() => {});
-    setNeedsTap(false);
-  }
-
   useEffect(() => {
     let cancelled = false;
 
@@ -187,12 +185,11 @@ export default function CallPage() {
 
         pc.ontrack = (e) => {
           const rs = e.streams[0];
-          if (!remoteVideoRef.current) return;
-          remoteVideoRef.current.srcObject = rs;
-          remoteVideoRef.current.play().catch(() => {
-            // Safari iOS bloqueó autoplay — pedir toque al usuario
-            setNeedsTap(true);
-          });
+          remoteStreamRef.current = rs;
+          const v = remoteVideoRef.current;
+          if (!v) return;
+          v.srcObject = rs;
+          v.play().catch(() => {});
           setHasRemote(true);
         };
 
@@ -283,8 +280,10 @@ export default function CallPage() {
   }
 
   return (
-    <main onClick={handleTap} style={{ background: "#000", width: "100vw", height: "100svh", overflow: "hidden", position: "relative", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}>
-
+    <main
+      onClick={unlockRemoteVideo}
+      style={{ background: "#000", width: "100vw", height: "100svh", overflow: "hidden", position: "relative", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" }}
+    >
       <video ref={remoteVideoRef} autoPlay playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: hasRemote ? 1 : 0, transition: "opacity .5s", zIndex: 1 }}/>
 
       <video ref={localVideoRef} autoPlay muted playsInline style={{
@@ -302,13 +301,6 @@ export default function CallPage() {
       }}/>
 
       <div style={{ position: "absolute", inset: 0, zIndex: 3, pointerEvents: "none", background: "linear-gradient(to bottom, rgba(0,0,0,.28) 0%, rgba(0,0,0,.0) 30%, rgba(0,0,0,.65) 68%, rgba(0,0,0,.97) 100%)" }}/>
-
-      {/* Banner "toca para ver" — solo aparece en Safari iOS si el autoplay falla */}
-      {needsTap && (
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 60, background: "rgba(0,0,0,.75)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,.2)", borderRadius: 20, padding: "20px 32px", textAlign: "center", pointerEvents: "none" }}>
-          <p style={{ color: "#fff", fontSize: 18, fontWeight: 700, margin: 0 }}>Toca para ver el vídeo</p>
-        </div>
-      )}
 
       {!hasRemote && (
         <section style={{ position: "absolute", inset: 0, zIndex: 8, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, textAlign: "center" }}>
