@@ -25,7 +25,7 @@ export type WebRTCState = {
   toggleCam:    () => void;
 };
 
-export function useWebRTC(roomId: string): WebRTCState {
+export function useWebRTC(conversationId: string | null): WebRTCState {
   const socketRef      = useRef<Socket | null>(null);
   const pcRef          = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -51,6 +51,7 @@ export function useWebRTC(roomId: string): WebRTCState {
 
   const startCall = useCallback(async () => {
     if (socketRef.current?.connected) return; // ya activa
+    if (!conversationId) return;              // sin conversación activa no hay sala
 
     setError(null);
 
@@ -82,12 +83,12 @@ export function useWebRTC(roomId: string): WebRTCState {
     socketRef.current = socket;
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit("ice-candidate", { roomId, candidate: e.candidate });
+      if (e.candidate) socket.emit("ice-candidate", { roomId: conversationId, candidate: e.candidate });
     };
 
     socket.on("connect", () => {
       setConnected(true);
-      socket.emit("join-room", roomId);
+      socket.emit("join-room", conversationId);
     });
 
     socket.on("disconnect", () => setConnected(false));
@@ -95,14 +96,14 @@ export function useWebRTC(roomId: string): WebRTCState {
     socket.on("user-joined", async () => {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit("offer", { roomId, offer });
+      socket.emit("offer", { roomId: conversationId, offer });
     });
 
     socket.on("offer", async (d: { offer: RTCSessionDescriptionInit }) => {
       await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      socket.emit("answer", { roomId, answer });
+      socket.emit("answer", { roomId: conversationId, answer });
     });
 
     socket.on("answer", async (d: { answer: RTCSessionDescriptionInit }) => {
@@ -112,7 +113,7 @@ export function useWebRTC(roomId: string): WebRTCState {
     socket.on("ice-candidate", async (d: { candidate: RTCIceCandidateInit }) => {
       try { await pc.addIceCandidate(d.candidate); } catch {}
     });
-  }, [roomId]);
+  }, [conversationId]);
 
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current;

@@ -41,12 +41,11 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [otherLang, setOtherLang] = useState<string | null>(null);
-  const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const webrtc = useWebRTC(roomId);
+  const webrtc = useWebRTC(conversationId);
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
