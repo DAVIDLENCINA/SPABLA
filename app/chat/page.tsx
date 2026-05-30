@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useWebRTC } from "./hooks/useWebRTC";
@@ -33,6 +33,8 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
+  const convIdRef = useRef<string | null>(null);
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const webrtc = useWebRTC(roomId);
 
@@ -42,41 +44,72 @@ export default function Chat() {
     const u = JSON.parse(stored);
     setUser(u);
     initConversation(u);
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const loadMessages = useCallback(async (convId: string) => {
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", convId)
+      .order("created_at");
+    if (data) setMessages(data);
+  }, []);
+
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
     let convId = params.get("id");
+
     if (!convId) {
       const { data } = await supabase.from("conversations").insert({}).select().single();
       convId = data.id;
       await supabase.from("conversation_participants").insert({ conversation_id: convId, user_id: u.id });
       window.history.replaceState({}, "", `/chat?id=${convId}`);
     } else {
-      const { data: existing } = await supabase.from("conversation_participants").select().eq("conversation_id", convId).eq("user_id", u.id);
+      const { data: existing } = await supabase
+        .from("conversation_participants")
+        .select()
+        .eq("conversation_id", convId)
+        .eq("user_id", u.id);
       if (!existing?.length) {
         await supabase.from("conversation_participants").insert({ conversation_id: convId, user_id: u.id });
       }
     }
+
+    convIdRef.current = convId;
     setConversationId(convId);
-    if (convId) loadMessages(convId);
-    if (convId) subscribeToMessages(convId);
-  };
+    await loadMessages(convId);
 
-  const loadMessages = async (convId: string) => {
-    const { data } = await supabase.from("messages").select("*").eq("conversation_id", convId).order("created_at");
-    setMessages(data || []);
-  };
+    // Intentar Realtime — si falla, usar polling cada 3s
+    const channel = supabase
+      .channel(`messages:${convId}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
+        (payload) => setMessages(prev => [...prev, payload.new as Message])
+      )
+      .subscribe((status) => {
+        console.log("[SPABLA] Realtime status:", status);
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[SPABLA] Realtime falló, activando polling cada 3s");
+          if (!pollingRef.current) {
+            pollingRef.current = setInterval(() => loadMessages(convId!), 3000);
+          }
+        }
+        if (status === "SUBSCRIBED") {
+          // Realtime OK — cancelar polling si estaba activo
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+        }
+      });
 
-  const subscribeToMessages = (convId: string) => {
-    supabase.channel(`messages:${convId}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
-        (payload) => setMessages(prev => [...prev, payload.new as Message]))
-      .subscribe();
+    return () => { supabase.removeChannel(channel); };
   };
 
   const translate = async (text: string, from: string, to: string): Promise<string> => {
@@ -93,14 +126,25 @@ export default function Chat() {
     setLoading(true);
     const text = input.trim();
     setInput("");
-    const { data: participants } = await supabase.from("conversation_participants").select("user_id").eq("conversation_id", conversationId);
+
+    const { data: participants } = await supabase
+      .from("conversation_participants")
+      .select("user_id")
+      .eq("conversation_id", conversationId);
+
     const otherIds = participants?.filter(p => p.user_id !== user.id).map(p => p.user_id) || [];
     let translated = text;
+
     if (otherIds.length > 0) {
-      const { data: otherUser } = await supabase.from("users").select("language_primary").eq("id", otherIds[0]).single();
+      const { data: otherUser } = await supabase
+        .from("users")
+        .select("language_primary")
+        .eq("id", otherIds[0])
+        .single();
       if (otherUser) translated = await translate(text, user.language_primary, otherUser.language_primary);
     }
-    await supabase.from("messages").insert({
+
+    const { error } = await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender_id: user.id,
       original_text: text,
@@ -108,6 +152,12 @@ export default function Chat() {
       original_language: user.language_primary,
       translated_language: otherIds.length > 0 ? "en" : user.language_primary,
     });
+
+    // Si Realtime no funciona, añadir mensaje localmente para feedback inmediato
+    if (!error && pollingRef.current) {
+      await loadMessages(conversationId);
+    }
+
     setLoading(false);
   };
 
@@ -146,20 +196,14 @@ export default function Chat() {
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 18 }}>{LANGUAGES[user.language_primary]}</span>
 
-          {/* Botón videollamada — activa/desactiva overlay */}
           <button
             onClick={videoActive ? stopVideo : startVideo}
             style={{
               background: videoActive ? "rgba(62,198,198,0.20)" : "rgba(232,82,74,0.15)",
               border: `1px solid ${videoActive ? "rgba(62,198,198,0.5)" : "rgba(232,82,74,0.35)"}`,
-              borderRadius: 8,
-              padding: "6px 14px",
+              borderRadius: 8, padding: "6px 14px",
               color: videoActive ? "#3ec6c6" : "#e8524a",
-              fontSize: 13,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
+              fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6,
             }}
           >
             {videoActive ? "🔴 En llamada" : "📹 Videollamada"}
@@ -225,7 +269,7 @@ export default function Chat() {
         </button>
       </div>
 
-      {/* VIDEO OVERLAY — flotante sobre el chat */}
+      {/* VIDEO OVERLAY */}
       {videoActive && (
         <VideoOverlay
           webrtc={webrtc}
