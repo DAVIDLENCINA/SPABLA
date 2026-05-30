@@ -5,9 +5,17 @@ import { supabase } from "@/lib/supabase";
 import { useWebRTC } from "./hooks/useWebRTC";
 import VideoOverlay from "./components/VideoOverlay";
 
-const LANGUAGES: Record<string, string> = {
-  es: "🇪🇸", en: "🇬🇧", fr: "🇫🇷", de: "🇩🇪",
-  it: "🇮🇹", pt: "🇧🇷", ja: "🇯🇵", zh: "🇨🇳", ar: "🇸🇦", ru: "🇷🇺"
+const LANGUAGES: Record<string, { flag: string; name: string }> = {
+  es: { flag: "🇪🇸", name: "Español" },
+  en: { flag: "🇬🇧", name: "English" },
+  fr: { flag: "🇫🇷", name: "Français" },
+  de: { flag: "🇩🇪", name: "Deutsch" },
+  it: { flag: "🇮🇹", name: "Italiano" },
+  pt: { flag: "🇵🇹", name: "Português" },
+  ja: { flag: "🇯🇵", name: "日本語" },
+  zh: { flag: "🇨🇳", name: "中文" },
+  ar: { flag: "🇸🇦", name: "العربية" },
+  ru: { flag: "🇷🇺", name: "Русский" },
 };
 
 type Message = {
@@ -32,6 +40,8 @@ export default function Chat() {
   const [showOriginal, setShowOriginal] = useState<string | null>(null);
   const [videoActive, setVideoActive] = useState(false);
   const [videoExpanded, setVideoExpanded] = useState(false);
+  const [showLangPicker, setShowLangPicker] = useState(false);
+  const [otherLang, setOtherLang] = useState<string | null>(null);
   const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -82,6 +92,23 @@ export default function Chat() {
     convIdRef.current = convId;
     setConversationId(convId);
     await loadMessages();
+
+    // Detectar idioma del otro participante
+    const { data: participants } = await supabase
+      .from("conversation_participants")
+      .select("user_id")
+      .eq("conversation_id", convId)
+      .neq("user_id", u.id);
+    if (participants?.length) {
+      const { data: otherUsers } = await supabase
+        .from("users")
+        .select("language_primary")
+        .in("id", participants.map(p => p.user_id))
+        .neq("language_primary", u.language_primary)
+        .limit(1);
+      if (otherUsers?.[0]) setOtherLang(otherUsers[0].language_primary);
+    }
+
     const channel = supabase.channel(`messages:${convId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
         (payload) => setMessages(prev => [...prev, payload.new as Message]))
@@ -92,21 +119,27 @@ export default function Chat() {
     return () => { supabase.removeChannel(channel); };
   };
 
+  const changeLang = async (lang: string) => {
+    if (!user) return;
+    const updated = { ...user, language_primary: lang };
+    // Actualizar Supabase
+    await supabase.from("users").update({ language_primary: lang }).eq("id", user.id);
+    // Actualizar localStorage
+    localStorage.setItem("spabla_user", JSON.stringify(updated));
+    // Actualizar estado React
+    setUser(updated);
+    setShowLangPicker(false);
+  };
+
   const translate = async (text: string, from: string, to: string): Promise<string> => {
     if (from === to || !text.trim()) return text;
     try {
       const url = `${window.location.origin}/api/translate`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, from, to }),
-      });
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, from, to }) });
       if (!res.ok) return text;
       const data = await res.json();
       return data.translation || text;
-    } catch {
-      return text;
-    }
+    } catch { return text; }
   };
 
   const sendMessage = async () => {
@@ -114,50 +147,30 @@ export default function Chat() {
     setLoading(true);
     const text = input.trim();
     setInput("");
-
     let translated = text;
     let translatedLanguage = user.language_primary;
-
     try {
-      // Obtener participantes únicos distintos al emisor
       const { data: participants } = await supabase
-        .from("conversation_participants")
-        .select("user_id")
-        .eq("conversation_id", conversationId)
-        .neq("user_id", user.id);
-
-      // Obtener IDs únicos
+        .from("conversation_participants").select("user_id")
+        .eq("conversation_id", conversationId).neq("user_id", user.id);
       const uniqueOtherIds = [...new Set((participants || []).map(p => p.user_id))];
-
       if (uniqueOtherIds.length > 0) {
-        // Buscar el receptor con idioma distinto al emisor
         const { data: otherUsers } = await supabase
-          .from("users")
-          .select("id, language_primary")
-          .in("id", uniqueOtherIds)
-          .neq("language_primary", user.language_primary)
-          .limit(1);
-
+          .from("users").select("id, language_primary")
+          .in("id", uniqueOtherIds).neq("language_primary", user.language_primary).limit(1);
         const otherUser = otherUsers?.[0];
-
         if (otherUser?.language_primary) {
           translatedLanguage = otherUser.language_primary;
           translated = await translate(text, user.language_primary, otherUser.language_primary);
+          setOtherLang(otherUser.language_primary);
         }
       }
-    } catch {
-      // Si falla, enviar sin traducción
-    }
-
+    } catch {}
     await supabase.from("messages").insert({
-      conversation_id: conversationId,
-      sender_id: user.id,
-      original_text: text,
-      translated_text: translated,
-      original_language: user.language_primary,
-      translated_language: translatedLanguage,
+      conversation_id: conversationId, sender_id: user.id,
+      original_text: text, translated_text: translated,
+      original_language: user.language_primary, translated_language: translatedLanguage,
     });
-
     if (pollingRef.current) await loadMessages();
     setLoading(false);
   };
@@ -168,54 +181,147 @@ export default function Chat() {
 
   if (!user) return null;
 
+  const myLang = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
+  const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
+
   return (
-    <div style={{ background: "#0d1117", height: "100vh", display: "flex", flexDirection: "column", fontFamily: "Inter, sans-serif", position: "relative" }}>
-      <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "#0d1117" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-            <ellipse cx="11" cy="13" rx="9" ry="9" fill="#3ec6c6" opacity="0.9"/>
-            <ellipse cx="17" cy="15" rx="9" ry="9" fill="#e8524a" opacity="0.9"/>
-            <path d="M14 8 C16 10, 12 14, 14 18 C12 16, 16 12, 14 8Z" fill="white"/>
-          </svg>
-          <span style={{ color: "#fff", fontWeight: 600 }}>Chat</span>
+    <div style={{ background: "#0d1117", height: "100svh", display: "flex", flexDirection: "column", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif", position: "relative", overflow: "hidden" }}>
+
+      {/* ── HEADER ── */}
+      <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "#0d1117" }}>
+        {/* Row 1: logo + actions */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <svg width="26" height="26" viewBox="0 0 28 28" fill="none">
+              <ellipse cx="11" cy="13" rx="9" ry="9" fill="#3ec6c6" opacity="0.9"/>
+              <ellipse cx="17" cy="15" rx="9" ry="9" fill="#e8524a" opacity="0.9"/>
+              <path d="M14 8 C16 10, 12 14, 14 18 C12 16, 16 12, 14 8Z" fill="white"/>
+            </svg>
+            <span style={{ color: "#fff", fontWeight: 600, fontSize: 16 }}>Chat</span>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={videoActive ? stopVideo : startVideo} style={{ background: videoActive ? "rgba(62,198,198,0.15)" : "rgba(232,82,74,0.12)", border: `1px solid ${videoActive ? "rgba(62,198,198,0.4)" : "rgba(232,82,74,0.3)"}`, borderRadius: 8, padding: "6px 12px", color: videoActive ? "#3ec6c6" : "#e8524a", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+              <span>{videoActive ? "🔴" : "📹"}</span>
+              <span>{videoActive ? "En llamada" : "Llamada"}</span>
+            </button>
+            <button onClick={shareLink} style={{ background: "rgba(62,198,198,0.10)", border: "1px solid rgba(62,198,198,0.25)", borderRadius: 8, padding: "6px 12px", color: "#3ec6c6", fontSize: 12, cursor: "pointer" }}>
+              Invitar
+            </button>
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <span style={{ fontSize: 18 }}>{LANGUAGES[user.language_primary]}</span>
-          <button onClick={videoActive ? stopVideo : startVideo} style={{ background: videoActive ? "rgba(62,198,198,0.20)" : "rgba(232,82,74,0.15)", border: `1px solid ${videoActive ? "rgba(62,198,198,0.5)" : "rgba(232,82,74,0.35)"}`, borderRadius: 8, padding: "6px 14px", color: videoActive ? "#3ec6c6" : "#e8524a", fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-            {videoActive ? "🔴 En llamada" : "📹 Videollamada"}
+
+        {/* Row 2: language pair + status */}
+        <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 10, padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <button onClick={() => setShowLangPicker(true)} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, padding: 0 }}>
+            <span style={{ fontSize: 14, color: "#fff", fontWeight: 500 }}>{myLang.flag} {myLang.name}</span>
+            <span style={{ color: "#3ec6c6", fontSize: 14, fontWeight: 600 }}>↔</span>
+            {theirLang
+              ? <span style={{ fontSize: 14, color: "rgba(255,255,255,0.7)" }}>{theirLang.flag} {theirLang.name}</span>
+              : <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Esperando...</span>
+            }
+            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.35)", marginLeft: 2 }}>▼</span>
           </button>
-          <button onClick={shareLink} style={{ background: "rgba(62,198,198,0.15)", border: "1px solid rgba(62,198,198,0.3)", borderRadius: 8, padding: "6px 14px", color: "#3ec6c6", fontSize: 13, cursor: "pointer" }}>Invitar</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 6, height: 6, background: "#41ff9d", borderRadius: "50%" }}/>
+            <span style={{ fontSize: 11, color: "#41ff9d" }}>Traducción activa</span>
+          </div>
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "20px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+
+      {/* ── MESSAGES ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px", display: "flex", flexDirection: "column", gap: 12 }}>
         {messages.length === 0 && (
           <div style={{ textAlign: "center", marginTop: 60 }}>
-            <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 14 }}>Comparte el link para que alguien se una</p>
-            <button onClick={shareLink} style={{ marginTop: 12, background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 10, padding: "10px 24px", color: "#fff", fontSize: 14, cursor: "pointer" }}>Copiar link</button>
+            <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 14, marginBottom: 16 }}>Comparte el link para que alguien se una</p>
+            <button onClick={shareLink} style={{ background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 10, padding: "10px 24px", color: "#fff", fontSize: 14, cursor: "pointer" }}>Copiar link</button>
           </div>
         )}
         {messages.map(msg => {
           const isMe = msg.sender_id === user.id;
-          const displayText = isMe ? msg.original_text : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
-          const originalText = isMe ? null : msg.original_text;
-          const showToggle = !isMe && originalText && originalText !== displayText;
+          const displayText = isMe
+            ? msg.original_text
+            : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
+          const wasTranslated = !isMe && msg.original_text !== displayText;
+          const fromLang = LANGUAGES[msg.original_language];
           return (
             <div key={msg.id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
-              <div style={{ maxWidth: "75%", background: isMe ? "linear-gradient(135deg,#3ec6c6,#2aa8a8)" : "#1a2232", borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "10px 14px" }}>
-                <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.5 }}>{displayText}</p>
-                {showToggle && <button onClick={() => setShowOriginal(showOriginal === msg.id ? null : msg.id)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer", padding: "4px 0 0", display: "block" }}>{showOriginal === msg.id ? "Ocultar original" : "Ver original"}</button>}
-                {showOriginal === msg.id && <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, margin: "6px 0 0", fontStyle: "italic" }}>{originalText}</p>}
+              <div style={{ maxWidth: "78%" }}>
+                <div style={{ background: isMe ? "linear-gradient(135deg,#3ec6c6,#2aa8a8)" : "#1a2232", borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "10px 14px" }}>
+                  <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.5 }}>{displayText}</p>
+                  {wasTranslated && (
+                    <>
+                      <button
+                        onClick={() => setShowOriginal(showOriginal === msg.id ? null : msg.id)}
+                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer", padding: "5px 0 0", display: "flex", alignItems: "center", gap: 4 }}
+                      >
+                        <span>🌐</span>
+                        <span>{fromLang ? fromLang.name : msg.original_language}</span>
+                        <span style={{ fontSize: 10 }}>{showOriginal === msg.id ? "▲" : "▼"}</span>
+                      </button>
+                      {showOriginal === msg.id && (
+                        <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 13, margin: "6px 0 0", fontStyle: "italic", borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 6 }}>
+                          {msg.original_text}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             </div>
           );
         })}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding: "12px 16px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10, background: "#0d1117" }}>
-        <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} placeholder="Escribe un mensaje..." style={{ flex: 1, background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 18px", color: "#fff", fontSize: 15, outline: "none" }} />
-        <button onClick={sendMessage} disabled={loading || !input.trim()} style={{ background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 24, padding: "12px 20px", color: "#fff", fontSize: 15, cursor: "pointer", opacity: loading || !input.trim() ? 0.5 : 1 }}>→</button>
+
+      {/* ── INPUT ── */}
+      <div style={{ padding: "8px 16px 16px", borderTop: "1px solid rgba(255,255,255,0.07)", background: "#0d1117" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+          <span style={{ fontSize: 13 }}>{myLang.flag}</span>
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Escribes en {myLang.name}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && sendMessage()}
+            placeholder="Escribe un mensaje..."
+            style={{ flex: 1, background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 18px", color: "#fff", fontSize: 15, outline: "none" }}
+          />
+          <button
+            onClick={sendMessage}
+            disabled={loading || !input.trim()}
+            style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", color: "#fff", fontSize: 18, cursor: "pointer", opacity: loading || !input.trim() ? 0.4 : 1, flexShrink: 0 }}
+          >→</button>
+        </div>
       </div>
-      {videoActive && <VideoOverlay webrtc={webrtc} onClose={stopVideo} expanded={videoExpanded} onToggleExpand={() => setVideoExpanded(e => !e)} />}
+
+      {/* ── LANGUAGE PICKER ── */}
+      {showLangPicker && (
+        <div onClick={() => setShowLangPicker(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)", display: "flex", alignItems: "flex-end", zIndex: 100 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#111820", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.1)", padding: "20px 16px 32px" }}>
+            <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 16 }}>Tu idioma</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {Object.entries(LANGUAGES).map(([code, lang]) => (
+                <button
+                  key={code}
+                  onClick={() => changeLang(code)}
+                  style={{ background: user.language_primary === code ? "rgba(62,198,198,0.12)" : "none", border: `1px solid ${user.language_primary === code ? "rgba(62,198,198,0.3)" : "transparent"}`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                >
+                  <span style={{ fontSize: 15, color: "#fff", display: "flex", alignItems: "center", gap: 10 }}>
+                    <span>{lang.flag}</span><span>{lang.name}</span>
+                  </span>
+                  {user.language_primary === code && <span style={{ color: "#3ec6c6", fontSize: 16 }}>✓</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── VIDEO OVERLAY ── */}
+      {videoActive && (
+        <VideoOverlay webrtc={webrtc} onClose={stopVideo} expanded={videoExpanded} onToggleExpand={() => setVideoExpanded(e => !e)} />
+      )}
     </div>
   );
 }
