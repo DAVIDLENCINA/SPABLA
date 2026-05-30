@@ -119,27 +119,34 @@ export default function Chat() {
     let translatedLanguage = user.language_primary;
 
     try {
+      // Obtener participantes únicos distintos al emisor
       const { data: participants } = await supabase
         .from("conversation_participants")
         .select("user_id")
-        .eq("conversation_id", conversationId);
+        .eq("conversation_id", conversationId)
+        .neq("user_id", user.id);
 
-      const otherIds = participants?.filter(p => p.user_id !== user.id).map(p => p.user_id) || [];
+      // Obtener IDs únicos
+      const uniqueOtherIds = [...new Set((participants || []).map(p => p.user_id))];
 
-      if (otherIds.length > 0) {
-        const { data: otherUser } = await supabase
+      if (uniqueOtherIds.length > 0) {
+        // Buscar el receptor con idioma distinto al emisor
+        const { data: otherUsers } = await supabase
           .from("users")
-          .select("language_primary")
-          .eq("id", otherIds[0])
-          .single();
+          .select("id, language_primary")
+          .in("id", uniqueOtherIds)
+          .neq("language_primary", user.language_primary)
+          .limit(1);
 
-        if (otherUser?.language_primary && otherUser.language_primary !== user.language_primary) {
+        const otherUser = otherUsers?.[0];
+
+        if (otherUser?.language_primary) {
           translatedLanguage = otherUser.language_primary;
           translated = await translate(text, user.language_primary, otherUser.language_primary);
         }
       }
     } catch {
-      // Si falla la traducción, enviar igual con texto original
+      // Si falla, enviar sin traducción
     }
 
     await supabase.from("messages").insert({
