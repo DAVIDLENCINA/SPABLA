@@ -16,6 +16,7 @@ type Message = {
   original_text: string;
   translated_text: string;
   original_language: string;
+  translated_language: string;
   created_at: string;
 };
 
@@ -34,22 +35,31 @@ export default function Chat() {
   const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const convIdRef = useRef<string | null>(null); // ← siempre actualizado, sin closure stale
+  const convIdRef = useRef<string | null>(null);
 
   const webrtc = useWebRTC(roomId);
 
-  // loadMessages usa convIdRef para evitar closure stale
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
     if (!id) return;
-    console.log("[POLL] conversationId", id);
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from("messages")
       .select("*")
       .eq("conversation_id", id)
       .order("created_at");
-    console.log("[POLL] fetched", data?.length, error?.message);
     if (data) setMessages(data);
+  }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return;
+    pollingRef.current = setInterval(loadMessages, 3000);
+  }, [loadMessages]);
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -58,33 +68,16 @@ export default function Chat() {
     const u = JSON.parse(stored);
     setUser(u);
     initConversation(u);
-    return () => {
-      if (pollingRef.current) clearInterval(pollingRef.current);
-    };
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const startPolling = useCallback(() => {
-    if (pollingRef.current) return; // ya activo
-    console.log("[SPABLA] Activando polling cada 3s");
-    pollingRef.current = setInterval(loadMessages, 3000);
-  }, [loadMessages]);
-
-  const stopPolling = useCallback(() => {
-    if (pollingRef.current) {
-      clearInterval(pollingRef.current);
-      pollingRef.current = null;
-      console.log("[SPABLA] Polling detenido");
-    }
-  }, []);
-
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
     const rawId = params.get("id");
-
     let convId: string;
 
     if (!rawId) {
@@ -95,53 +88,46 @@ export default function Chat() {
     } else {
       convId = rawId;
       const { data: existing } = await supabase
-        .from("conversation_participants")
-        .select()
-        .eq("conversation_id", convId)
-        .eq("user_id", u.id);
+        .from("conversation_participants").select()
+        .eq("conversation_id", convId).eq("user_id", u.id);
       if (!existing?.length) {
         await supabase.from("conversation_participants").insert({ conversation_id: convId, user_id: u.id });
       }
     }
 
-    // Guardar en ref ANTES de cualquier uso
     convIdRef.current = convId;
     setConversationId(convId);
-
-    // Carga inicial
     await loadMessages();
 
-    // Intentar Realtime
     const channel = supabase
       .channel(`messages:${convId}`)
-      .on(
-        "postgres_changes",
+      .on("postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
-        (payload) => {
-          console.log("[SPABLA] Realtime message received");
-          setMessages(prev => [...prev, payload.new as Message]);
-        }
+        (payload) => setMessages(prev => [...prev, payload.new as Message])
       )
       .subscribe((status) => {
-        console.log("[SPABLA] Realtime status:", status);
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          startPolling();
-        }
-        if (status === "SUBSCRIBED") {
-          stopPolling();
-        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") startPolling();
+        if (status === "SUBSCRIBED") stopPolling();
       });
 
     return () => { supabase.removeChannel(channel); };
   };
 
+  // ── Traducción via API interna → OpenAI gpt-4o-mini ──
   const translate = async (text: string, from: string, to: string): Promise<string> => {
-    if (from === to) return text;
+    if (from === to || !text.trim()) return text;
     try {
-      const res = await fetch(`https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${from}|${to}`);
+      const res = await fetch("/api/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, from, to }),
+      });
       const data = await res.json();
-      return data.responseData?.translatedText || text;
-    } catch { return text; }
+      return data.translation || text;
+    } catch {
+      console.error("[TRANSLATE] fallo, usando original");
+      return text;
+    }
   };
 
   const sendMessage = async () => {
@@ -156,7 +142,9 @@ export default function Chat() {
       .eq("conversation_id", conversationId);
 
     const otherIds = participants?.filter(p => p.user_id !== user.id).map(p => p.user_id) || [];
+
     let translated = text;
+    let translatedLanguage = user.language_primary;
 
     if (otherIds.length > 0) {
       const { data: otherUser } = await supabase
@@ -164,7 +152,11 @@ export default function Chat() {
         .select("language_primary")
         .eq("id", otherIds[0])
         .single();
-      if (otherUser) translated = await translate(text, user.language_primary, otherUser.language_primary);
+
+      if (otherUser?.language_primary) {
+        translatedLanguage = otherUser.language_primary;
+        translated = await translate(text, user.language_primary, otherUser.language_primary);
+      }
     }
 
     await supabase.from("messages").insert({
@@ -173,12 +165,10 @@ export default function Chat() {
       original_text: text,
       translated_text: translated,
       original_language: user.language_primary,
-      translated_language: otherIds.length > 0 ? "en" : user.language_primary,
+      translated_language: translatedLanguage,
     });
 
-    // Si polling activo, recargar para feedback inmediato
     if (pollingRef.current) await loadMessages();
-
     setLoading(false);
   };
 
@@ -251,13 +241,22 @@ export default function Chat() {
         )}
         {messages.map(msg => {
           const isMe = msg.sender_id === user.id;
-          const displayText = isMe ? msg.original_text : (msg.translated_text || msg.original_text);
+          let displayText: string;
+          if (isMe) {
+            displayText = msg.original_text;
+          } else if (msg.translated_language === user.language_primary) {
+            displayText = msg.translated_text || msg.original_text;
+          } else {
+            displayText = msg.original_text;
+          }
           const originalText = isMe ? null : msg.original_text;
+          const showToggle = !isMe && originalText && originalText !== displayText;
+
           return (
             <div key={msg.id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
               <div style={{ maxWidth: "75%", background: isMe ? "linear-gradient(135deg,#3ec6c6,#2aa8a8)" : "#1a2232", borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "10px 14px" }}>
                 <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.5 }}>{displayText}</p>
-                {!isMe && originalText && originalText !== displayText && (
+                {showToggle && (
                   <button onClick={() => setShowOriginal(showOriginal === msg.id ? null : msg.id)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: 11, cursor: "pointer", padding: "4px 0 0", display: "block" }}>
                     {showOriginal === msg.id ? "Ocultar original" : "Ver original"}
                   </button>
