@@ -34,15 +34,21 @@ export default function Chat() {
   const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const convIdRef = useRef<string | null>(null); // ← siempre actualizado, sin closure stale
 
   const webrtc = useWebRTC(roomId);
 
-  const loadMessages = useCallback(async (convId: string) => {
-    const { data } = await supabase
+  // loadMessages usa convIdRef para evitar closure stale
+  const loadMessages = useCallback(async () => {
+    const id = convIdRef.current;
+    if (!id) return;
+    console.log("[POLL] conversationId", id);
+    const { data, error } = await supabase
       .from("messages")
       .select("*")
-      .eq("conversation_id", convId)
+      .eq("conversation_id", id)
       .order("created_at");
+    console.log("[POLL] fetched", data?.length, error?.message);
     if (data) setMessages(data);
   }, []);
 
@@ -60,6 +66,20 @@ export default function Chat() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return; // ya activo
+    console.log("[SPABLA] Activando polling cada 3s");
+    pollingRef.current = setInterval(loadMessages, 3000);
+  }, [loadMessages]);
+
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+      console.log("[SPABLA] Polling detenido");
+    }
+  }, []);
 
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
@@ -84,28 +104,31 @@ export default function Chat() {
       }
     }
 
+    // Guardar en ref ANTES de cualquier uso
+    convIdRef.current = convId;
     setConversationId(convId);
-    await loadMessages(convId);
 
-    // Intentar Realtime — si falla, usar polling cada 3s como fallback
+    // Carga inicial
+    await loadMessages();
+
+    // Intentar Realtime
     const channel = supabase
       .channel(`messages:${convId}`)
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
-        (payload) => setMessages(prev => [...prev, payload.new as Message])
+        (payload) => {
+          console.log("[SPABLA] Realtime message received");
+          setMessages(prev => [...prev, payload.new as Message]);
+        }
       )
       .subscribe((status) => {
         console.log("[SPABLA] Realtime status:", status);
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-          console.warn("[SPABLA] Realtime falló, activando polling cada 3s");
-          if (!pollingRef.current) {
-            pollingRef.current = setInterval(() => loadMessages(convId), 3000);
-          }
+          startPolling();
         }
-        if (status === "SUBSCRIBED" && pollingRef.current) {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
+        if (status === "SUBSCRIBED") {
+          stopPolling();
         }
       });
 
@@ -153,10 +176,8 @@ export default function Chat() {
       translated_language: otherIds.length > 0 ? "en" : user.language_primary,
     });
 
-    // Si polling activo, recargar inmediatamente para feedback visual
-    if (pollingRef.current) {
-      await loadMessages(conversationId);
-    }
+    // Si polling activo, recargar para feedback inmediato
+    if (pollingRef.current) await loadMessages();
 
     setLoading(false);
   };
