@@ -33,23 +33,9 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [roomId] = useState(() => Math.random().toString(36).substring(2, 8));
   const bottomRef = useRef<HTMLDivElement>(null);
-  const convIdRef = useRef<string | null>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const webrtc = useWebRTC(roomId);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("spabla_user");
-    if (!stored) { router.push("/onboarding"); return; }
-    const u = JSON.parse(stored);
-    setUser(u);
-    initConversation(u);
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
-  }, []);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   const loadMessages = useCallback(async (convId: string) => {
     const { data } = await supabase
@@ -60,16 +46,34 @@ export default function Chat() {
     if (data) setMessages(data);
   }, []);
 
+  useEffect(() => {
+    const stored = localStorage.getItem("spabla_user");
+    if (!stored) { router.push("/onboarding"); return; }
+    const u = JSON.parse(stored);
+    setUser(u);
+    initConversation(u);
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
-    let convId = params.get("id");
+    const rawId = params.get("id");
 
-    if (!convId) {
+    let convId: string;
+
+    if (!rawId) {
       const { data } = await supabase.from("conversations").insert({}).select().single();
-      convId = data.id;
+      convId = data.id as string;
       await supabase.from("conversation_participants").insert({ conversation_id: convId, user_id: u.id });
       window.history.replaceState({}, "", `/chat?id=${convId}`);
     } else {
+      convId = rawId;
       const { data: existing } = await supabase
         .from("conversation_participants")
         .select()
@@ -80,11 +84,10 @@ export default function Chat() {
       }
     }
 
-    convIdRef.current = convId;
     setConversationId(convId);
     await loadMessages(convId);
 
-    // Intentar Realtime — si falla, usar polling cada 3s
+    // Intentar Realtime — si falla, usar polling cada 3s como fallback
     const channel = supabase
       .channel(`messages:${convId}`)
       .on(
@@ -97,15 +100,12 @@ export default function Chat() {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
           console.warn("[SPABLA] Realtime falló, activando polling cada 3s");
           if (!pollingRef.current) {
-            pollingRef.current = setInterval(() => loadMessages(convId!), 3000);
+            pollingRef.current = setInterval(() => loadMessages(convId), 3000);
           }
         }
-        if (status === "SUBSCRIBED") {
-          // Realtime OK — cancelar polling si estaba activo
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current);
-            pollingRef.current = null;
-          }
+        if (status === "SUBSCRIBED" && pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
         }
       });
 
@@ -144,7 +144,7 @@ export default function Chat() {
       if (otherUser) translated = await translate(text, user.language_primary, otherUser.language_primary);
     }
 
-    const { error } = await supabase.from("messages").insert({
+    await supabase.from("messages").insert({
       conversation_id: conversationId,
       sender_id: user.id,
       original_text: text,
@@ -153,8 +153,8 @@ export default function Chat() {
       translated_language: otherIds.length > 0 ? "en" : user.language_primary,
     });
 
-    // Si Realtime no funciona, añadir mensaje localmente para feedback inmediato
-    if (!error && pollingRef.current) {
+    // Si polling activo, recargar inmediatamente para feedback visual
+    if (pollingRef.current) {
       await loadMessages(conversationId);
     }
 
