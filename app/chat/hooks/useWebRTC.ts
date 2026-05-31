@@ -3,13 +3,28 @@ import { io, Socket } from "socket.io-client";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
-const ICE_SERVERS = [
+const STUN_ONLY = [
   { urls: "stun:stun.l.google.com:19302" },
   { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "turn:openrelay.metered.ca:80",               username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443",              username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
 ];
+
+async function fetchIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch("/api/ice-servers");
+    if (!res.ok) throw new Error(`ice-servers ${res.status}`);
+    const { iceServers } = await res.json();
+    const hasTurn = iceServers.some((s: RTCIceServer) =>
+      [s.urls].flat().some((u) => typeof u === "string" && u.startsWith("turn:"))
+    );
+    console.log(
+      `[SPABLA][ICE] servers fetched — TURN: ${hasTurn ? "✅ configured" : "⚠️ not configured (STUN only)"}`
+    );
+    return iceServers;
+  } catch (err) {
+    console.warn("[SPABLA][ICE] failed to fetch ice-servers, falling back to STUN only:", err);
+    return STUN_ONLY;
+  }
+}
 
 // Deepgram language codes differ from our internal codes in some cases
 const DEEPGRAM_LANG: Record<string, string> = {
@@ -126,14 +141,50 @@ export function useWebRTC(
     setMicOn(true);
     setCamOn(true);
 
-    // 2 — PeerConnection
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    // 2 — PeerConnection (ICE servers fetched server-side — no credentials in client bundle)
+    const iceServers = await fetchIceServers();
+    const pc = new RTCPeerConnection({ iceServers });
     pcRef.current = pc;
     stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
     pc.ontrack = (e) => {
       setRemoteStream(e.streams[0]);
       setHasRemote(true);
+    };
+
+    // ICE diagnostics — visible in browser console during calls
+    pc.oniceconnectionstatechange = () => {
+      console.log("[SPABLA][ICE] iceConnectionState →", pc.iceConnectionState);
+      if (pc.iceConnectionState === "failed") {
+        console.error("[SPABLA][ICE] connection failed — likely missing TURN server for cross-network calls");
+      }
+    };
+    pc.onconnectionstatechange = () => {
+      console.log("[SPABLA][ICE] connectionState →", pc.connectionState);
+    };
+    pc.onicecandidateerror = (e: RTCPeerConnectionIceErrorEvent) => {
+      // 701 = TURN allocation failed (wrong credentials or server unreachable)
+      if (e.errorCode >= 700) {
+        console.warn("[SPABLA][ICE] candidate error", e.errorCode, e.errorText, e.url);
+      }
+    };
+    pc.onicegatheringstatechange = () => {
+      if (pc.iceGatheringState === "complete") {
+        // Log the selected candidate pair type when gathering finishes
+        pc.getStats().then((stats) => {
+          stats.forEach((report) => {
+            if (report.type === "candidate-pair" && report.state === "succeeded") {
+              const local = (stats.get(report.localCandidateId) as any);
+              console.log(
+                "[SPABLA][ICE] selected pair — local:",
+                local?.candidateType ?? "?",
+                "| remote:",
+                (stats.get(report.remoteCandidateId) as any)?.candidateType ?? "?"
+              );
+            }
+          });
+        }).catch(() => {});
+      }
     };
 
     // 3 — Signaling socket
