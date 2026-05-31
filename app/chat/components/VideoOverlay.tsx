@@ -15,7 +15,7 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const unlockedRef    = useRef(false);
 
-  // Asignar streams a los elementos <video>
+  // Asignar streams cuando cambia el stream (primera conexión)
   useEffect(() => {
     if (localVideoRef.current && webrtc.localStream) {
       localVideoRef.current.srcObject = webrtc.localStream;
@@ -29,6 +29,21 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
       remoteVideoRef.current.play().catch(() => {});
     }
   }, [webrtc.remoteStream]);
+
+  // Fix I3 — reasignar streams al cambiar entre expanded y compacto.
+  // Los elementos <video> se recrean en cada cambio de modo, perdiendo su srcObject.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    unlockedRef.current = false;   // nuevo elemento, necesita desbloquearse en iOS
+    if (localVideoRef.current && webrtc.localStream) {
+      localVideoRef.current.srcObject = webrtc.localStream;
+      localVideoRef.current.play().catch(() => {});
+    }
+    if (remoteVideoRef.current && webrtc.remoteStream) {
+      remoteVideoRef.current.srcObject = webrtc.remoteStream;
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [expanded]);
 
   // Safari iOS: desbloquear vídeo remoto en primer toque
   function unlockRemote() {
@@ -65,36 +80,39 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           </div>
         )}
 
-        {/* Historial de subtítulos — modo inmersivo */}
-        {(() => {
-          const limit = typeof window !== "undefined"
-            ? window.innerWidth >= 1024 ? 10 : window.innerWidth >= 768 ? 6 : 4
-            : 10;
-          const entries = webrtc.captionsHistory.slice(-limit);
-          const hasContent = entries.length > 0 || webrtc.localCaption?.partial;
-          if (!hasContent) return null;
+        {/* Subtítulos — último mensaje protagonista + historial tenue encima */}
+        {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (() => {
+          const history      = webrtc.captionsHistory;
+          const currentEntry = history[history.length - 1] ?? null;
+          const prevEntries  = history.slice(-3, -1);   // hasta 2 frases anteriores
           return (
-            <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
-              {entries.map((entry, idx) => {
-                const isRemote = entry.speaker === "remote";
-                const age = entries.length - 1 - idx;
-                const opacity = Math.max(0.35, 1 - age * 0.08);
-                return (
-                  <div key={entry.id} style={{ opacity, borderLeft: `2px solid ${isRemote ? "rgba(62,198,198,.7)" : "rgba(255,255,255,.2)"}`, paddingLeft: 10 }}>
-                    <p style={{ color: isRemote ? "#fff" : "rgba(255,255,255,.78)", fontSize: "clamp(14px,3.5vw,22px)", fontWeight: isRemote ? 600 : 400, lineHeight: 1.35, margin: 0, textShadow: "0 1px 8px rgba(0,0,0,.8)" }}>
+            <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", pointerEvents: "none" }}>
+              {/* Historial — pequeño, gris, encima del mensaje actual */}
+              {prevEntries.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8, opacity: 0.42 }}>
+                  {prevEntries.map(entry => (
+                    <p key={entry.id} style={{ color: "rgba(255,255,255,.8)", fontSize: "clamp(12px,2.5vw,16px)", margin: 0, lineHeight: 1.3, textShadow: "0 1px 6px rgba(0,0,0,.9)" }}>
                       {entry.text}
                     </p>
-                    {entry.original !== entry.text && (
-                      <p style={{ color: "rgba(255,255,255,.38)", fontSize: "clamp(11px,2.5vw,14px)", margin: "2px 0 0", fontStyle: "italic" }}>
-                        {entry.original}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-              {/* Live partial indicator — shown only while Deepgram is transcribing */}
+                  ))}
+                </div>
+              )}
+              {/* Frase actual — protagonista */}
+              {currentEntry && (
+                <div style={{ background: "rgba(0,0,0,.58)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderRadius: 14, padding: "12px 18px", marginBottom: webrtc.localCaption?.partial ? 8 : 0 }}>
+                  <p style={{ color: "#fff", fontSize: "clamp(20px,5vw,34px)", fontWeight: 700, lineHeight: 1.2, margin: 0, textShadow: "0 2px 16px rgba(0,0,0,.8)" }}>
+                    {currentEntry.text}
+                  </p>
+                  {currentEntry.original !== currentEntry.text && (
+                    <p style={{ color: "rgba(255,255,255,.42)", fontSize: "clamp(12px,2.5vw,16px)", margin: "4px 0 0", fontStyle: "italic" }}>
+                      {currentEntry.original}
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* Live partial — mientras Deepgram transcribe */}
               {webrtc.localCaption?.partial && (
-                <p style={{ color: "rgba(255,255,255,.42)", fontSize: "clamp(12px,3vw,16px)", fontStyle: "italic", margin: 0, paddingLeft: 12 }}>
+                <p style={{ color: "rgba(255,255,255,.38)", fontSize: "clamp(12px,2.5vw,15px)", fontStyle: "italic", margin: 0, paddingLeft: 4 }}>
                   {webrtc.localCaption.text}…
                 </p>
               )}
@@ -123,57 +141,24 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
     );
   }
 
-  // ── Modo compacto: flotante sobre el chat ──
+  // ── Modo compacto: solo vídeo remoto + botón expandir ──
   return (
     <div
       onClick={unlockRemote}
-      style={{ position: "fixed", bottom: 96, right: 16, width: 220, zIndex: 100, borderRadius: 20, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,.6)", border: "1.5px solid rgba(255,255,255,.15)" }}
+      style={{ position: "fixed", bottom: 96, right: 16, width: 160, zIndex: 100, borderRadius: 16, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,.7)", border: "1.5px solid rgba(255,255,255,.15)", cursor: "pointer" }}
     >
-      {/* Vídeo remoto — tap para volver a pantalla completa */}
-      <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111", cursor: "pointer" }}>
+      <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111" }}>
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
           style={{ width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
         />
         {!webrtc.hasRemote && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <p style={{ color: "rgba(255,255,255,.5)", fontSize: 13 }}>Esperando…</p>
+            <p style={{ color: "rgba(255,255,255,.45)", fontSize: 12 }}>Esperando…</p>
           </div>
         )}
-        {/* Tu vídeo pequeño */}
-        <video ref={localVideoRef} autoPlay playsInline muted
-          style={{ position: "absolute", bottom: 8, right: 8, width: 56, height: 76, objectFit: "cover", borderRadius: 10, border: "1.5px solid rgba(0,212,255,.6)" }}
-        />
-      </div>
-
-      {/* Historial de subtítulos — modo compacto (últimas 2 entradas) */}
-      {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (
-        <div style={{ background: "rgba(0,0,0,.82)", padding: "6px 10px" }}>
-          {webrtc.captionsHistory.slice(-2).map(entry => (
-            <p key={entry.id} style={{
-              color: entry.speaker === "remote" ? "#fff" : "rgba(255,255,255,.52)",
-              fontSize: 11, margin: "1px 0", lineHeight: 1.35,
-              fontStyle: entry.speaker === "local" ? "italic" : "normal",
-            }}>
-              {entry.text}
-            </p>
-          ))}
-          {webrtc.localCaption?.partial && (
-            <p style={{ color: "rgba(255,255,255,.35)", fontSize: 10, margin: "1px 0", fontStyle: "italic" }}>
-              {webrtc.localCaption.text}…
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Barra de controles */}
-      <div style={{ background: "rgba(13,17,23,.95)", padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", gap: 8 }}>
-          <SmallBtn onClick={webrtc.toggleMic} danger={!webrtc.micOn}><MicIcon on={webrtc.micOn} size={14}/></SmallBtn>
-          <SmallBtn onClick={webrtc.toggleCam} danger={!webrtc.camOn}><CamIcon on={webrtc.camOn} size={14}/></SmallBtn>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <SmallBtn onClick={onToggleExpand}><ExpandIcon /></SmallBtn>
-          <SmallBtn onClick={() => { webrtc.endCall(); onClose(); }} danger><HangUpIcon size={14}/></SmallBtn>
+        {/* Botón expandir — siempre visible */}
+        <div style={{ position: "absolute", top: 7, right: 7, background: "rgba(0,0,0,.55)", borderRadius: 7, padding: 5, backdropFilter: "blur(6px)", display: "flex" }}>
+          <ExpandIcon />
         </div>
       </div>
     </div>
