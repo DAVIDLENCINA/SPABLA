@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
@@ -35,16 +35,26 @@ const RECENT = [
 
 export default function Home() {
   const router = useRouter();
+  const hasRedirected = useRef(false);
   const [user, setUser] = useState<User | null>(null);
   const [activeTab, setActiveTab] = useState("home");
 
   useEffect(() => {
     let cancelled = false;
+    if (hasRedirected.current) return;
     const stored = localStorage.getItem("spabla_user");
-    if (!stored) { router.push("/onboarding"); return; }
+    if (!stored) {
+      hasRedirected.current = true;
+      router.push("/onboarding");
+      return;
+    }
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
-      if (!session) { router.push("/onboarding"); return; }
+      if (!session) {
+        hasRedirected.current = true;
+        router.push("/onboarding");
+        return;
+      }
       setUser(JSON.parse(stored));
     });
     return () => { cancelled = true; };

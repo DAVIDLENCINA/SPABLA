@@ -31,6 +31,7 @@ type User = { id: string; name: string; language_primary: string };
 
 export default function Chat() {
   const router = useRouter();
+  const hasRedirected = useRef(false);
   const [user, setUser] = useState<User | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -65,11 +66,20 @@ export default function Chat() {
 
   useEffect(() => {
     let cancelled = false;
+    if (hasRedirected.current) return;
     const stored = localStorage.getItem("spabla_user");
-    if (!stored) { router.push("/onboarding"); return; }
+    if (!stored) {
+      hasRedirected.current = true;
+      router.push("/onboarding");
+      return;
+    }
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
-      if (!session) { router.push("/onboarding"); return; }
+      if (!session) {
+        hasRedirected.current = true;
+        router.push("/onboarding");
+        return;
+      }
       const u = JSON.parse(stored);
       setUser(u);
       initConversation(u);
