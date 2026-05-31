@@ -39,12 +39,15 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("home");
 
   useEffect(() => {
+    let cancelled = false;
     const stored = localStorage.getItem("spabla_user");
     if (!stored) { router.push("/onboarding"); return; }
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled) return;
       if (!session) { router.push("/onboarding"); return; }
       setUser(JSON.parse(stored));
     });
+    return () => { cancelled = true; };
   }, []);
 
   if (!user) return null;

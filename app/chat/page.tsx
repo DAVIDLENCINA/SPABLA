@@ -64,15 +64,17 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     const stored = localStorage.getItem("spabla_user");
     if (!stored) { router.push("/onboarding"); return; }
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (cancelled) return;
       if (!session) { router.push("/onboarding"); return; }
       const u = JSON.parse(stored);
       setUser(u);
       initConversation(u);
     });
-    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+    return () => { cancelled = true; if (pollingRef.current) clearInterval(pollingRef.current); };
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
