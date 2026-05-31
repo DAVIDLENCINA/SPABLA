@@ -77,6 +77,9 @@ export function useWebRTC(
   const hideLocalRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideRemoteRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Fix 6 — watchdog interval for connection health monitoring
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
   const [connected,     setConnected]     = useState(false);
@@ -92,6 +95,9 @@ export function useWebRTC(
   useEffect(() => { targetLangRef.current = targetLang; }, [targetLang]);
 
   const endCall = useCallback(() => {
+    // Stop watchdog
+    if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+
     // Stop Deepgram and audio processing
     socketRef.current?.emit("transcribe-stop");
     try {
@@ -150,6 +156,11 @@ export function useWebRTC(
     pc.ontrack = (e) => {
       setRemoteStream(e.streams[0]);
       setHasRemote(true);
+      // Fix 5 — monitor remote track lifecycle to detect freeze source
+      const ts = () => new Date().toISOString().slice(11, 23);
+      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); };
+      e.track.onmute   = () =>   console.warn(`[SPABLA][TRACK] ${ts()} muted:`,   e.track.kind);
+      e.track.onunmute = () =>   console.log( `[SPABLA][TRACK] ${ts()} unmuted:`, e.track.kind);
     };
 
     // ICE diagnostics — visible in browser console during calls
@@ -196,6 +207,8 @@ export function useWebRTC(
     };
 
     socket.on("connect", () => {
+      const connTs = new Date().toISOString().slice(11, 23);
+      console.log(`[SPABLA][SOCK] ${connTs} socket connected`);
       setConnected(true);
       socket.emit("join-room", conversationId);
 
@@ -203,6 +216,19 @@ export function useWebRTC(
       socket.emit("transcribe-start", {
         lang: DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
       });
+
+      // Fix 1 — close any existing audio pipeline BEFORE creating a new one.
+      // socket.on("connect") fires on every (re)connection. Without this, each
+      // reconnect adds a new AudioContext that keeps running in parallel,
+      // multiplying the audio-chunk emission rate and saturating the socket buffer.
+      try {
+        processorRef.current?.disconnect();
+        sourceRef.current?.disconnect();
+        audioCtxRef.current?.close();
+      } catch {}
+      processorRef.current = null;
+      sourceRef.current    = null;
+      audioCtxRef.current  = null;
 
       // Start audio capture → PCM chunks → socket
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -213,6 +239,8 @@ export function useWebRTC(
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
       processor.onaudioprocess = (e) => {
+        // Fix 2 — drop chunks while socket is offline to prevent buffer accumulation
+        if (!socket.connected) return;
         const input = e.inputBuffer.getChannelData(0);
         const pcm = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
@@ -224,6 +252,30 @@ export function useWebRTC(
       source.connect(processor);
       processor.connect(ctx.destination);
       ctx.resume().catch(() => {});
+
+      // Fix 6 — watchdog: log connection health every 15s for post-mortem diagnosis
+      if (watchdogRef.current) clearInterval(watchdogRef.current);
+      watchdogRef.current = setInterval(() => {
+        const currentPc = pcRef.current;
+        if (!currentPc) return;
+        const wdTs = new Date().toISOString().slice(11, 23);
+        console.log(
+          `[SPABLA][WD] ${wdTs} | ice:${currentPc.iceConnectionState} | conn:${currentPc.connectionState} | socket:${socket.connected}`
+        );
+        currentPc.getStats().then((stats) => {
+          stats.forEach((r: any) => {
+            if (r.type === "inbound-rtp" && r.kind === "video") {
+              console.log(`[SPABLA][WD]  video in — frames:${r.framesDecoded ?? "?"} lost:${r.packetsLost ?? "?"} jitter:${r.jitter?.toFixed(3) ?? "?"}s`);
+            }
+            if (r.type === "inbound-rtp" && r.kind === "audio") {
+              console.log(`[SPABLA][WD]  audio in — packets:${r.packetsReceived ?? "?"} lost:${r.packetsLost ?? "?"}`);
+            }
+            if (r.type === "remote-inbound-rtp" && r.kind === "video") {
+              console.log(`[SPABLA][WD]  video RTT:${r.roundTripTime?.toFixed(3) ?? "?"}s`);
+            }
+          });
+        }).catch(() => {});
+      }, 15_000);
     });
 
     socket.on("disconnect", () => setConnected(false));
