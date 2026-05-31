@@ -174,7 +174,7 @@ export default function Chat() {
   const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
 
   return (
-    <div style={{ background: "#0d1117", height: "100svh", display: "flex", flexDirection: "column", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif", position: "relative", overflow: "hidden" }}>
+    <div style={{ background: "#0d1117", height: "100svh", width: "100%", maxWidth: "100vw", display: "flex", flexDirection: "column", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif", position: "relative", overflow: "hidden" }}>
 
       <div style={{ padding: "48px 16px 12px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "#0d1117" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
@@ -281,7 +281,7 @@ export default function Chat() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && sendMessage()}
             placeholder="Escribe un mensaje..."
-            style={{ flex: 1, background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 16px", color: "#fff", fontSize: 15, outline: "none" }}
+            style={{ flex: 1, minWidth: 0, boxSizing: "border-box", background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 16px", color: "#fff", fontSize: 16, outline: "none" }}
           />
           <button
             style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
