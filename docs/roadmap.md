@@ -104,4 +104,82 @@ Basado en SPABLA_MASTER.md. Las fases son secuenciales: cada fase se completa an
 | Fase 4 — Archivos | 🔴 Sin implementar |
 | Fase 5 — Escalado | 🔴 Sin implementar |
 
-*Última actualización: 2026-05-30*
+*Última actualización: 2026-06-01*
+
+---
+
+## Decisión de producto — Llamada directa (tipo WhatsApp)
+
+> Estado: **decisión tomada, no implementar todavía.**
+> Registrada el 2026-06-01.
+
+### Contexto
+
+El sistema actual de acceso a conversaciones funciona exclusivamente mediante **link de invitación** (`/chat?id={conversationId}`). Este modelo es correcto para la beta y para incorporar participantes externos que no tienen cuenta previa. Sin embargo, no es suficiente para usuarios recurrentes que quieren llamarse directamente.
+
+### Modelo objetivo
+
+| Modo | Cuándo se usa | Estado |
+|---|---|---|
+| Link de invitación | Beta, usuarios externos, primer contacto | ✅ Implementado |
+| Llamada directa | Contactos recurrentes, uso cotidiano | 🔴 Pendiente de diseño e implementación |
+
+### Flujo deseado (llamada directa)
+
+```
+Usuario A tiene a Usuario B en su lista de contactos
+  → Usuario A pulsa "Llamar" en el perfil de B
+  → Sistema crea una call_invitation en Supabase
+  → Usuario B recibe notificación de llamada entrante (presence + Realtime)
+  → B acepta o rechaza
+  → Si acepta: ambos entran al mismo conversationId → WebRTC room
+  → Si rechaza o no responde: A ve "llamada no contestada"
+```
+
+### Tablas nuevas necesarias
+
+```
+contacts
+  id              uuid PK
+  owner_id        uuid FK → users.id   ← el usuario que guarda el contacto
+  contact_id      uuid FK → users.id   ← el usuario guardado
+  nickname        text                  ← nombre personalizado opcional
+  created_at      timestamptz
+
+presence
+  user_id         uuid FK → users.id   PK
+  status          text                  ← 'online' | 'offline' | 'busy'
+  last_seen       timestamptz
+  updated_at      timestamptz
+
+call_invitations
+  id              uuid PK
+  caller_id       uuid FK → users.id
+  callee_id       uuid FK → users.id
+  conversation_id uuid FK → conversations.id
+  status          text    ← 'pending' | 'accepted' | 'rejected' | 'missed' | 'cancelled'
+  created_at      timestamptz
+  resolved_at     timestamptz
+
+call_history
+  id              uuid PK
+  conversation_id uuid FK → conversations.id
+  caller_id       uuid FK → users.id
+  callee_id       uuid FK → users.id
+  started_at      timestamptz
+  ended_at        timestamptz
+  duration_seconds integer
+```
+
+### Dependencias antes de implementar
+
+1. RLS activo en todas las tablas actuales (Fase 1 completa).
+2. Sistema de contactos: UI para añadir/buscar usuarios.
+3. Push notifications o polling de presencia para notificar llamadas entrantes.
+4. El `conversationId` de la llamada directa puede ser una conversación existente entre ambos usuarios (reusar historial) o una nueva.
+
+### Lo que NO cambia
+
+- El `conversationId` sigue siendo el identificador central de todo (WebRTC room, Supabase Realtime, URL).
+- La señalización WebRTC en `server/signaling.ts` no cambia de arquitectura.
+- Los links de invitación siguen funcionando en paralelo.
