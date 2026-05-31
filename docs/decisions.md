@@ -16,6 +16,32 @@ Toda decisión con impacto arquitectural, de seguridad o de producto se registra
 
 ---
 
+## [2026-05-31] Bloque 2 ejecutado — subtítulos traducidos en tiempo real en VideoOverlay
+
+**Decisión:** el pipeline STT→traducción→subtítulos se integra dentro de `useWebRTC` y se muestra en `VideoOverlay`. Ya no requiere la ruta independiente `/call/[roomId]` para tener subtítulos.
+
+**Flujo implementado:**
+1. `startCall` abre `AudioContext` + `ScriptProcessorNode` al conectar el socket.
+2. Audio PCM → `audio-chunk` → servidor → Deepgram Live STT.
+3. `transcript-result` parcial → `localCaption` provisional (feedback inmediato).
+4. `transcript-result` final → `POST /api/translate` (OpenAI) → `localCaption` definitiva + `socket.emit("subtitle")` a la sala.
+5. `subtitle` entrante (ya traducido por el emisor) → `remoteCaption` en el receptor.
+6. Captions se auto-ocultan a los 6.5 segundos.
+
+**Motivo:** el plan de 14 días prioriza que el momento mágico ocurra en el flujo correcto (chat → overlay) antes que en la ruta independiente que viola el master.
+
+**Impacto:**
+- `useWebRTC.ts`: firma ampliada con `myLang` y `targetLang`. Exporta `Caption` type y `localCaption`/`remoteCaption`.
+- `VideoOverlay.tsx`: subtítulos en modo inmersivo y compacto.
+- `chat/page.tsx`: pasa `user.language_primary` y `otherLang` al hook.
+- Proveedor de traducción: exclusivamente `/api/translate` (OpenAI). MyMemory eliminado del flujo de chat.
+
+**Agente responsable:** Orchestrator / WebRTC / Frontend
+
+**Estado:** implementado — 2026-05-31
+
+---
+
 ## [2026-05-31] Bloque 1 ejecutado — conversationId como roomId de señalización en el chat
 
 **Decisión:** `useWebRTC` ya no acepta un `roomId` generado con `Math.random()`. Acepta `conversationId: string | null` y lo usa directamente como identificador de sala en todos los eventos de Socket.io (`join-room`, `offer`, `answer`, `ice-candidate`). Si `conversationId` es `null` en el momento de llamar a `startCall`, la función retorna sin conectar.
