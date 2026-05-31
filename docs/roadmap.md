@@ -108,6 +108,64 @@ Basado en SPABLA_MASTER.md. Las fases son secuenciales: cada fase se completa an
 
 ---
 
+## Decisión estratégica — App móvil nativa
+
+> Estado: **decisión tomada, no implementar todavía.**
+> Registrada el 2026-06-01.
+
+### Por qué la web sola no es suficiente a largo plazo
+
+SPABLA es una herramienta de comunicación diaria. Las limitaciones estructurales de una web app en mobile hacen que la experiencia no pueda igualar a WhatsApp o FaceTime en los casos de uso más importantes:
+
+| Capacidad | Web (PWA) | App nativa |
+|---|---|---|
+| Llamadas entrantes con pantalla de bloqueo | ❌ | ✅ (CallKit / Telecom API) |
+| Notificaciones push fiables en segundo plano | ⚠️ parcial | ✅ (APNs / FCM) |
+| Acceso a cámara y micrófono sin restricciones | ⚠️ varía por navegador | ✅ |
+| Funcionamiento en segundo plano (audio, presencia) | ❌ | ✅ |
+| Contactos del sistema | ❌ | ✅ (con permiso) |
+| Presencia en tiempo real (online/offline) | ⚠️ solo cuando la web está abierta | ✅ |
+| Experiencia de instalación y retención | ⚠️ inferior | ✅ ícono nativo, sin browser chrome |
+
+### Ruta recomendada
+
+```
+1. Web beta funcional (actual)
+   └── Validar el producto y el mercado con usuarios reales.
+       No invertir en mobile hasta tener tracción.
+
+2. PWA provisional (opcional, si aporta valor antes de native)
+   └── manifest.json + service worker + iconos.
+       Mejora la instalación en Android. En iOS Safari sigue limitado.
+       Evaluar si vale la pena según el feedback de la beta.
+
+3. App móvil nativa
+   └── Opción A: React Native + Expo
+       - Comparte lógica con la web (misma base TypeScript/Supabase).
+       - Expo facilita OTA updates y build sin Xcode/Android Studio locales.
+       - Tiempo estimado desde cero: 4-8 semanas para MVP parity.
+   └── Opción B: Swift (iOS) + Kotlin (Android)
+       - Máximo rendimiento y acceso a APIs nativas (CallKit, etc.).
+       - Requiere dos codebases separadas.
+       - Solo tiene sentido si el producto ya tiene base de usuarios y funding.
+   └── Recomendación actual: React Native + Expo cuando llegue el momento.
+```
+
+### Dependencias antes de empezar mobile
+
+1. Web beta estable con auth, RLS y TTS funcionando.
+2. Sistema de contactos y presencia implementado en backend.
+3. Push notifications configuradas en Supabase (o servicio externo).
+4. CallKit (iOS) / ConnectionService (Android) para llamadas entrantes con pantalla bloqueada — esto requiere entitlements de Apple y revisar en la App Store Review Guidelines.
+
+### Lo que NO cambia al ir a native
+
+- El backend es el mismo: Supabase, Deepgram, OpenAI, servidor de señalización.
+- El `conversationId` sigue siendo el identificador central.
+- La lógica de WebRTC es reutilizable (con adaptaciones para React Native WebRTC).
+
+---
+
 ## Decisión de producto — Llamada directa (tipo WhatsApp)
 
 > Estado: **decisión tomada, no implementar todavía.**
