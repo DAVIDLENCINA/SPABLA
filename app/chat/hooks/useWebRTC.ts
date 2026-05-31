@@ -91,8 +91,19 @@ export function useWebRTC(
   const [remoteCaption, setRemoteCaption] = useState<Caption | null>(null);
 
   // Keep lang refs in sync when props change between renders
-  useEffect(() => { myLangRef.current = myLang; },       [myLang]);
+  useEffect(() => { myLangRef.current = myLang; },         [myLang]);
   useEffect(() => { targetLangRef.current = targetLang; }, [targetLang]);
+
+  // Fix A — restart Deepgram when the user changes language during an active call.
+  // Without this, Deepgram keeps transcribing in the old language and produces
+  // empty/wrong transcripts → no captions, no translation, no subtitles for the remote.
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket?.connected) return; // no active call — nothing to restart
+    socket.emit("transcribe-stop");
+    socket.emit("transcribe-start", { lang: DEEPGRAM_LANG[myLang] ?? myLang });
+    console.log("[SPABLA][DG] language changed →", myLang, "— Deepgram session restarted");
+  }, [myLang]);
 
   const endCall = useCallback(() => {
     // Stop watchdog

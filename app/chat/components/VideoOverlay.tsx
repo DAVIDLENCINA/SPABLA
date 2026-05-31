@@ -6,11 +6,12 @@ import { WebRTCState } from "../hooks/useWebRTC";
 type Props = {
   webrtc: WebRTCState;
   onClose: () => void;
+  onMinimize: () => void;   // hides overlay without ending the call
   expanded: boolean;
   onToggleExpand: () => void;
 };
 
-export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand }: Props) {
+export default function VideoOverlay({ webrtc, onClose, onMinimize, expanded, onToggleExpand }: Props) {
   const localVideoRef  = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const unlockedRef    = useRef(false);
@@ -155,6 +156,8 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <SmallBtn onClick={onToggleExpand}><ExpandIcon /></SmallBtn>
+          {/* Minimize: hides the overlay but keeps the call alive */}
+          <SmallBtn onClick={onMinimize}><MinimizeIcon /></SmallBtn>
           <SmallBtn onClick={() => { webrtc.endCall(); onClose(); }} danger><HangUpIcon size={14}/></SmallBtn>
         </div>
       </div>
@@ -215,6 +218,15 @@ function ExpandIcon() {
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
       <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
+    </svg>
+  );
+}
+
+// Arrow-down: hide overlay, keep call active
+function MinimizeIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="6 9 12 15 18 9"/>
     </svg>
   );
 }
