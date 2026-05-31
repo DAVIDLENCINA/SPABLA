@@ -27,9 +27,12 @@ export default function Onboarding() {
     if (!name.trim()) { setError("Escribe tu nombre"); return; }
     setLoading(true);
     try {
+      const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
+      if (authError || !authData.user) throw authError ?? new Error("No auth");
+      const uid = authData.user.id;
       const { data, error } = await supabase
         .from("users")
-        .insert({ name: name.trim(), language_primary: language })
+        .insert({ id: uid, name: name.trim(), language_primary: language })
         .select()
         .single();
       if (error) throw error;

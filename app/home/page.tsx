@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 type User = { id: string; name: string; language_primary: string };
 
@@ -40,7 +41,10 @@ export default function Home() {
   useEffect(() => {
     const stored = localStorage.getItem("spabla_user");
     if (!stored) { router.push("/onboarding"); return; }
-    setUser(JSON.parse(stored));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { router.push("/onboarding"); return; }
+      setUser(JSON.parse(stored));
+    });
   }, []);
 
   if (!user) return null;
