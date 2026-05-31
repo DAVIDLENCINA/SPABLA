@@ -1,16 +1,64 @@
 # SPABLA — Estado para la próxima sesión
 
-> Creado: 2026-05-31
+> Actualizado: 2026-06-01
 > Carpeta local del proyecto: `~/spabla`
 > Rama activa: `main` — working tree limpio
+> Último commit: `62b5b21` — docs(roadmap): decisión estratégica — app móvil nativa
 
 ---
 
-## Contexto de esta sesión
+## Estado al cierre de esta sesión
 
-Se realizó el análisis completo del proyecto, se renombró la carpeta de `~/glot` a `~/spabla`, se creó `docs/PROJECT_STATUS.md` y se trazó el plan de ejecución para convertir SPABLA en una beta privada funcional.
+### ✅ Completado
 
-La Fase 1 (Autenticación + RLS) está en curso. Se ha completado la mitad del trabajo de infraestructura pero no se ha tocado ningún archivo de código todavía.
+- Migraciones 1 y 2 ejecutadas y verificadas en Supabase SQL Editor:
+  - `messages.type` tiene DEFAULT `'text'`
+  - Tabla `files` creada
+  - Función `is_participant()` con SECURITY DEFINER activa
+- Bloque B implementado (Anonymous Auth con Modelo B):
+  - `onboarding/page.tsx`: `signInAnonymously()` + INSERT con `id = auth.uid()`
+  - `chat/page.tsx`: `getSession()` + guard `hasRedirected` con `useRef`
+  - `home/page.tsx`: `getSession()` + guard `hasRedirected` con `useRef`
+- Modelo B verificado manualmente en Supabase: `auth_id = public_id`, `modelo_b_ok = true`
+- Flujo completo verificado en producción (`spabla.vercel.app`):
+  - `/home` → `/onboarding` estable, sin flickering
+  - Onboarding → `signInAnonymously()` → INSERT en `public.users` → `/chat?id=UUID`
+  - Usuario creado con `id = auth.uid()` confirmado
+- Push a GitHub (`main`) completado: commits `3366208` → `62b5b21`
+- Decisiones de producto documentadas en `docs/roadmap.md`:
+  - Llamada directa tipo WhatsApp (tablas: contacts, presence, call_invitations, call_history)
+  - App móvil nativa (ruta: web → PWA opcional → React Native/Expo)
+
+### ⚠️ Pendiente — ANTES de la próxima sesión
+
+**P1 — Variable de entorno en Vercel (acción manual, sin CLI)**
+
+La `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel tiene un espacio al inicio. Esto hace que Supabase Realtime falle con `HTTP Authentication failed` (el WebSocket se conecta como `apikey=%20eyJ...`). El chat funciona por polling de fallback, pero Realtime no conecta.
+
+Corregir manualmente en:
+```
+https://vercel.com/dashboard → proyecto SPABLA → Settings → Environment Variables
+```
+
+Valor correcto (sin espacios):
+```
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6dGt4dGdtdWFlZ29ubGt1a2VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5ODQ5ODUsImV4cCI6MjA5NTU2MDk4NX0.EkYOcUi6jciTCJ0luhRdhx_nF-I5ntrJ6WLa_FmOKtE
+```
+
+Después del cambio, Vercel hará redeploy automático. Verificar que desaparece el error en consola del navegador.
+
+**P2 — No activar RLS hasta confirmar que Realtime funciona**
+
+Orden obligatorio:
+1. Corregir `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel → verificar Realtime
+2. Solo entonces ejecutar Migraciones 3, 4 y 5 (RLS)
+
+### 🔴 Regla operativa añadida
+
+**No usar Vercel CLI (`vercel`, `npx vercel`) sin autorización explícita del usuario.**
+El comando `npx vercel whoami` abre una ventana de autenticación en el navegador sin previo aviso. Cualquier acción sobre Vercel debe hacerse manualmente desde el panel web salvo que el usuario indique lo contrario.
+
+---
 
 ---
 
