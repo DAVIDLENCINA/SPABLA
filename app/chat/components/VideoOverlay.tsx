@@ -6,12 +6,11 @@ import { WebRTCState } from "../hooks/useWebRTC";
 type Props = {
   webrtc: WebRTCState;
   onClose: () => void;
-  onMinimize: () => void;   // hides overlay without ending the call
   expanded: boolean;
   onToggleExpand: () => void;
 };
 
-export default function VideoOverlay({ webrtc, onClose, onMinimize, expanded, onToggleExpand }: Props) {
+export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand }: Props) {
   const localVideoRef  = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const unlockedRef    = useRef(false);
@@ -114,10 +113,10 @@ export default function VideoOverlay({ webrtc, onClose, onMinimize, expanded, on
   return (
     <div
       onClick={unlockRemote}
-      style={{ position: "fixed", bottom: 80, right: 16, width: 220, zIndex: 100, borderRadius: 20, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,.6)", border: "1.5px solid rgba(255,255,255,.15)" }}
+      style={{ position: "fixed", bottom: 96, right: 16, width: 220, zIndex: 100, borderRadius: 20, overflow: "hidden", boxShadow: "0 8px 32px rgba(0,0,0,.6)", border: "1.5px solid rgba(255,255,255,.15)" }}
     >
-      {/* Vídeo remoto */}
-      <div style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111" }}>
+      {/* Vídeo remoto — tap para volver a pantalla completa */}
+      <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111", cursor: "pointer" }}>
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
           style={{ width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
         />
@@ -156,8 +155,6 @@ export default function VideoOverlay({ webrtc, onClose, onMinimize, expanded, on
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <SmallBtn onClick={onToggleExpand}><ExpandIcon /></SmallBtn>
-          {/* Minimize: hides the overlay but keeps the call alive */}
-          <SmallBtn onClick={onMinimize}><MinimizeIcon /></SmallBtn>
           <SmallBtn onClick={() => { webrtc.endCall(); onClose(); }} danger><HangUpIcon size={14}/></SmallBtn>
         </div>
       </div>
@@ -222,14 +219,6 @@ function ExpandIcon() {
   );
 }
 
-// Arrow-down: hide overlay, keep call active
-function MinimizeIcon() {
-  return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="6 9 12 15 18 9"/>
-    </svg>
-  );
-}
 
 function ContractIcon() {
   return (

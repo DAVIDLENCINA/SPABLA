@@ -166,15 +166,9 @@ export default function Chat() {
 
   const shareLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiado."); };
 
-  // Starts call or restores overlay if call is already active (startCall is a no-op when connected)
   const startVoice = async () => { await webrtc.startCall(); setVideoActive(true); };
   const startVideo = async () => { await webrtc.startCall(); setVideoActive(true); setVideoExpanded(true); };
-
-  // Ends the call completely
-  const stopVideo = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
-
-  // Hides the overlay WITHOUT ending the call — user returns to chat, call stays active
-  const minimizeVideo = () => { setVideoActive(false); setVideoExpanded(false); };
+  const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   if (!user) return null;
   const myLang = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
@@ -327,26 +321,9 @@ export default function Chat() {
         <VideoOverlay
           webrtc={webrtc}
           onClose={stopVideo}
-          onMinimize={minimizeVideo}
           expanded={videoExpanded}
           onToggleExpand={() => setVideoExpanded(e => !e)}
         />
-      )}
-
-      {/* Call active but overlay minimized — tap any call button to restore */}
-      {!videoActive && webrtc.connected && (
-        <div
-          onClick={() => setVideoActive(true)}
-          style={{
-            position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)",
-            zIndex: 50, background: "rgba(232,82,74,0.9)", borderRadius: 999,
-            padding: "8px 20px", display: "flex", alignItems: "center", gap: 8,
-            cursor: "pointer", boxShadow: "0 4px 20px rgba(232,82,74,.4)",
-          }}
-        >
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff", display: "block" }}/>
-          <span style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>Llamada activa — toca para volver</span>
-        </div>
       )}
     </div>
   );
