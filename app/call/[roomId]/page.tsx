@@ -6,13 +6,22 @@ import { io, Socket } from "socket.io-client";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
-const ICE_SERVERS = [
+// ICE servers fetched from /api/ice-servers at call start (TURN credentials stay server-side)
+const STUN_FALLBACK = [
+  { urls: "stun:stun.relay.metered.ca:80" },
   { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "turn:openrelay.metered.ca:80",        username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443",       username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
 ];
+
+async function getIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch("/api/ice-servers");
+    if (!res.ok) throw new Error(`ice-servers ${res.status}`);
+    const { iceServers } = await res.json();
+    return iceServers;
+  } catch {
+    return STUN_FALLBACK;
+  }
+}
 
 const LANGS = {
   es: { emoji: "🇪🇸", flag: "https://flagcdn.com/es.svg", label: "Español",  deepgram: "es"    },
@@ -162,7 +171,8 @@ export default function CallPage() {
         const socket = io(SERVER_URL, { transports: ["polling", "websocket"] });
         socketRef.current = socket;
 
-        const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+        const iceServers = await getIceServers();
+        const pc = new RTCPeerConnection({ iceServers });
         pcRef.current = pc;
 
         let stream: MediaStream;
