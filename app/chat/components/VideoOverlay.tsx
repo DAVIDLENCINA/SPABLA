@@ -65,6 +65,29 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           </div>
         )}
 
+        {/* Subtítulos — modo inmersivo */}
+        {(webrtc.remoteCaption || webrtc.localCaption) && (
+          <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+            {webrtc.remoteCaption && (
+              <div style={{ background: "rgba(0,0,0,.62)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", borderRadius: 12, padding: "10px 16px", opacity: webrtc.remoteCaption.partial ? 0.65 : 1 }}>
+                <p style={{ color: "#fff", fontSize: "clamp(16px,4vw,26px)", fontWeight: 600, lineHeight: 1.35, margin: 0, textShadow: "0 1px 8px rgba(0,0,0,.8)" }}>
+                  {webrtc.remoteCaption.text}
+                </p>
+                {webrtc.remoteCaption.original !== webrtc.remoteCaption.text && (
+                  <p style={{ color: "rgba(255,255,255,.42)", fontSize: 13, margin: "4px 0 0", fontStyle: "italic" }}>
+                    {webrtc.remoteCaption.original}
+                  </p>
+                )}
+              </div>
+            )}
+            {webrtc.localCaption && (
+              <p style={{ color: "rgba(255,255,255,.52)", fontSize: "clamp(13px,3vw,17px)", fontStyle: "italic", margin: 0, paddingLeft: 4, opacity: webrtc.localCaption.partial ? 0.5 : 0.68 }}>
+                {webrtc.localCaption.text}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Controles */}
         <div style={{ position: "absolute", bottom: 40, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 20, zIndex: 20 }}>
           <CtrlBtn onClick={webrtc.toggleMic} danger={!webrtc.micOn}>
@@ -107,6 +130,22 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           style={{ position: "absolute", bottom: 8, right: 8, width: 56, height: 76, objectFit: "cover", borderRadius: 10, border: "1.5px solid rgba(0,212,255,.6)" }}
         />
       </div>
+
+      {/* Subtítulos — modo compacto */}
+      {(webrtc.remoteCaption || webrtc.localCaption) && (
+        <div style={{ background: "rgba(0,0,0,.82)", padding: "6px 10px" }}>
+          {webrtc.remoteCaption && (
+            <p style={{ color: "#fff", fontSize: 12, margin: 0, lineHeight: 1.4, fontWeight: 500, opacity: webrtc.remoteCaption.partial ? 0.6 : 1 }}>
+              {webrtc.remoteCaption.text}
+            </p>
+          )}
+          {webrtc.localCaption && (
+            <p style={{ color: "rgba(255,255,255,.42)", fontSize: 11, margin: webrtc.remoteCaption ? "3px 0 0" : 0, fontStyle: "italic", opacity: webrtc.localCaption.partial ? 0.5 : 0.65 }}>
+              {webrtc.localCaption.text}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Barra de controles */}
       <div style={{ background: "rgba(13,17,23,.95)", padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>

@@ -45,7 +45,7 @@ export default function Chat() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const webrtc = useWebRTC(conversationId);
+  const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang);
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
