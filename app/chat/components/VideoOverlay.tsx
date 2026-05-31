@@ -65,28 +65,42 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           </div>
         )}
 
-        {/* Subtítulos — modo inmersivo */}
-        {(webrtc.remoteCaption || webrtc.localCaption) && (
-          <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
-            {webrtc.remoteCaption && (
-              <div style={{ background: "rgba(0,0,0,.62)", backdropFilter: "blur(8px)", WebkitBackdropFilter: "blur(8px)", borderRadius: 12, padding: "10px 16px", opacity: webrtc.remoteCaption.partial ? 0.65 : 1 }}>
-                <p style={{ color: "#fff", fontSize: "clamp(16px,4vw,26px)", fontWeight: 600, lineHeight: 1.35, margin: 0, textShadow: "0 1px 8px rgba(0,0,0,.8)" }}>
-                  {webrtc.remoteCaption.text}
+        {/* Historial de subtítulos — modo inmersivo */}
+        {(() => {
+          const limit = typeof window !== "undefined"
+            ? window.innerWidth >= 1024 ? 10 : window.innerWidth >= 768 ? 6 : 4
+            : 10;
+          const entries = webrtc.captionsHistory.slice(-limit);
+          const hasContent = entries.length > 0 || webrtc.localCaption?.partial;
+          if (!hasContent) return null;
+          return (
+            <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
+              {entries.map((entry, idx) => {
+                const isRemote = entry.speaker === "remote";
+                const age = entries.length - 1 - idx;
+                const opacity = Math.max(0.35, 1 - age * 0.08);
+                return (
+                  <div key={entry.id} style={{ opacity, borderLeft: `2px solid ${isRemote ? "rgba(62,198,198,.7)" : "rgba(255,255,255,.2)"}`, paddingLeft: 10 }}>
+                    <p style={{ color: isRemote ? "#fff" : "rgba(255,255,255,.78)", fontSize: "clamp(14px,3.5vw,22px)", fontWeight: isRemote ? 600 : 400, lineHeight: 1.35, margin: 0, textShadow: "0 1px 8px rgba(0,0,0,.8)" }}>
+                      {entry.text}
+                    </p>
+                    {entry.original !== entry.text && (
+                      <p style={{ color: "rgba(255,255,255,.38)", fontSize: "clamp(11px,2.5vw,14px)", margin: "2px 0 0", fontStyle: "italic" }}>
+                        {entry.original}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+              {/* Live partial indicator — shown only while Deepgram is transcribing */}
+              {webrtc.localCaption?.partial && (
+                <p style={{ color: "rgba(255,255,255,.42)", fontSize: "clamp(12px,3vw,16px)", fontStyle: "italic", margin: 0, paddingLeft: 12 }}>
+                  {webrtc.localCaption.text}…
                 </p>
-                {webrtc.remoteCaption.original !== webrtc.remoteCaption.text && (
-                  <p style={{ color: "rgba(255,255,255,.42)", fontSize: 13, margin: "4px 0 0", fontStyle: "italic" }}>
-                    {webrtc.remoteCaption.original}
-                  </p>
-                )}
-              </div>
-            )}
-            {webrtc.localCaption && (
-              <p style={{ color: "rgba(255,255,255,.52)", fontSize: "clamp(13px,3vw,17px)", fontStyle: "italic", margin: 0, paddingLeft: 4, opacity: webrtc.localCaption.partial ? 0.5 : 0.68 }}>
-                {webrtc.localCaption.text}
-              </p>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          );
+        })()}
 
         {/* Controles */}
         <div style={{ position: "absolute", bottom: 40, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 20, zIndex: 20 }}>
@@ -131,17 +145,21 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
         />
       </div>
 
-      {/* Subtítulos — modo compacto */}
-      {(webrtc.remoteCaption || webrtc.localCaption) && (
+      {/* Historial de subtítulos — modo compacto (últimas 2 entradas) */}
+      {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (
         <div style={{ background: "rgba(0,0,0,.82)", padding: "6px 10px" }}>
-          {webrtc.remoteCaption && (
-            <p style={{ color: "#fff", fontSize: 12, margin: 0, lineHeight: 1.4, fontWeight: 500, opacity: webrtc.remoteCaption.partial ? 0.6 : 1 }}>
-              {webrtc.remoteCaption.text}
+          {webrtc.captionsHistory.slice(-2).map(entry => (
+            <p key={entry.id} style={{
+              color: entry.speaker === "remote" ? "#fff" : "rgba(255,255,255,.52)",
+              fontSize: 11, margin: "1px 0", lineHeight: 1.35,
+              fontStyle: entry.speaker === "local" ? "italic" : "normal",
+            }}>
+              {entry.text}
             </p>
-          )}
-          {webrtc.localCaption && (
-            <p style={{ color: "rgba(255,255,255,.42)", fontSize: 11, margin: webrtc.remoteCaption ? "3px 0 0" : 0, fontStyle: "italic", opacity: webrtc.localCaption.partial ? 0.5 : 0.65 }}>
-              {webrtc.localCaption.text}
+          ))}
+          {webrtc.localCaption?.partial && (
+            <p style={{ color: "rgba(255,255,255,.35)", fontSize: 10, margin: "1px 0", fontStyle: "italic" }}>
+              {webrtc.localCaption.text}…
             </p>
           )}
         </div>

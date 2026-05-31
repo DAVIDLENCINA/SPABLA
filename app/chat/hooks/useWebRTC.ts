@@ -38,6 +38,13 @@ export type Caption = {
   partial:  boolean;
 };
 
+export type CaptionEntry = {
+  id:      string;              // Date.now() string — stable React key
+  speaker: "local" | "remote";
+  text:    string;              // primary display text
+  original: string;             // secondary text (shown if different from text)
+};
+
 export type WebRTCState = {
   localStream:   MediaStream | null;
   remoteStream:  MediaStream | null;
@@ -46,9 +53,10 @@ export type WebRTCState = {
   micOn:         boolean;
   camOn:         boolean;
   error:         string | null;
-  localCaption:  Caption | null;
-  remoteCaption: Caption | null;
-  startCall:     () => Promise<void>;
+  localCaption:    Caption | null;
+  remoteCaption:   Caption | null;
+  captionsHistory: CaptionEntry[];
+  startCall:       () => Promise<void>;
   endCall:       () => void;
   toggleMic:     () => void;
   toggleCam:     () => void;
@@ -87,8 +95,9 @@ export function useWebRTC(
   const [micOn,         setMicOn]         = useState(true);
   const [camOn,         setCamOn]         = useState(true);
   const [error,         setError]         = useState<string | null>(null);
-  const [localCaption,  setLocalCaption]  = useState<Caption | null>(null);
-  const [remoteCaption, setRemoteCaption] = useState<Caption | null>(null);
+  const [localCaption,    setLocalCaption]    = useState<Caption | null>(null);
+  const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
+  const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
 
   // Keep lang refs in sync when props change between renders
   useEffect(() => { myLangRef.current = myLang; },         [myLang]);
@@ -137,6 +146,7 @@ export function useWebRTC(
     setConnected(false);
     setLocalCaption(null);
     setRemoteCaption(null);
+    setCaptionsHistory([]);  // clear history only on hang-up, not on minimize
   }, []);
 
   const startCall = useCallback(async () => {
@@ -324,10 +334,8 @@ export function useWebRTC(
         return;
       }
 
-      // Final result: show original immediately, then translate and emit
-      setLocalCaption({ text: original, original, partial: false });
-      if (hideLocalRef.current) clearTimeout(hideLocalRef.current);
-      hideLocalRef.current = setTimeout(() => setLocalCaption(null), 6500);
+      // Final result: move to history, clear the live indicator immediately
+      setLocalCaption(null);
 
       const from = myLangRef.current;
       const to   = targetLangRef.current;
@@ -347,6 +355,14 @@ export function useWebRTC(
         }
       }
 
+      // Append to conversation history — local speaker sees their own speech
+      setCaptionsHistory(prev => [...prev, {
+        id:      Date.now().toString(),
+        speaker: "local",
+        text:    original,
+        original,
+      }]);
+
       socket.emit("subtitle", {
         roomId:   conversationId,
         original,
@@ -357,11 +373,17 @@ export function useWebRTC(
 
     // 6 — Incoming subtitle from remote participant (already translated by the sender)
     socket.on("subtitle", (payload: { original?: string; translated?: string }) => {
-      const text = (payload.translated || payload.original || "").trim();
+      const text     = (payload.translated || payload.original || "").trim();
+      const rawSpoken = (payload.original || text).trim();
       if (!text) return;
-      setRemoteCaption({ text, original: (payload.original || text).trim(), partial: false });
-      if (hideRemoteRef.current) clearTimeout(hideRemoteRef.current);
-      hideRemoteRef.current = setTimeout(() => setRemoteCaption(null), 6500);
+      // Append to conversation history — remote speaker, text is already in our language
+      setCaptionsHistory(prev => [...prev, {
+        id:      Date.now().toString(),
+        speaker: "remote",
+        text,
+        original: rawSpoken,
+      }]);
+      setRemoteCaption(null);
     });
 
   }, [conversationId]);
@@ -383,7 +405,7 @@ export function useWebRTC(
 
   return {
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
-    localCaption, remoteCaption,
+    localCaption, remoteCaption, captionsHistory,
     startCall, endCall, toggleMic, toggleCam,
   };
 }
