@@ -31,21 +31,28 @@
 
 ### ⚠️ Pendiente — ANTES de la próxima sesión
 
-**P1 — Variable de entorno en Vercel (acción manual, sin CLI)**
+**P1 — Supabase Realtime falla en producción (causa pendiente de confirmar)**
 
-La `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel tiene un espacio al inicio. Esto hace que Supabase Realtime falle con `HTTP Authentication failed` (el WebSocket se conecta como `apikey=%20eyJ...`). El chat funciona por polling de fallback, pero Realtime no conecta.
+**Síntoma confirmado:** el test de producción capturó este error literal en consola:
+```
+WebSocket connection to '...?apikey=%20eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+failed: HTTP Authentication failed; no valid credentials available
+```
+El `%20` es un espacio URL-encoded al inicio del API key. Realtime no conecta; el chat cae al polling de fallback cada 3s.
 
-Corregir manualmente en:
-```
-https://vercel.com/dashboard → proyecto SPABLA → Settings → Environment Variables
-```
+**Causa probable (inferencia, no confirmación):** la variable `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel podría tener un espacio al inicio. En `.env.local` el valor es correcto (sin espacio). No se ha leído directamente la variable en el panel de Vercel.
 
-Valor correcto (sin espacios):
-```
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6dGt4dGdtdWFlZ29ubGt1a2VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5ODQ5ODUsImV4cCI6MjA5NTU2MDk4NX0.EkYOcUi6jciTCJ0luhRdhx_nF-I5ntrJ6WLa_FmOKtE
-```
-
-Después del cambio, Vercel hará redeploy automático. Verificar que desaparece el error en consola del navegador.
+**Acción para la próxima sesión:**
+1. Abrir el panel de Vercel manualmente:
+   ```
+   https://vercel.com/dashboard → SPABLA → Settings → Environment Variables
+   ```
+2. Ver el valor actual de `NEXT_PUBLIC_SUPABASE_ANON_KEY` y confirmar si hay espacio.
+3. Si lo hay, reemplazarlo por el valor correcto (sin espacios):
+   ```
+   eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6dGt4dGdtdWFlZ29ubGt1a2VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5ODQ5ODUsImV4cCI6MjA5NTU2MDk4NX0.EkYOcUi6jciTCJ0luhRdhx_nF-I5ntrJ6WLa_FmOKtE
+   ```
+4. Si NO hay espacio, buscar la causa real del `%20` antes de modificar nada.
 
 **P2 — No activar RLS hasta confirmar que Realtime funciona**
 
