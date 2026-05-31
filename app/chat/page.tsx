@@ -171,160 +171,271 @@ export default function Chat() {
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   if (!user) return null;
-  const myLang = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
+  const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
   const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
 
   return (
-    <div style={{ background: "#0d1117", height: "100svh", width: "100%", maxWidth: "100vw", display: "flex", flexDirection: "column", fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif", position: "relative", overflow: "hidden" }}>
+    <>
+      <style>{`
+        @keyframes msgIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        .msg { animation: msgIn 0.18s ease; }
+        .action-btn:active { transform: scale(0.92); }
+        .send-btn:active { transform: scale(0.94); }
+        input::placeholder { color: rgba(255,255,255,0.28); }
+      `}</style>
 
-      <div style={{ padding: "48px 16px 12px", borderBottom: "1px solid rgba(255,255,255,0.07)", background: "#0d1117" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <svg width="26" height="26" viewBox="0 0 28 28" fill="none">
-            <ellipse cx="11" cy="13" rx="9" ry="9" fill="#3ec6c6" opacity="0.9"/>
-            <ellipse cx="17" cy="15" rx="9" ry="9" fill="#e8524a" opacity="0.9"/>
-            <path d="M14 8 C16 10, 12 14, 14 18 C12 16, 16 12, 14 8Z" fill="white"/>
-          </svg>
-          <span style={{ color: "#fff", fontWeight: 700, fontSize: 18, letterSpacing: "-0.02em" }}>SPABLA</span>
-        </div>
-        <button
-          onClick={() => setShowLangPicker(true)}
-          style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 12px", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 15, color: "#fff", fontWeight: 500 }}>{myLang.flag} {myLang.name}</span>
-            <span style={{ color: "#3ec6c6", fontSize: 15, fontWeight: 700 }}>↔</span>
-            {theirLang
-              ? <span style={{ fontSize: 15, color: "rgba(255,255,255,0.75)", fontWeight: 500 }}>{theirLang.flag} {theirLang.name}</span>
-              : <span style={{ fontSize: 13, color: "rgba(255,255,255,0.3)" }}>Esperando...</span>
-            }
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{ width: 7, height: 7, background: "#41ff9d", borderRadius: "50%" }}/>
-            <span style={{ fontSize: 11, color: "#41ff9d", fontWeight: 500 }}>Activa</span>
-          </div>
-        </button>
-      </div>
+      <div style={{
+        background: "linear-gradient(160deg, #0b1120 0%, #0d1927 45%, #0e1219 80%, #100d12 100%)",
+        height: "100svh", width: "100%", maxWidth: "100vw",
+        display: "flex", flexDirection: "column",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', Inter, sans-serif",
+        position: "relative", overflow: "hidden",
+      }}>
 
-      <div style={{ display: "flex", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "#0d1117" }}>
-        {[
-          { icon: "📞", label: "Llamar",  action: startVoice },
-          { icon: "📹", label: "Vídeo",   action: startVideo },
-          { icon: "📎", label: "Archivo", action: () => fileInputRef.current?.click() },
-          { icon: "👥", label: "Invitar", action: shareLink },
-        ].map(btn => (
-          <button
-            key={btn.label}
-            onClick={btn.action}
-            style={{ flex: 1, background: "none", border: "none", cursor: "pointer", padding: "12px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, borderRight: "1px solid rgba(255,255,255,0.05)" }}
-          >
-            <span style={{ fontSize: 22 }}>{btn.icon}</span>
-            <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", fontWeight: 500 }}>{btn.label}</span>
+        {/* ── HEADER ── */}
+        <div style={{
+          background: "rgba(10,15,28,0.90)",
+          backdropFilter: "blur(28px)", WebkitBackdropFilter: "blur(28px)",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          paddingTop: "max(14px, env(safe-area-inset-top, 14px))",
+          paddingLeft: 16, paddingRight: 16, paddingBottom: 0,
+        }}>
+          {/* Logo row + action buttons */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingBottom: 10 }}>
+            <img src="/SPABLA_LOGO.png" alt="SPABLA" style={{ height: 26, opacity: 0.95 }} />
+
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              {/* Llamada de voz */}
+              <button className="action-btn" onClick={startVoice} title="Llamar" style={{
+                width: 38, height: 38, borderRadius: "50%",
+                background: "rgba(62,198,198,0.12)", border: "1px solid rgba(62,198,198,0.22)",
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                transition: "transform .12s",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+                </svg>
+              </button>
+
+              {/* Videollamada */}
+              <button className="action-btn" onClick={startVideo} title="Videollamada" style={{
+                width: 38, height: 38, borderRadius: "50%",
+                background: "rgba(62,198,198,0.12)", border: "1px solid rgba(62,198,198,0.22)",
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                transition: "transform .12s",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                </svg>
+              </button>
+
+              {/* Compartir link */}
+              <button className="action-btn" onClick={shareLink} title="Invitar" style={{
+                width: 38, height: 38, borderRadius: "50%",
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                transition: "transform .12s",
+              }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Selector de idioma */}
+          <button onClick={() => setShowLangPicker(true)} style={{
+            width: "100%", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)",
+            borderRadius: 12, padding: "9px 14px", marginBottom: 10,
+            display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 14, color: "#fff", fontWeight: 500 }}>{myLang.flag} {myLang.name}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="rgba(62,198,198,0.7)" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M8 3L4 7l4 4M16 21l4-4-4-4M4 7h16M4 17h16"/>
+              </svg>
+              {theirLang
+                ? <span style={{ fontSize: 14, color: "rgba(255,255,255,0.65)", fontWeight: 500 }}>{theirLang.flag} {theirLang.name}</span>
+                : <span style={{ fontSize: 13, color: "rgba(255,255,255,0.28)" }}>Esperando participante...</span>
+              }
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#41ff9d", display: "block", boxShadow: "0 0 6px #41ff9d" }}/>
+              <span style={{ fontSize: 10, color: "#41ff9d", fontWeight: 600, letterSpacing: "0.04em" }}>EN VIVO</span>
+            </div>
           </button>
-        ))}
-      </div>
-
-      <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
-        <div style={{ textAlign: "center", marginBottom: 4 }}>
-          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", background: "rgba(255,255,255,0.04)", borderRadius: 99, padding: "4px 12px" }}>🌍 Traducción instantánea activa</span>
         </div>
-        {messages.length === 0 && (
-          <div style={{ textAlign: "center", marginTop: 40 }}>
-            <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 14, marginBottom: 16 }}>Comparte el link para que alguien se una</p>
-            <button onClick={shareLink} style={{ background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 10, padding: "10px 24px", color: "#fff", fontSize: 14, cursor: "pointer" }}>Copiar link</button>
-          </div>
-        )}
-        {messages.map(msg => {
-          const isMe = msg.sender_id === user.id;
-          const displayText = isMe
-            ? msg.original_text
-            : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
-          const wasTranslated = !isMe && msg.original_text !== displayText;
-          const fromLang = LANGUAGES[msg.original_language];
-          return (
-            <div key={msg.id} style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
-              <div style={{ maxWidth: "78%" }}>
-                <div style={{ background: isMe ? "linear-gradient(135deg,#3ec6c6,#2aa8a8)" : "#1a2232", borderRadius: isMe ? "18px 18px 4px 18px" : "18px 18px 18px 4px", padding: "10px 14px" }}>
-                  <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.5 }}>{displayText}</p>
-                  {wasTranslated && (
-                    <>
-                      <button
-                        onClick={() => setShowOriginal(showOriginal === msg.id ? null : msg.id)}
-                        style={{ background: "none", border: "none", color: "rgba(255,255,255,0.45)", fontSize: 11, cursor: "pointer", padding: "5px 0 0", display: "flex", alignItems: "center", gap: 4 }}
-                      >
-                        <span>Traducido desde {fromLang ? fromLang.name : msg.original_language}</span>
-                        <span style={{ fontSize: 10 }}>{showOriginal === msg.id ? "▲" : "▼"}</span>
-                      </button>
-                      {showOriginal === msg.id && (
-                        <div style={{ borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 6, paddingTop: 6 }}>
-                          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 11, margin: "0 0 3px", textTransform: "uppercase", letterSpacing: "0.06em" }}>Original:</p>
-                          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, margin: 0, fontStyle: "italic" }}>{msg.original_text}</p>
+
+        {/* ── MENSAJES ── */}
+        <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 8px", display: "flex", flexDirection: "column", gap: 10 }}>
+
+          {/* Estado vacío */}
+          {messages.length === 0 && (
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "40px 24px" }}>
+              <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(62,198,198,0.08)", border: "1px solid rgba(62,198,198,0.15)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+                <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
+                  <ellipse cx="11" cy="13" rx="9" ry="9" fill="#3ec6c6" opacity="0.7"/>
+                  <ellipse cx="17" cy="15" rx="9" ry="9" fill="#e8524a" opacity="0.7"/>
+                  <path d="M14 8 C16 10, 12 14, 14 18 C12 16, 16 12, 14 8Z" fill="white"/>
+                </svg>
+              </div>
+              <p style={{ color: "rgba(255,255,255,0.45)", fontSize: 15, marginBottom: 6, fontWeight: 500 }}>Conversación lista</p>
+              <p style={{ color: "rgba(255,255,255,0.25)", fontSize: 13, marginBottom: 24, lineHeight: 1.5 }}>Comparte el link para que alguien se una y empieza a hablar en cualquier idioma.</p>
+              <button onClick={shareLink} style={{
+                background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", borderRadius: 12,
+                padding: "11px 28px", color: "#fff", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                boxShadow: "0 4px 20px rgba(62,198,198,0.25)",
+              }}>
+                Copiar link de invitación
+              </button>
+            </div>
+          )}
+
+          {/* Burbujas */}
+          {messages.map(msg => {
+            const isMe = msg.sender_id === user.id;
+            const displayText = isMe
+              ? msg.original_text
+              : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
+            const wasTranslated = !isMe && msg.original_text !== displayText;
+            const fromLang = LANGUAGES[msg.original_language];
+            return (
+              <div key={msg.id} className="msg" style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
+                <div style={{ maxWidth: "80%" }}>
+                  {isMe ? (
+                    // Mis mensajes — burbuja cyan
+                    <div style={{
+                      background: "linear-gradient(135deg, #1c7a7a 0%, #3ec6c6 100%)",
+                      borderRadius: "20px 20px 5px 20px",
+                      padding: "11px 15px",
+                      boxShadow: "0 3px 16px rgba(62,198,198,0.18)",
+                    }}>
+                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
+                    </div>
+                  ) : (
+                    // Mensajes recibidos — burbuja oscura + traducción siempre visible
+                    <div style={{
+                      background: "rgba(255,255,255,0.055)",
+                      border: "1px solid rgba(255,255,255,0.09)",
+                      borderRadius: "5px 20px 20px 20px",
+                      padding: "11px 15px",
+                      backdropFilter: "blur(12px)",
+                      WebkitBackdropFilter: "blur(12px)",
+                    }}>
+                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 500 }}>{displayText}</p>
+                      {wasTranslated && (
+                        <div style={{ marginTop: 7, paddingTop: 7, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 12, margin: 0, lineHeight: 1.45 }}>
+                            {fromLang?.flag ?? "🌐"} {msg.original_text}
+                          </p>
                         </div>
                       )}
-                    </>
+                    </div>
                   )}
                 </div>
               </div>
-            </div>
-          );
-        })}
-        <div ref={bottomRef} />
-      </div>
-
-      <div style={{ padding: "8px 12px max(16px, env(safe-area-inset-bottom))", borderTop: "1px solid rgba(255,255,255,0.07)", background: "#0d1117" }}>
-        <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={() => {}} />
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "#fff", fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >📎</button>
-          <input
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && sendMessage()}
-            placeholder="Escribe un mensaje..."
-            style={{ flex: 1, minWidth: 0, boxSizing: "border-box", background: "#111820", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 24, padding: "12px 16px", color: "#fff", fontSize: 16, outline: "none" }}
-          />
-          <button
-            style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.5)", fontSize: 18, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >🎤</button>
-          <button
-            onClick={sendMessage}
-            disabled={loading || !input.trim()}
-            style={{ width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg,#3ec6c6,#e8524a)", border: "none", color: "#fff", fontSize: 18, cursor: "pointer", opacity: loading || !input.trim() ? 0.4 : 1, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-          >➤</button>
+            );
+          })}
+          <div ref={bottomRef} />
         </div>
-      </div>
 
-      {showLangPicker && (
-        <div onClick={() => setShowLangPicker(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(8px)", display: "flex", alignItems: "flex-end", zIndex: 100 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: "100%", background: "#111820", borderRadius: "20px 20px 0 0", border: "1px solid rgba(255,255,255,0.1)", padding: "16px 16px 32px" }}>
-            <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 12 }}>Tu idioma</p>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              {Object.entries(LANGUAGES).map(([code, lang]) => (
-                <button
-                  key={code}
-                  onClick={() => changeLang(code)}
-                  style={{ background: user.language_primary === code ? "rgba(62,198,198,0.12)" : "rgba(255,255,255,0.03)", border: `1px solid ${user.language_primary === code ? "rgba(62,198,198,0.3)" : "rgba(255,255,255,0.07)"}`, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-                >
-                  <span style={{ fontSize: 14, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                    <span>{lang.flag}</span><span>{lang.name}</span>
-                  </span>
-                  {user.language_primary === code && <span style={{ color: "#3ec6c6", fontSize: 14 }}>✓</span>}
-                </button>
-              ))}
-            </div>
+        {/* ── INPUT ── */}
+        <div style={{
+          padding: "8px 12px",
+          paddingBottom: "max(16px, env(safe-area-inset-bottom, 16px))",
+          background: "rgba(10,15,28,0.92)",
+          backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
+          borderTop: "1px solid rgba(255,255,255,0.06)",
+        }}>
+          <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={() => {}} />
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={() => fileInputRef.current?.click()} style={{
+              width: 40, height: 40, borderRadius: "50%",
+              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)",
+              display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+            }}>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
+              </svg>
+            </button>
+            <input
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && sendMessage()}
+              placeholder="Escribe un mensaje..."
+              style={{
+                flex: 1, minWidth: 0, boxSizing: "border-box",
+                background: "rgba(255,255,255,0.06)",
+                border: "1px solid rgba(255,255,255,0.09)",
+                borderRadius: 24, padding: "12px 18px",
+                color: "#fff", fontSize: 16, outline: "none",
+                fontFamily: "inherit",
+              }}
+            />
+            <button
+              className="send-btn"
+              onClick={sendMessage}
+              disabled={loading || !input.trim()}
+              style={{
+                width: 44, height: 44, borderRadius: "50%",
+                background: input.trim() ? "linear-gradient(135deg,#3ec6c6,#e8524a)" : "rgba(255,255,255,0.07)",
+                border: "none", cursor: input.trim() ? "pointer" : "default",
+                opacity: loading ? 0.5 : 1, flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "background .2s, transform .12s",
+                boxShadow: input.trim() ? "0 3px 16px rgba(62,198,198,0.25)" : "none",
+              }}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke={input.trim() ? "#fff" : "rgba(255,255,255,0.3)"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+              </svg>
+            </button>
           </div>
         </div>
-      )}
 
-      {videoActive && (
-        <VideoOverlay
-          webrtc={webrtc}
-          onClose={stopVideo}
-          expanded={videoExpanded}
-          onToggleExpand={() => setVideoExpanded(e => !e)}
-        />
-      )}
-    </div>
+        {/* ── SELECTOR DE IDIOMA ── */}
+        {showLangPicker && (
+          <div onClick={() => setShowLangPicker(false)} style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.72)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "flex-end", zIndex: 100 }}>
+            <div onClick={e => e.stopPropagation()} style={{
+              width: "100%", background: "rgba(13,19,34,0.98)",
+              borderRadius: "24px 24px 0 0", border: "1px solid rgba(255,255,255,0.1)",
+              padding: "20px 16px max(32px, env(safe-area-inset-bottom, 32px))",
+            }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.18)", margin: "0 auto 18px" }}/>
+              <p style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.35)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 14 }}>Tu idioma</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7 }}>
+                {Object.entries(LANGUAGES).map(([code, lang]) => (
+                  <button key={code} onClick={() => changeLang(code)} style={{
+                    background: user.language_primary === code ? "rgba(62,198,198,0.13)" : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${user.language_primary === code ? "rgba(62,198,198,0.35)" : "rgba(255,255,255,0.08)"}`,
+                    borderRadius: 12, padding: "11px 13px",
+                    display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
+                    fontFamily: "inherit",
+                  }}>
+                    <span style={{ fontSize: 14, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{lang.flag}</span><span>{lang.name}</span>
+                    </span>
+                    {user.language_primary === code && (
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── VIDEO OVERLAY ── */}
+        {videoActive && (
+          <VideoOverlay
+            webrtc={webrtc}
+            onClose={stopVideo}
+            expanded={videoExpanded}
+            onToggleExpand={() => setVideoExpanded(e => !e)}
+          />
+        )}
+      </div>
+    </>
   );
 }
