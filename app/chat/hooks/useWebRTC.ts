@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
+import { supabase } from "@/lib/supabase";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
@@ -343,9 +344,13 @@ export function useWebRTC(
 
       if (to && from !== to) {
         try {
+          const { data: { session } } = await supabase.auth.getSession();
           const res = await fetch("/api/translate", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session?.access_token ?? ""}`,
+            },
             body: JSON.stringify({ text: original, from, to }),
           });
           const data = await res.json();

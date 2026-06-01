@@ -67,12 +67,25 @@ export default function Chat() {
   useEffect(() => {
     let cancelled = false;
     if (hasRedirected.current) return;
+
     const stored = localStorage.getItem("spabla_user");
     if (!stored) {
       hasRedirected.current = true;
       router.push("/onboarding");
       return;
     }
+
+    // Redirigir a onboarding si la sesión expira o el usuario cierra sesión.
+    // TOKEN_REFRESHED lo gestiona supabase-js automáticamente (actualiza el WS de Realtime).
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      if (event === "SIGNED_OUT" || !session) {
+        hasRedirected.current = true;
+        localStorage.removeItem("spabla_user");
+        router.push("/onboarding");
+      }
+    });
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
       if (!session) {
@@ -84,7 +97,12 @@ export default function Chat() {
       setUser(u);
       initConversation(u);
     });
-    return () => { cancelled = true; if (pollingRef.current) clearInterval(pollingRef.current); };
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -138,8 +156,17 @@ export default function Chat() {
   const translate = async (text: string, from: string, to: string): Promise<string> => {
     if (from === to || !text.trim()) return text;
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) return text;
       const url = `${window.location.origin}/api/translate`;
-      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, from, to }) });
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ text, from, to }),
+      });
       if (!res.ok) return text;
       const data = await res.json();
       return data.translation || text;
