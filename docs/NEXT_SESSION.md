@@ -3,7 +3,7 @@
 > Actualizado: 2026-06-01
 > Carpeta local del proyecto: `~/spabla`
 > Rama activa: `main` — working tree limpio
-> Último commit: `62b5b21` — docs(roadmap): decisión estratégica — app móvil nativa
+> Último commit: `9890afc` — fix(security): capturar excepción de getClaims() para tokens expirados/malformados
 
 ---
 
@@ -29,9 +29,80 @@
   - Llamada directa tipo WhatsApp (tablas: contacts, presence, call_invitations, call_history)
   - App móvil nativa (ruta: web → PWA opcional → React Native/Expo)
 
-### ⚠️ Pendiente — ANTES de la próxima sesión
+### ✅ Completado en esta sesión (2026-06-01, continuación)
 
-**P1 — Supabase Realtime falla en producción (causa pendiente de confirmar)**
+**RLS activado en todas las tablas:**
+- `users`: `users_select` (via `shares_conversation()`), `users_insert_own`, `users_update_own`
+- `conversations`: `conversations_select` (via `is_participant()` + `created_by`), `conversations_insert`
+- `conversation_participants`: `participants_select`, `participants_insert`
+- `messages`: `messages_select` (via `is_participant()`), `messages_insert`
+- `files`: `files_select`, `files_insert`
+- Funciones SECURITY DEFINER: `is_participant()`, `shares_conversation()`
+- Índices de producción: `idx_participants_user_id`, `idx_messages_conv_created`, `idx_conversations_created_by`
+- Policy "Allow all" eliminada de `users` (encontrada durante migración)
+
+**`/api/translate` protegido:**
+- Auth obligatoria via `getClaims()` — verificación ES256 local tras primera JWKS fetch
+- Rate limiting 20 req/min por usuario (in-memory Map, ver limitación P1 abajo)
+- Límite de texto: 1000 caracteres
+- Fix: `catch` devuelve texto original en lugar de string vacío
+- Header `x-translate-ms` para benchmarking de latencia
+- `onAuthStateChange` en `chat/page.tsx`: redirige a `/onboarding` en `SIGNED_OUT`/expiración
+- Token Bearer enviado desde `chat/page.tsx` y `useWebRTC.ts` en cada llamada a translate
+
+**Tests de seguridad `/api/translate` (9/9 PASS):**
+
+| Test | Resultado |
+|---|---|
+| Sin token | ✅ 401 |
+| Token vacío | ✅ 401 |
+| Texto plano (no JWT) | ✅ 401 |
+| JWT con firma falsa | ✅ 401 |
+| Payload manipulado (sub cambiado, firma original) | ✅ 401 |
+| JWT expirado (exp pasado, kid real, firma falsa) | ✅ 401 |
+| JWT de otro proyecto (ref diferente) | ✅ 401 |
+| JWT con alg=HS256 (algorithm confusion) | ✅ 401 |
+| Token válido | ✅ 200 + traducción |
+
+**Benchmark de latencia `/api/translate` (20 muestras, textos 5-15 palabras):**
+
+| Métrica | OpenAI solo | Total extremo a extremo |
+|---|---|---|
+| p50 | 520 ms | 716 ms |
+| p95 | 934 ms | 1151 ms |
+| p99 | 1065 ms | 1332 ms |
+
+Latencia compatible con TTS (SpeechSynthesis): delay p50 desde fin de frase hasta audio traducido ~870ms. Viable para beta.
+
+---
+
+### ⚠️ Pendiente
+
+**P1 — Rate limiting en memoria no coordina entre instancias Vercel (ANTES de beta pública abierta)**
+
+El `Map` en memoria persiste en instancias warm pero Vercel puede usar múltiples instancias paralelas para absorber ráfagas. El contador de rate limit no se comparte entre ellas. Un usuario podría superar el límite distribuyendo requests entre instancias.
+
+**Solución necesaria antes de beta abierta:** Upstash Redis (tier gratuito disponible) o tabla `rate_limits` en Supabase.
+
+```
+npm install @upstash/redis
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
+```
+
+**P2 — TTS no implementado (próximo paso)**
+
+Benchmark de latencia confirma que SpeechSynthesis es viable (p50 ~870ms). Implementar cuando se apruebe.
+
+**P3 — `signaling.ts` acepta cualquier roomId sin validar contra Supabase**
+
+Cualquier cliente Socket.io puede hacer `join-room` con cualquier UUID. Pendiente para después de TTS.
+
+---
+
+### ⚠️ Pendiente — ANTES de la próxima sesión (de sesión anterior)
+
+**P_OLD — Supabase Realtime falla en producción (causa pendiente de confirmar)**
 
 **Síntoma confirmado:** el test de producción capturó este error literal en consola:
 ```
