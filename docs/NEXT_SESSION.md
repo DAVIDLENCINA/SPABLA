@@ -1,56 +1,207 @@
 # SPABLA — Estado para la próxima sesión
 
 > Actualizado: 2026-06-01
-> Carpeta local del proyecto: `~/spabla`
 > Rama activa: `main` — working tree limpio
-> Último commit: `9890afc` — fix(security): capturar excepción de getClaims() para tokens expirados/malformados
+> Último commit: `082437c` — feat(signaling): validar JWT y membresía en join-room + cache por socket
+> Carpeta local: `~/spabla`
 
 ---
 
-## Estado al cierre de esta sesión
+## 1. Estado actual de SPABLA
 
-### ✅ Completado
+| Dimensión | Progreso | Notas |
+|---|---|---|
+| Auth + RLS | ✅ Completo | Anonymous Auth, Modelo B, 5 tablas con RLS |
+| Backend / APIs | 75% | /api/translate protegido; signaling con auth JWT |
+| Frontend | 74% | Chat, onboarding, home funcionando |
+| Traducción texto | ✅ Completo para beta | Auth, rate limit, longitud, error handling |
+| Traducción voz / TTS | 0% | Siguiente prioridad aprobada |
+| Videollamada WebRTC | 65% | Señalización segura; TTS pendiente |
+| Persistencia / RLS | ✅ Completo | Todas las tablas protegidas |
+| **Global** | **~68%** | — |
 
-- Migraciones 1 y 2 ejecutadas y verificadas en Supabase SQL Editor:
-  - `messages.type` tiene DEFAULT `'text'`
-  - Tabla `files` creada
-  - Función `is_participant()` con SECURITY DEFINER activa
-- Bloque B implementado (Anonymous Auth con Modelo B):
-  - `onboarding/page.tsx`: `signInAnonymously()` + INSERT con `id = auth.uid()`
-  - `chat/page.tsx`: `getSession()` + guard `hasRedirected` con `useRef`
-  - `home/page.tsx`: `getSession()` + guard `hasRedirected` con `useRef`
-- Modelo B verificado manualmente en Supabase: `auth_id = public_id`, `modelo_b_ok = true`
-- Flujo completo verificado en producción (`spabla.vercel.app`):
-  - `/home` → `/onboarding` estable, sin flickering
-  - Onboarding → `signInAnonymously()` → INSERT en `public.users` → `/chat?id=UUID`
-  - Usuario creado con `id = auth.uid()` confirmado
-- Push a GitHub (`main`) completado: commits `3366208` → `62b5b21`
-- Decisiones de producto documentadas en `docs/roadmap.md`:
-  - Llamada directa tipo WhatsApp (tablas: contacts, presence, call_invitations, call_history)
-  - App móvil nativa (ruta: web → PWA opcional → React Native/Expo)
+El flujo principal (onboarding → chat → mensajes traducidos → videollamada con subtítulos de texto) funciona en producción. El "momento diferencial" (escuchar la traducción en voz) no existe todavía.
 
-### ✅ Completado en esta sesión (2026-06-01, continuación)
+---
 
-**RLS activado en todas las tablas:**
-- `users`: `users_select` (via `shares_conversation()`), `users_insert_own`, `users_update_own`
-- `conversations`: `conversations_select` (via `is_participant()` + `created_by`), `conversations_insert`
-- `conversation_participants`: `participants_select`, `participants_insert`
-- `messages`: `messages_select` (via `is_participant()`), `messages_insert`
-- `files`: `files_select`, `files_insert`
-- Funciones SECURITY DEFINER: `is_participant()`, `shares_conversation()`
-- Índices de producción: `idx_participants_user_id`, `idx_messages_conv_created`, `idx_conversations_created_by`
-- Policy "Allow all" eliminada de `users` (encontrada durante migración)
+## 2. Arquitectura actual
 
-**`/api/translate` protegido:**
-- Auth obligatoria via `getClaims()` — verificación ES256 local tras primera JWKS fetch
-- Rate limiting 20 req/min por usuario (in-memory Map, ver limitación P1 abajo)
-- Límite de texto: 1000 caracteres
-- Fix: `catch` devuelve texto original en lugar de string vacío
-- Header `x-translate-ms` para benchmarking de latencia
-- `onAuthStateChange` en `chat/page.tsx`: redirige a `/onboarding` en `SIGNED_OUT`/expiración
-- Token Bearer enviado desde `chat/page.tsx` y `useWebRTC.ts` en cada llamada a translate
+```
+Internet
+  │
+  ├── Vercel — https://spabla.vercel.app
+  │   ├── Next.js 16.2.6 (App Router)
+  │   ├── /home           → pantalla de inicio
+  │   ├── /onboarding     → registro + signInAnonymously()
+  │   ├── /chat?id=UUID   → chat + videollamada integrada
+  │   ├── /api/translate  → proxy OpenAI GPT-4o-mini (auth JWT obligatoria)
+  │   └── /api/ice-servers → TURN credentials (server-side)
+  │
+  ├── Render — https://spabla-server.onrender.com
+  │   ├── Node.js + Socket.io 4.8.3
+  │   ├── Middleware JWT: io.use() valida token via getClaims() ES256
+  │   ├── join-room: valida membership contra Supabase + cache por socket
+  │   ├── Señalización WebRTC (offer/answer/ICE)
+  │   └── Streaming PCM → Deepgram Live STT → transcript-result → /api/translate → subtitle
+  │
+  └── Supabase — wztkxtgmuaegonlkukeh.supabase.co
+      ├── PostgreSQL — users, conversations, participants, messages, files
+      ├── RLS activo en todas las tablas (ver sección 5)
+      ├── Auth — Anonymous Auth activo, Modelo B (users.id = auth.uid())
+      ├── Realtime — suscripción INSERT en messages (funcionando, sin %20)
+      └── Storage — tabla files creada, bucket pendiente
+```
 
-**Tests de seguridad `/api/translate` (9/9 PASS):**
+**Principio fundamental:** una conversación = una única sesión. El `conversationId` (UUID) es el identificador central de todo: URL, Socket.io room, Supabase Realtime filter, y clave de validación en el signaling server.
+
+---
+
+## 3. Migraciones aplicadas
+
+### Migración 1 — Schema base
+```sql
+ALTER TABLE public.messages ALTER COLUMN type SET DEFAULT 'text';
+CREATE TABLE IF NOT EXISTS public.files (...);
+```
+
+### Migración 2 — Función helper anti-recursión RLS
+```sql
+CREATE OR REPLACE FUNCTION public.is_participant(conv_id uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public
+AS $$ SELECT EXISTS (SELECT 1 FROM conversation_participants
+                     WHERE conversation_id = conv_id AND user_id = auth.uid()); $$;
+```
+
+### Función auxiliar shares_conversation (pre-Migración 3)
+```sql
+CREATE OR REPLACE FUNCTION public.shares_conversation(other_user_id uuid)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public
+AS $$ SELECT EXISTS (SELECT 1 FROM conversation_participants cp1
+                     JOIN conversation_participants cp2
+                       ON cp1.conversation_id = cp2.conversation_id
+                     WHERE cp1.user_id = auth.uid()
+                       AND cp2.user_id = other_user_id); $$;
+```
+
+### Migración 3 — RLS en public.users
+```sql
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "users_select"     ON public.users FOR SELECT USING (id = auth.uid() OR shares_conversation(id));
+CREATE POLICY "users_insert_own" ON public.users FOR INSERT WITH CHECK (id = auth.uid());
+CREATE POLICY "users_update_own" ON public.users FOR UPDATE USING (id = auth.uid());
+-- Nota: se encontró y eliminó una policy "Allow all" preexistente en users.
+```
+
+### Migración 4 — RLS en conversations y conversation_participants
+```sql
+ALTER TABLE public.conversations ADD COLUMN IF NOT EXISTS created_by uuid DEFAULT auth.uid();
+ALTER TABLE public.conversations ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "conversations_select" ON public.conversations FOR SELECT
+  USING (created_by = auth.uid() OR is_participant(id));
+CREATE POLICY "conversations_insert" ON public.conversations FOR INSERT
+  WITH CHECK (auth.uid() IS NOT NULL);
+
+ALTER TABLE public.conversation_participants ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "participants_select" ON public.conversation_participants FOR SELECT
+  USING (user_id = auth.uid() OR is_participant(conversation_id));
+CREATE POLICY "participants_insert" ON public.conversation_participants FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+```
+*Nota: `created_by` resuelve el problema de RETURNING tras INSERT — el creador puede leer la conversación recién creada antes de ser participante.*
+
+### Migración 5 — RLS en messages y files
+```sql
+ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "messages_select" ON public.messages FOR SELECT USING (is_participant(conversation_id));
+CREATE POLICY "messages_insert" ON public.messages FOR INSERT
+  WITH CHECK (is_participant(conversation_id) AND sender_id = auth.uid());
+
+ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "files_select" ON public.files FOR SELECT USING (is_participant(conversation_id));
+CREATE POLICY "files_insert" ON public.files FOR INSERT
+  WITH CHECK (is_participant(conversation_id) AND sender_id = auth.uid());
+```
+
+---
+
+## 4. Estado RLS por tabla
+
+| Tabla | RLS | Policies activas |
+|---|---|---|
+| `users` | ✅ ON | `users_select`, `users_insert_own`, `users_update_own` |
+| `conversations` | ✅ ON | `conversations_select`, `conversations_insert` |
+| `conversation_participants` | ✅ ON | `participants_select`, `participants_insert` |
+| `messages` | ✅ ON | `messages_select`, `messages_insert` |
+| `files` | ✅ ON | `files_select`, `files_insert` |
+
+No existe ninguna policy `DELETE` en ninguna tabla (decisión explícita).
+No existe ninguna policy `"Allow all"` en ninguna tabla.
+
+---
+
+## 5. Policies activas — detalle completo
+
+```
+users
+  users_select     SELECT  USING (id = auth.uid() OR shares_conversation(id))
+  users_insert_own INSERT  WITH CHECK (id = auth.uid())
+  users_update_own UPDATE  USING (id = auth.uid())
+
+conversations
+  conversations_select  SELECT  USING (created_by = auth.uid() OR is_participant(id))
+  conversations_insert  INSERT  WITH CHECK (auth.uid() IS NOT NULL)
+
+conversation_participants
+  participants_select  SELECT  USING (user_id = auth.uid() OR is_participant(conversation_id))
+  participants_insert  INSERT  WITH CHECK (user_id = auth.uid())
+
+messages
+  messages_select  SELECT  USING (is_participant(conversation_id))
+  messages_insert  INSERT  WITH CHECK (is_participant(conversation_id) AND sender_id = auth.uid())
+
+files
+  files_select  SELECT  USING (is_participant(conversation_id))
+  files_insert  INSERT  WITH CHECK (is_participant(conversation_id) AND sender_id = auth.uid())
+```
+
+### Funciones SECURITY DEFINER activas
+
+| Función | Propósito | Usada en |
+|---|---|---|
+| `is_participant(conv_id uuid)` | ¿Es auth.uid() participante de esta conversación? | conversations_select, participants_select, messages_*, files_*, signaling (indirectamente via RLS) |
+| `shares_conversation(other_user_id uuid)` | ¿Comparte auth.uid() alguna conversación con otro usuario? | users_select |
+
+---
+
+## 6. Índices creados
+
+```sql
+CREATE INDEX idx_participants_user_id   ON public.conversation_participants(user_id);
+CREATE INDEX idx_messages_conv_created  ON public.messages(conversation_id, created_at);
+CREATE INDEX idx_conversations_created_by ON public.conversations(created_by);
+```
+
+---
+
+## 7. Cambios en /api/translate
+
+**Archivo:** `app/api/translate/route.ts`
+
+### Antes
+- Sin autenticación: cualquier origen podía llamar directamente
+- Sin rate limiting
+- Sin límite de longitud
+- `catch` devolvía `{ translation: "" }` (bug: mensajes vacíos en producción)
+
+### Después
+- **Auth obligatoria** via `getClaims(token)` — verifica firma ES256 localmente con JWKS cacheado; `try/catch` rodea el `await` para cubrir excepciones de tokens malformados/expirados
+- **Rate limiting** 20 req/min por `userId` (in-memory Map module-level — ver limitación P1)
+- **Límite de texto** 1000 caracteres — devuelve original sin llamar a OpenAI
+- **Fix error handling** — todos los paths de error devuelven `{ translation: text }` (nunca string vacío)
+- **Header `x-translate-ms`** — duración real de la llamada a OpenAI en cada respuesta (útil para benchmarks)
+- **Cliente Supabase singleton** a nivel de módulo — JWKS se cachea para toda la vida de la instancia warm
+
+### Tests de seguridad (9/9 PASS)
 
 | Test | Resultado |
 |---|---|
@@ -60,11 +211,11 @@
 | JWT con firma falsa | ✅ 401 |
 | Payload manipulado (sub cambiado, firma original) | ✅ 401 |
 | JWT expirado (exp pasado, kid real, firma falsa) | ✅ 401 |
-| JWT de otro proyecto (ref diferente) | ✅ 401 |
+| JWT de otro proyecto | ✅ 401 |
 | JWT con alg=HS256 (algorithm confusion) | ✅ 401 |
 | Token válido | ✅ 200 + traducción |
 
-**Benchmark de latencia `/api/translate` (20 muestras, textos 5-15 palabras):**
+### Benchmark de latencia (20 muestras, textos 5-15 palabras)
 
 | Métrica | OpenAI solo | Total extremo a extremo |
 |---|---|---|
@@ -72,307 +223,238 @@
 | p95 | 934 ms | 1151 ms |
 | p99 | 1065 ms | 1332 ms |
 
-Latencia compatible con TTS (SpeechSynthesis): delay p50 desde fin de frase hasta audio traducido ~870ms. Viable para beta.
+Conclusión: TTS con SpeechSynthesis viable (delay p50 ~870ms desde fin de frase hasta audio traducido).
 
 ---
 
-### ⚠️ Pendiente
+## 8. Cambios en server/signaling.ts
 
-**P1 — Rate limiting en memoria no coordina entre instancias Vercel (ANTES de beta pública abierta)**
+**Commit:** `082437c`
 
-El `Map` en memoria persiste en instancias warm pero Vercel puede usar múltiples instancias paralelas para absorber ráfagas. El contador de rate limit no se comparte entre ellas. Un usuario podría superar el límite distribuyendo requests entre instancias.
+### Antes
+- `join-room` aceptaba cualquier UUID sin validación
+- Cualquier cliente podía conectarse y escuchar señalización y subtítulos de cualquier sala
 
-**Solución necesaria antes de beta abierta:** Upstash Redis (tier gratuito disponible) o tabla `rate_limits` en Supabase.
+### Después
 
+**Capa 1 — Middleware `io.use()`:**
+- Rechaza la conexión si no hay token o el token es inválido
+- Usa `supabaseAuth.auth.getClaims(token)` (ES256 local, singleton)
+- Almacena `socket.data.userId`, `socket.data.token`, `socket.data.authorizedRooms = new Set()`
+
+**Capa 2 — `join-room` con validación de membresía:**
+- Valida formato UUID antes de cualquier query
+- Cache `authorizedRooms`: si la room ya fue validada en esta conexión, no vuelve a consultar Supabase
+- Si no está en cache: dos queries con lógica OR:
+  1. `conversation_participants WHERE conversation_id=roomId AND user_id=userId`
+  2. Si falla: `conversations WHERE id=roomId AND created_by=userId`
+- Si ambas fallan: `socket.emit("join-error", ...)` y return
+
+**Variables de entorno necesarias en Render (nuevas):**
 ```
+SUPABASE_URL      = https://wztkxtgmuaegonlkukeh.supabase.co
+SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6...  (ver /tmp/spabla_anon_key.txt o .env.local)
+```
+⚠️ Sin estas variables, el servidor arranca pero rechaza TODAS las conexiones (getClaims falla con SUPABASE_URL vacío).
+
+---
+
+## 9. Cambios en useWebRTC.ts
+
+**Commit:** `082437c` + `86a7c2c`
+
+1. **Importación de `supabase`** desde `@/lib/supabase`
+2. **Token en el handshake del socket:**
+```typescript
+const { data: { session: callSession } } = await supabase.auth.getSession();
+const socket = io(SERVER_URL, {
+  transports: ["polling", "websocket"],
+  auth: { token: callSession?.access_token ?? "" },
+});
+```
+3. **Handler `join-error`:** si el servidor rechaza la sala, llama a `endCall()` y muestra error en UI
+4. **Token Bearer en llamadas a `/api/translate`** dentro del handler `transcript-result`
+
+---
+
+## 10. Variables de entorno
+
+### Vercel (Settings → Environment Variables)
+
+| Variable | Tipo | Estado | Notas |
+|---|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Pública | ✅ Configurada | |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Pública | ✅ Configurada (corregida) | Verificar que empieza por `eyJh` sin espacios |
+| `OPENAI_API_KEY` | Privada | Verificar ✓ | Sin ella, traducción devuelve original silenciosamente |
+| `TURN_URLS` | Privada | Verificar ✓ | Para llamadas cross-network |
+| `TURN_USERNAME` | Privada | Verificar ✓ | |
+| `TURN_CREDENTIAL` | Privada | Verificar ✓ | |
+
+### Render (Environment Variables)
+
+| Variable | Estado | Notas |
+|---|---|---|
+| `DEEPGRAM_API_KEY` | ✅ Configurada | STT en streaming |
+| `PORT` | Auto (10000) | Inyectada por Render |
+| `SUPABASE_URL` | ⚠️ **PENDIENTE** | Añadir antes del próximo deploy |
+| `SUPABASE_ANON_KEY` | ⚠️ **PENDIENTE** | Añadir antes del próximo deploy |
+
+**Acción requerida:** añadir `SUPABASE_URL` y `SUPABASE_ANON_KEY` en el panel de Render **antes** de que el servidor desplegado actualice. Usar el valor de `/tmp/spabla_anon_key.txt` (208 chars, sin espacios) o `.env.local`.
+
+---
+
+## 11. Tests ejecutados y resultado
+
+### E2E producción — flujo completo (13/13 PASS)
+Ejecutado tras migraciones y hardening de /api/translate:
+- U1 onboarding → /chat ✅
+- signInAnonymously HTTP 200 ✅
+- conversationId UUID ✅
+- Realtime WebSocket sin %20, frames activos ✅
+- U2 join via link ✅
+- shares_conversation: U2 detecta idioma de U1 ✅
+- Traducción autenticada (200 + x-translate-ms) ✅
+- U1 INSERT mensaje 201 ✅
+- U2 recibe mensaje de U1 ✅
+- U2 INSERT mensaje 201 ✅
+- U1 recibe mensaje de U2 ✅
+- Sin errores críticos en consola ✅
+
+### Tests de seguridad /api/translate (9/9 PASS)
+Ver sección 7.
+
+### Tests de autorización signaling server (6/6 PASS)
+Ejecutados contra servidor local con variables Supabase reales:
+
+| Test | Escenario | Resultado |
+|---|---|---|
+| D | Sin token → rechazado en conexión | ✅ `connect_error: Unauthorized: missing token` |
+| A | Creador/participante → aceptado | ✅ |
+| B | Invitado via link → aceptado | ✅ |
+| C | Token válido, no participante ni creador → rechazado | ✅ `join-error: Not authorized for this room` |
+| E | UUID malformado → join-error | ✅ `join-error: Invalid room ID` |
+| F | Cache: re-join misma room → aceptado sin nueva query | ✅ |
+
+**Test E del diseño** (creador sin entrada en `conversation_participants`): no simulable via API pública porque RLS bloquea DELETE en `conversation_participants`. Esto confirma que RLS funciona correctamente. La lógica OR está implementada y verificada por inspección de código.
+
+---
+
+## 12. Riesgos pendientes
+
+### P1 — Rate limiting no coordina entre instancias Vercel ⚠️ (ANTES de beta pública)
+El `Map` en memoria de `/api/translate` no se comparte entre instancias serverless paralelas. Un atacante que distribuya requests entre instancias puede superar el límite.
+
+**Solución:** Upstash Redis (tier gratuito).
+```bash
 npm install @upstash/redis
+# Variables en Vercel:
 UPSTASH_REDIS_REST_URL=...
 UPSTASH_REDIS_REST_TOKEN=...
 ```
+Estimación: 2-3 horas.
 
-**P2 — TTS no implementado (próximo paso)**
+### P2 — Signaling server no desplegado en Render con las nuevas variables ⚠️ (ACCIÓN INMEDIATA)
+El commit `082437c` con la validación JWT está en `main`. Render desplegará automáticamente, pero sin `SUPABASE_URL` y `SUPABASE_ANON_KEY`, el middleware rechazará todas las conexiones.
 
-Benchmark de latencia confirma que SpeechSynthesis es viable (p50 ~870ms). Implementar cuando se apruebe.
+**Acción:** añadir las dos variables en el panel de Render ANTES de que el deploy automático complete.
 
-**P3 — `signaling.ts` acepta cualquier roomId sin validar contra Supabase**
+### P3 — TTS no implementado
+El benchmark confirma viabilidad (p50 ~870ms). Aprobado como próximo paso.
 
-Cualquier cliente Socket.io puede hacer `join-room` con cualquier UUID. Pendiente para después de TTS.
+### P4 — Paginación de mensajes ausente
+`loadMessages()` hace `SELECT *` sin `LIMIT`. Una conversación con >500 mensajes puede degradar UX.
 
----
+### P5 — `ScriptProcessorNode` deprecated en useWebRTC.ts
+Funciona en todos los navegadores actuales. Migración a `AudioWorklet` documentada en decisions.md.
 
-### ⚠️ Pendiente — ANTES de la próxima sesión (de sesión anterior)
+### P6 — `app/call/[roomId]/page.tsx` activa (ruta obsoleta)
+Viola la arquitectura master. Pendiente de eliminar.
 
-**P_OLD — Supabase Realtime falla en producción (causa pendiente de confirmar)**
+### P7 — Render cold start (30-90s en plan gratuito/starter)
+Primera llamada tras inactividad parece "congelada". Sin aviso al usuario.
 
-**Síntoma confirmado:** el test de producción capturó este error literal en consola:
-```
-WebSocket connection to '...?apikey=%20eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
-failed: HTTP Authentication failed; no valid credentials available
-```
-El `%20` es un espacio URL-encoded al inicio del API key. Realtime no conecta; el chat cae al polling de fallback cada 3s.
-
-**Causa probable (inferencia, no confirmación):** la variable `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel podría tener un espacio al inicio. En `.env.local` el valor es correcto (sin espacio). No se ha leído directamente la variable en el panel de Vercel.
-
-**Acción para la próxima sesión:**
-1. Abrir el panel de Vercel manualmente:
-   ```
-   https://vercel.com/dashboard → SPABLA → Settings → Environment Variables
-   ```
-2. Ver el valor actual de `NEXT_PUBLIC_SUPABASE_ANON_KEY` y confirmar si hay espacio.
-3. Si lo hay, reemplazarlo por el valor correcto (sin espacios):
-   ```
-   eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6dGt4dGdtdWFlZ29ubGt1a2VoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5ODQ5ODUsImV4cCI6MjA5NTU2MDk4NX0.EkYOcUi6jciTCJ0luhRdhx_nF-I5ntrJ6WLa_FmOKtE
-   ```
-4. Si NO hay espacio, buscar la causa real del `%20` antes de modificar nada.
-
-**P2 — No activar RLS hasta confirmar que Realtime funciona**
-
-Orden obligatorio:
-1. Corregir `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel → verificar Realtime
-2. Solo entonces ejecutar Migraciones 3, 4 y 5 (RLS)
-
-### 🔴 Regla operativa añadida
-
-**No usar Vercel CLI (`vercel`, `npx vercel`) sin autorización explícita del usuario.**
-El comando `npx vercel whoami` abre una ventana de autenticación en el navegador sin previo aviso. Cualquier acción sobre Vercel debe hacerse manualmente desde el panel web salvo que el usuario indique lo contrario.
+### P8 — Sin manejo explícito de Render cold start en el cliente
+El overlay de llamada no muestra feedback durante el cold start del servidor.
 
 ---
 
----
+## 13. Próximos pasos priorizados
 
-## Decisiones tomadas y cerradas (no reabrir)
+### Inmediato (ANTES de cualquier sesión de código)
+1. **Añadir `SUPABASE_URL` y `SUPABASE_ANON_KEY` en Render** — sin esto el signaling server en producción rechaza todas las llamadas.
 
-### Modelo B — identidad única aprobado
+### Prioridad 1 — TTS con Web Speech API (aprobado, ~1 día)
+Implementar `SpeechSynthesis` en `useWebRTC.ts`. Cuando llega un `subtitle` remoto final, sintetizarlo en voz. El benchmark confirma viabilidad (p50 ~870ms).
 
-`users.id = auth.uid()` en toda la base de datos.
+**Archivos:** `app/chat/hooks/useWebRTC.ts`, `app/chat/components/VideoOverlay.tsx`
 
-- No existe columna `auth_id`.
-- El onboarding llama a `signInAnonymously()` y pasa el UUID resultante explícitamente como `id` en el INSERT a `users`.
-- Las políticas RLS usan `auth.uid()` directamente, sin subqueries de mapeo.
-- Los 156 mensajes y 6 usuarios de prueba existentes quedan inaccesibles tras activar RLS. Pérdida aceptada.
+### Prioridad 2 — Rate limiting con Redis/Upstash (~2-3h)
+Reemplazar el `Map` en memoria de `/api/translate` con Upstash Redis.
 
-### Anonymous Auth
+**Archivo:** `app/api/translate/route.ts`
 
-Activado y verificado el 2026-05-31. Respuesta confirmada:
+### Prioridad 3 — Paginación de mensajes (~2h)
+Añadir `LIMIT 50` + cursor en `loadMessages()`.
+
+**Archivo:** `app/chat/page.tsx`
+
+### Prioridad 4 — Eliminar ruta obsoleta /call/[roomId] (~30min)
 ```
-is_anonymous: true
-role: authenticated
-```
-
-### Datos existentes en Supabase (estado real verificado)
-
-| Tabla | Filas | Columnas reales |
-|---|---|---|
-| `users` | 6 | id, name, avatar, language_primary, language_secondary, created_at |
-| `conversations` | 23 | id, created_at |
-| `conversation_participants` | 43 | conversation_id, user_id |
-| `messages` | 156 | id, conversation_id, sender_id, original_text, translated_text, original_language, translated_language, type, created_at |
-| `files` | NO EXISTE | — |
-
-Nota: `messages.type` existe con valor `'text'` en todos los registros. El código no lo envía en INSERT. Hay un DEFAULT implícito o un trigger en la BD — se confirma y formaliza en la Migración 1.
-
----
-
-## Estado de ejecución de la Fase 1
-
-### ✅ Completado
-
-- Anonymous Auth activado en el panel de Supabase.
-
-### ⏳ Pendiente — Migraciones 1 y 2 en SQL Editor
-
-**No se han ejecutado todavía.** Requieren acción manual en el panel de Supabase porque la anon key no tiene permisos DDL.
-
-**Ruta exacta:**
-```
-https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh
-→ SQL Editor → New query
+Eliminar: app/call/[roomId]/page.tsx
+Redirigir: app/call/page.tsx → /home
+Eliminar:  lib/webrtc.ts (código muerto)
+Eliminar:  next.config.ts (ignorado por Next.js)
 ```
 
-**SQL a ejecutar (bloque completo, en un solo run):**
-
+### Prioridad 5 — REVOKE EXECUTE en funciones SECURITY DEFINER
 ```sql
--- ══════════════════════════════════════════════
--- MIGRACIÓN 1: Schema base
--- ══════════════════════════════════════════════
-
--- 1A. Asegurar DEFAULT en messages.type
-ALTER TABLE public.messages
-  ALTER COLUMN type SET DEFAULT 'text';
-
--- 1B. Crear tabla files
-CREATE TABLE IF NOT EXISTS public.files (
-  id              uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  conversation_id uuid        NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
-  sender_id       uuid        NOT NULL,
-  url             text        NOT NULL,
-  name            text        NOT NULL,
-  mime_type       text        NOT NULL,
-  size_bytes      integer,
-  created_at      timestamptz NOT NULL DEFAULT now()
-);
-
--- ══════════════════════════════════════════════
--- MIGRACIÓN 2: Función helper anti-recursión RLS
--- ══════════════════════════════════════════════
-
-CREATE OR REPLACE FUNCTION public.is_participant(conv_id uuid)
-RETURNS boolean
-LANGUAGE sql
-SECURITY DEFINER
-STABLE
-SET search_path = public
-AS $$
-  SELECT EXISTS (
-    SELECT 1
-    FROM public.conversation_participants
-    WHERE conversation_id = conv_id
-      AND user_id = auth.uid()
-  );
-$$;
-```
-
-**SQL de verificación (ejecutar inmediatamente después):**
-
-```sql
--- Verificar Migración 1A
-SELECT column_name, column_default
-FROM information_schema.columns
-WHERE table_schema = 'public'
-  AND table_name   = 'messages'
-  AND column_name  = 'type';
--- Esperado: column_default = 'text'::text
-
--- Verificar Migración 1B
-SELECT table_name FROM information_schema.tables
-WHERE table_schema = 'public' AND table_name = 'files';
--- Esperado: files
-
--- Verificar Migración 2
-SELECT routine_name, security_type
-FROM information_schema.routines
-WHERE routine_schema = 'public'
-  AND routine_name   = 'is_participant';
--- Esperado: is_participant | DEFINER
-```
-
-### 🔴 Pospuesto — Migraciones 3, 4 y 5 (RLS)
-
-**RLS NO se activa hasta que el código del Bloque B esté funcionando.**
-
-Motivo: si RLS se activa con el código antiguo, la app rompe completamente para todos los usuarios. El código actual no genera `users.id = auth.uid()`, por lo que las políticas rechazarían todos los INSERTs. Activar RLS primero es un error de orden.
-
-### 🔴 Pendiente — Bloque B (cambios de código)
-
-Son los tres archivos a modificar antes de activar RLS:
-
-| Archivo | Cambio principal |
-|---|---|
-| `app/onboarding/page.tsx` | Añadir `signInAnonymously()`. Pasar `id: session.user.id` en el INSERT a `users`. |
-| `app/chat/page.tsx` | Leer sesión con `supabase.auth.getSession()`. Usar `session.user.id` como `sender_id`. Redirigir a `/onboarding` si no hay sesión. |
-| `app/home/page.tsx` | Verificar sesión de Auth, no solo `localStorage`. Redirigir si no hay sesión activa. |
-
----
-
-## Orden de ejecución para la próxima sesión
-
-```
-1. Ejecutar Migraciones 1 + 2 en SQL Editor (si no se hizo al cerrar)
-   └── Verificar con el SQL de comprobación
-
-2. Bloque B — código
-   ├── app/onboarding/page.tsx
-   ├── app/chat/page.tsx
-   └── app/home/page.tsx
-
-3. Verificación de código (sin RLS)
-   ├── npm run dev → crear usuario nuevo
-   ├── Confirmar en Supabase que users.id = auth.uid()
-   ├── Enviar mensaje → confirmar sender_id = auth.uid()
-   └── Invitar segundo usuario → confirmar que ambos ven el chat
-
-4. Solo si el paso 3 pasa: activar RLS
-   ├── Migración 3 — users
-   ├── Migración 4 — conversations + participants
-   └── Migración 5 — messages + files
-
-5. Verificación de seguridad
-   ├── Usuario A no puede leer conversaciones de usuario B
-   └── Manipular localStorage no da acceso a datos ajenos
-
-6. git push → deploy a Vercel
+REVOKE EXECUTE ON FUNCTION public.is_participant(uuid)      FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.shares_conversation(uuid) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION public.is_participant(uuid)      TO authenticated;
+GRANT  EXECUTE ON FUNCTION public.shares_conversation(uuid) TO authenticated;
 ```
 
 ---
 
-## Primer comando de la próxima sesión
+## 14. Qué NO debe modificarse
 
-Si las Migraciones 1 y 2 ya están ejecutadas, el primer paso es:
-
-```bash
-cd ~/spabla && claude
-```
-
-Y dar la instrucción:
-```
-Empieza el Bloque B. Modifica onboarding/page.tsx para implementar
-signInAnonymously() con Modelo B (users.id = auth.uid()).
-```
-
-Si las Migraciones 1 y 2 NO están ejecutadas todavía, el primer paso es ir al SQL Editor:
-```
-https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh/sql/new
-```
-Y ejecutar el SQL de Migraciones 1 y 2 de este documento.
+- `server/signaling.ts` — lógica de STT (Deepgram) y WebRTC — solo añadir TTS cuando llegue el momento
+- `app/chat/components/VideoOverlay.tsx` — UI de videollamada — no tocar hasta implementar TTS
+- `app/api/ice-servers/route.ts` — TURN credentials — no tocar
+- Cualquier política RLS activa — no modificar sin pruebas previas y plan de rollback
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY` en Vercel — ya está correcta (208 chars, empieza `eyJh`)
 
 ---
 
-## Riesgos conocidos para la próxima sesión
+## 15. Checklist para retomar mañana
 
-**R1 — Usuarios con localStorage antiguo (sin sesión Auth)**
-Tras el Bloque B, cualquier usuario que tenga un `spabla_user` antiguo en localStorage (sin sesión de Supabase Auth válida) será redirigido a `/onboarding` al abrir la app. Creará un perfil nuevo. Sus mensajes anteriores no serán accesibles. Para una beta privada con pocos usuarios conocidos, es gestionable comunicándolo con antelación.
-
-**R2 — RLS puede bloquear queries legítimas si las políticas tienen errores**
-El riesgo más alto de la Fase 1. Mitigación: activar RLS tabla a tabla, probar entre cada paso, y tener listo el rollback:
-```sql
-ALTER TABLE public.{tabla} DISABLE ROW LEVEL SECURITY;
+```
+[ ] 1. Añadir SUPABASE_URL en Render (panel → Environment Variables)
+[ ] 2. Añadir SUPABASE_ANON_KEY en Render (usar /tmp/spabla_anon_key.txt o .env.local)
+[ ] 3. Esperar deploy automático de Render (observar logs — debe arrancar sin errores)
+[ ] 4. Verificar health: curl https://spabla-server.onrender.com/health
+[ ] 5. Ejecutar test E2E de producción completo (onboarding → chat → traducción → Realtime)
+[ ] 6. Confirmar que las llamadas WebRTC siguen funcionando (el middleware socket.io ahora requiere token)
+[ ] 7. Si todo OK → implementar TTS (SpeechSynthesis en useWebRTC.ts)
+[ ] 8. Si TTS OK → rate limiting con Upstash Redis
 ```
 
-**R3 — `messages.type` DEFAULT no confirmado**
-Si la Migración 1A falla (el tipo ya existe con un DEFAULT diferente o hay un CHECK constraint), los nuevos mensajes podrían fallar en INSERT. La Migración 1A incluye la verificación previa.
-
-**R4 — `is_participant()` con SECURITY DEFINER**
-La función tiene acceso sin RLS a `conversation_participants`. Si hay un bug lógico en la función, podría permitir acceso incorrecto. La función es simple (EXISTS + WHERE), el riesgo es bajo pero debe revisarse con atención en el test de seguridad del paso 5.
-
-**R5 — OPENAI_API_KEY sin confirmar en Vercel**
-Sigue pendiente de verificar. Sin ella, la traducción falla silenciosamente en producción. Confirmar en el panel de Vercel antes del deploy final.
-
 ---
 
-## Archivos que NO deben tocarse en la próxima sesión
-
-- `server/signaling.ts` — la señalización WebRTC no cambia en Fase 1
-- `app/chat/hooks/useWebRTC.ts` — no cambia en Fase 1
-- `app/chat/components/VideoOverlay.tsx` — no cambia en Fase 1
-- `app/api/translate/route.ts` — no cambia en Fase 1
-- `app/api/ice-servers/route.ts` — no cambia en Fase 1
-
----
-
-## Referencia rápida de URLs y recursos
+## Referencia rápida
 
 | Recurso | URL |
 |---|---|
+| App producción | https://spabla.vercel.app |
+| Signaling health | https://spabla-server.onrender.com/health |
 | Supabase SQL Editor | https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh/sql/new |
-| Supabase Auth settings | https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh/auth/providers |
-| Supabase Table Editor | https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh/editor |
-| Vercel project | https://vercel.com/dashboard |
+| Supabase Auth | https://supabase.com/dashboard/project/wztkxtgmuaegonlkukeh/auth/providers |
 | Render dashboard | https://dashboard.render.com |
-| App en producción | https://spabla.vercel.app |
-| Señalización (health) | https://spabla-server.onrender.com/health |
 | GitHub repo | https://github.com/DAVIDLENCINA/SPABLA |
+| Valor correcto ANON_KEY | `~/spabla/.env.local` → `NEXT_PUBLIC_SUPABASE_ANON_KEY` (208 chars, empieza `eyJh`) |
 
 ---
 
-*Ver `docs/PROJECT_STATUS.md` para el estado completo del producto.*
-*Ver `docs/decisions.md` para el historial de decisiones arquitecturales.*
+*Ver `docs/PROJECT_STATUS.md` para estado completo del producto.*
+*Ver `docs/roadmap.md` para fases con criterios de completitud y decisiones estratégicas.*
+*Ver `docs/decisions.md` para historial de decisiones arquitecturales.*
