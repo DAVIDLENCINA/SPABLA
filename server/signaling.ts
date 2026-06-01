@@ -1,8 +1,17 @@
 import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY ?? "");
+
+const SUPABASE_URL      = process.env.SUPABASE_URL      ?? "";
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
+
+// Singleton para getClaims() — JWKS se cachea una vez durante la vida del proceso
+const supabaseAuth = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ALLOWED_ORIGINS = ["https://spabla.vercel.app", "http://localhost:3000"];
 
@@ -46,15 +55,90 @@ function closeDG(conn: DGConnection | null): null {
   return null;
 }
 
+// ── Middleware: valida JWT en el handshake ─────────────────────────────────
+// Rechaza la conexión si el token es inválido o está ausente.
+// socket.data.userId y socket.data.token quedan disponibles para todos los handlers.
+io.use(async (socket, next) => {
+  const token = socket.handshake.auth?.token;
+  if (!token || typeof token !== "string") {
+    return next(new Error("Unauthorized: missing token"));
+  }
+  try {
+    const { data, error } = await supabaseAuth.auth.getClaims(token);
+    if (error || !data?.claims?.sub) {
+      return next(new Error("Unauthorized: invalid token"));
+    }
+    socket.data.userId         = data.claims.sub as string;
+    socket.data.token          = token;
+    socket.data.authorizedRooms = new Set<string>();
+    next();
+  } catch {
+    next(new Error("Unauthorized: token verification failed"));
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 io.on("connection", (socket: Socket) => {
-  console.log("[SPABLA] Usuario conectado:", socket.id);
+  console.log("[SPABLA] Usuario conectado:", socket.id, `(user=${(socket.data.userId as string).substring(0, 8)}...)`);
 
   let dgConn: DGConnection | null = null;
 
-  socket.on("join-room", (roomId: string) => {
+  socket.on("join-room", async (roomId: string) => {
+    // Validar formato UUID
+    if (!UUID_REGEX.test(roomId)) {
+      socket.emit("join-error", { message: "Invalid room ID" });
+      return;
+    }
+
+    // Cache: si la room ya fue validada durante esta conexión, no volver a consultar Supabase
+    const authorizedRooms = socket.data.authorizedRooms as Set<string>;
+    if (authorizedRooms.has(roomId)) {
+      socket.join(roomId);
+      socket.to(roomId).emit("user-joined", socket.id);
+      console.log(`[SPABLA] ${socket.id} re-joined sala (cached): ${roomId}`);
+      return;
+    }
+
+    // Cliente Supabase autenticado con el token del usuario.
+    // RLS garantiza que las queries solo devuelven filas propias del usuario.
+    const userClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${socket.data.token as string}` } },
+      auth:   { persistSession: false, autoRefreshToken: false },
+    });
+
+    // Condición 1: ¿es participante de la conversación?
+    const { data: asParticipant } = await userClient
+      .from("conversation_participants")
+      .select("user_id")
+      .eq("conversation_id", roomId)
+      .eq("user_id", socket.data.userId)
+      .maybeSingle();
+
+    // Condición 2 (solo si la 1 falla): ¿es el creador de la conversación?
+    let asCreator = null;
+    if (!asParticipant) {
+      const { data } = await userClient
+        .from("conversations")
+        .select("id")
+        .eq("id", roomId)
+        .eq("created_by", socket.data.userId)
+        .maybeSingle();
+      asCreator = data;
+    }
+
+    if (!asParticipant && !asCreator) {
+      console.log(`[SPABLA] REJECTED join-room: socket=${socket.id} room=${roomId} user=${(socket.data.userId as string).substring(0, 8)}`);
+      socket.emit("join-error", { message: "Not authorized for this room" });
+      return;
+    }
+
+    // Añadir al cache de rooms autorizadas para esta conexión
+    authorizedRooms.add(roomId);
+
     socket.join(roomId);
     socket.to(roomId).emit("user-joined", socket.id);
-    console.log(`[SPABLA] ${socket.id} entró en sala: ${roomId}`);
+    console.log(`[SPABLA] ${socket.id} (user=${(socket.data.userId as string).substring(0, 8)}) entró en sala: ${roomId}`);
   });
 
   socket.on("offer", (data: { roomId: string; offer: RTCSessionDescriptionInit }) => {

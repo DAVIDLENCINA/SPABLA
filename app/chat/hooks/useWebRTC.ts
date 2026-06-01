@@ -220,8 +220,12 @@ export function useWebRTC(
       }
     };
 
-    // 3 — Signaling socket
-    const socket = io(SERVER_URL, { transports: ["polling", "websocket"] });
+    // 3 — Signaling socket — token en el handshake para que el middleware lo valide
+    const { data: { session: callSession } } = await supabase.auth.getSession();
+    const socket = io(SERVER_URL, {
+      transports: ["polling", "websocket"],
+      auth: { token: callSession?.access_token ?? "" },
+    });
     socketRef.current = socket;
 
     pc.onicecandidate = (e) => {
@@ -301,6 +305,12 @@ export function useWebRTC(
     });
 
     socket.on("disconnect", () => setConnected(false));
+
+    socket.on("join-error", ({ message }: { message: string }) => {
+      console.error("[SPABLA][SOCK] join-room rechazado:", message);
+      setError(`No autorizado para esta sala: ${message}`);
+      endCall();
+    });
 
     // 4 — WebRTC negotiation
     socket.on("user-joined", async () => {
