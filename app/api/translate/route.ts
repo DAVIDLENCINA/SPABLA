@@ -33,8 +33,14 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const { data: claimsData, error: claimsError } = await supabase.auth.getClaims(token);
-  if (claimsError || !claimsData?.claims?.sub) {
+  let claimsData: Awaited<ReturnType<typeof supabase.auth.getClaims>>["data"];
+  try {
+    const result = await supabase.auth.getClaims(token);
+    if (result.error || !result.data?.claims?.sub) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    claimsData = result.data;
+  } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const userId = claimsData.claims.sub as string;
