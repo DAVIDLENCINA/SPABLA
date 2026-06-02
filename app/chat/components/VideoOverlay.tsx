@@ -8,9 +8,11 @@ type Props = {
   onClose: () => void;
   expanded: boolean;
   onToggleExpand: () => void;
+  voiceEnabled: boolean;
+  onToggleVoice: () => void;
 };
 
-export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand }: Props) {
+export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand, voiceEnabled, onToggleVoice }: Props) {
   const localVideoRef  = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const unlockedRef    = useRef(false);
@@ -128,6 +130,10 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           <CtrlBtn onClick={webrtc.toggleCam} danger={!webrtc.camOn}>
             <CamIcon on={webrtc.camOn} />
           </CtrlBtn>
+          {/* Voz traducida ON/OFF */}
+          <CtrlBtn onClick={onToggleVoice} active={voiceEnabled}>
+            <VoiceIcon on={voiceEnabled} />
+          </CtrlBtn>
           {/* Colgar */}
           <button onClick={() => { webrtc.endCall(); onClose(); }} style={{ width: 68, height: 68, borderRadius: "50%", background: "radial-gradient(circle at 38% 35%, #ff5569, #e8162e)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
             <HangUpIcon />
@@ -167,9 +173,11 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
 
 // ── Botones ──────────────────────────────────────────────────────
 
-function CtrlBtn({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
+function CtrlBtn({ onClick, danger, active, children }: { onClick: () => void; danger?: boolean; active?: boolean; children: React.ReactNode }) {
+  const bg     = danger ? "rgba(255,50,70,.8)"  : active ? "rgba(62,198,198,.35)" : "rgba(255,255,255,.12)";
+  const border = danger ? "rgba(255,60,80,.5)"  : active ? "rgba(62,198,198,.7)"  : "rgba(255,255,255,.2)";
   return (
-    <button onClick={onClick} style={{ width: 56, height: 56, borderRadius: "50%", background: danger ? "rgba(255,50,70,.8)" : "rgba(255,255,255,.12)", border: `1.5px solid ${danger ? "rgba(255,60,80,.5)" : "rgba(255,255,255,.2)"}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+    <button onClick={onClick} style={{ width: 56, height: 56, borderRadius: "50%", background: bg, border: `1.5px solid ${border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
       {children}
     </button>
   );
@@ -222,6 +230,17 @@ function ExpandIcon() {
   );
 }
 
+
+function VoiceIcon({ on }: { on: boolean }) {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={on ? "#3ec6c6" : "#fff"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      {on
+        ? <><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></>
+        : <line x1="23" y1="9" x2="17" y2="15"/>}
+    </svg>
+  );
+}
 
 function ContractIcon() {
   return (

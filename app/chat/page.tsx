@@ -42,11 +42,12 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [otherLang, setOtherLang] = useState<string | null>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang);
+  const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang, voiceEnabled);
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
@@ -475,6 +476,8 @@ export default function Chat() {
             onClose={stopVideo}
             expanded={videoExpanded}
             onToggleExpand={() => setVideoExpanded(e => !e)}
+            voiceEnabled={voiceEnabled}
+            onToggleVoice={() => setVoiceEnabled(e => !e)}
           />
         )}
       </div>

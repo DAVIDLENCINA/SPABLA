@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { supabase } from "@/lib/supabase";
+import { useTranslatedSpeech } from "./useTranslatedSpeech";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
@@ -67,6 +68,7 @@ export function useWebRTC(
   conversationId: string | null,
   myLang: string,
   targetLang: string | null,
+  voiceEnabled: boolean = false,
 ): WebRTCState {
   // Core WebRTC refs
   const socketRef      = useRef<Socket | null>(null);
@@ -100,9 +102,15 @@ export function useWebRTC(
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
 
+  const { speak, cancel: cancelTTS } = useTranslatedSpeech();
+
+  // voiceEnabledRef: para acceder al valor actual dentro de los closures del socket
+  const voiceEnabledRef = useRef(voiceEnabled);
+
   // Keep lang refs in sync when props change between renders
-  useEffect(() => { myLangRef.current = myLang; },         [myLang]);
-  useEffect(() => { targetLangRef.current = targetLang; }, [targetLang]);
+  useEffect(() => { myLangRef.current = myLang; },               [myLang]);
+  useEffect(() => { targetLangRef.current = targetLang; },       [targetLang]);
+  useEffect(() => { voiceEnabledRef.current = voiceEnabled; },   [voiceEnabled]);
 
   // Fix A — restart Deepgram when the user changes language during an active call.
   // Without this, Deepgram keeps transcribing in the old language and produces
@@ -118,6 +126,9 @@ export function useWebRTC(
   const endCall = useCallback(() => {
     // Stop watchdog
     if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+
+    // Stop TTS if speaking
+    cancelTTS();
 
     // Stop Deepgram and audio processing
     socketRef.current?.emit("transcribe-stop");
@@ -148,7 +159,7 @@ export function useWebRTC(
     setLocalCaption(null);
     setRemoteCaption(null);
     setCaptionsHistory([]);  // clear history only on hang-up, not on minimize
-  }, []);
+  }, [cancelTTS]);
 
   const startCall = useCallback(async () => {
     if (socketRef.current?.connected) return;
@@ -388,9 +399,15 @@ export function useWebRTC(
 
     // 6 — Incoming subtitle from remote participant (already translated by the sender)
     socket.on("subtitle", (payload: { original?: string; translated?: string }) => {
-      const text     = (payload.translated || payload.original || "").trim();
+      const text      = (payload.translated || payload.original || "").trim();
       const rawSpoken = (payload.original || text).trim();
       if (!text) return;
+
+      // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
+      if (voiceEnabledRef.current) {
+        speak(text, myLangRef.current);
+      }
+
       // Append to conversation history — remote speaker, text is already in our language
       setCaptionsHistory(prev => [...prev, {
         id:      Date.now().toString(),
