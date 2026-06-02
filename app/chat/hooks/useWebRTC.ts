@@ -103,14 +103,18 @@ export function useWebRTC(
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
 
   const { speak, cancel: cancelTTS } = useTranslatedSpeech();
-
-  // voiceEnabledRef: para acceder al valor actual dentro de los closures del socket
   const voiceEnabledRef = useRef(voiceEnabled);
 
   // Keep lang refs in sync when props change between renders
-  useEffect(() => { myLangRef.current = myLang; },               [myLang]);
-  useEffect(() => { targetLangRef.current = targetLang; },       [targetLang]);
-  useEffect(() => { voiceEnabledRef.current = voiceEnabled; },   [voiceEnabled]);
+  useEffect(() => { myLangRef.current = myLang; },             [myLang]);
+  useEffect(() => { voiceEnabledRef.current = voiceEnabled; }, [voiceEnabled]);
+  useEffect(() => {
+    targetLangRef.current = targetLang;
+    // Notificar al servidor cuando cambia el idioma destino (experimento server-side)
+    if (socketRef.current?.connected) {
+      socketRef.current.emit("update-target-lang", targetLang);
+    }
+  }, [targetLang]);
 
   // Fix A — restart Deepgram when the user changes language during an active call.
   // Without this, Deepgram keeps transcribing in the old language and produces
@@ -249,9 +253,11 @@ export function useWebRTC(
       setConnected(true);
       socket.emit("join-room", conversationId);
 
-      // Start Deepgram transcription session for this user's language
+      // Start Deepgram transcription — incluir idiomas para experimento server-side
       socket.emit("transcribe-start", {
-        lang: DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
+        lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
+        fromLang:   myLangRef.current,
+        targetLang: targetLangRef.current,
       });
 
       // Fix 1 — close any existing audio pipeline BEFORE creating a new one.
@@ -346,24 +352,34 @@ export function useWebRTC(
     });
 
     // 5 — Local transcription → caption + emit subtitle to room
-    socket.on("transcript-result", async ({ text, isFinal }: { text: string; isFinal?: boolean }) => {
+    socket.on("transcript-result", async ({
+      text, isFinal, serverWillTranslate,
+    }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
       const original = text?.trim();
       if (!original) return;
 
-      // Partial result: show as live feedback, no translation yet
       if (!isFinal) {
         setLocalCaption({ text: original, original, partial: true });
         return;
       }
-
-      // Final result: move to history, clear the live indicator immediately
       setLocalCaption(null);
 
+      // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
+      if (serverWillTranslate) {
+        setCaptionsHistory(prev => [...prev, {
+          id: Date.now().toString(), speaker: "local", text: original, original,
+        }]);
+        // No llamar a /api/translate ni emitir subtitle — servidor lo hace
+        return;
+      }
+
+      // ── Flujo actual (cliente traduce) ──────────────────────────────────────
       const from = myLangRef.current;
       const to   = targetLangRef.current;
       let translated = original;
 
       if (to && from !== to) {
+        const _tStart = Date.now();
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const res = await fetch("/api/translate", {
@@ -376,29 +392,28 @@ export function useWebRTC(
           });
           const data = await res.json();
           translated = data.translation || original;
-        } catch {
-          // translation failed — emit original so the other participant sees something
-        }
+        } catch { }
+        console.log(`[TIMING:client] translate=${Date.now()-_tStart}ms`);
       }
 
-      // Append to conversation history — local speaker sees their own speech
       setCaptionsHistory(prev => [...prev, {
-        id:      Date.now().toString(),
-        speaker: "local",
-        text:    original,
-        original,
+        id: Date.now().toString(), speaker: "local", text: original, original,
       }]);
 
-      socket.emit("subtitle", {
-        roomId:   conversationId,
-        original,
-        translated,
-        fromLang: from,
-      });
+      socket.emit("subtitle", { roomId: conversationId, original, translated, fromLang: from });
     });
 
     // 6 — Incoming subtitle from remote participant (already translated by the sender)
-    socket.on("subtitle", (payload: { original?: string; translated?: string }) => {
+    socket.on("subtitle", (payload: {
+      original?: string; translated?: string;
+      _timings?: { translateMs: number; serverEmitMs: number };
+    }) => {
+      // Timing del experimento server-side
+      if (payload._timings) {
+        const networkMs = Date.now() - payload._timings.serverEmitMs;
+        console.log(`[TIMING:server] translate=${payload._timings.translateMs}ms network=${networkMs}ms total=${payload._timings.translateMs + networkMs}ms`);
+      }
+
       const text      = (payload.translated || payload.original || "").trim();
       const rawSpoken = (payload.original || text).trim();
       if (!text) return;

@@ -8,30 +8,94 @@ const deepgram = createClient(process.env.DEEPGRAM_API_KEY ?? "");
 const SUPABASE_URL      = process.env.SUPABASE_URL      ?? "";
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 
-// Singleton para getClaims() — JWKS se cachea una vez durante la vida del proceso
+// Feature flag: "true" activa traducción server-side. Default: "false" (cliente traduce).
+const TRANSLATE_SERVER_SIDE = process.env.TRANSLATE_SERVER_SIDE === "true";
+
+// Singleton para getClaims() — JWKS cacheado en el proceso
 const supabaseAuth = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const LANG_NAMES: Record<string, string> = {
+  es: "Spanish", en: "English", fr: "French",  de: "German",
+  it: "Italian", pt: "Portuguese", ja: "Japanese", zh: "Chinese",
+  ar: "Arabic",  ru: "Russian",
+};
+
+// ── Función de traducción server-side (llamada desde Render → OpenAI, ambos US) ──
+async function translateServer(text: string, fromLang: string, toLang: string): Promise<string> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || !text.trim()) return text;
+
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        max_tokens: 500,
+        temperature: 0,
+        messages: [
+          {
+            role: "system",
+            content: `You are a translator. Translate from ${LANG_NAMES[fromLang] ?? fromLang} to ${LANG_NAMES[toLang] ?? toLang}. Return only the translated text, nothing else.`,
+          },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!res.ok) { console.error("[SPABLA][TR] OpenAI error:", res.status); return text; }
+    const data = await res.json();
+    return data?.choices?.[0]?.message?.content?.trim() ?? text;
+  } catch (err: any) {
+    console.error("[SPABLA][TR] Error:", err?.message ?? err);
+    return text;
+  }
+}
+
 const ALLOWED_ORIGINS = ["https://spabla.vercel.app", "http://localhost:3000"];
 
-const httpServer = createServer((req, res) => {
-  const origin = req.headers.origin ?? "";
+const httpServer = createServer(async (req, res) => {
+  const origin  = req.headers.origin ?? "";
   const allowed = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
 
   res.setHeader("Access-Control-Allow-Origin", allowed);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
+  if (req.method === "OPTIONS") { res.writeHead(204); res.end(); return; }
 
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", ts: Date.now() }));
+    res.end(JSON.stringify({
+      status: "ok",
+      ts: Date.now(),
+      translateServerSide: TRANSLATE_SERVER_SIDE,
+    }));
+    return;
+  }
+
+  // ── Endpoint de medición para el experimento ───────────────────────────────
+  // Mide la latencia de traducción server-side (Render→OpenAI) con 1 llamada real.
+  // Protegido con secreto en query param para evitar abuso.
+  if (req.url?.startsWith("/measure-translate")) {
+    const url    = new URL(req.url, "http://localhost");
+    const secret = url.searchParams.get("secret") ?? "";
+    const text   = url.searchParams.get("text")   ?? "Good morning, how are you?";
+    const from   = url.searchParams.get("from")   ?? "en";
+    const to     = url.searchParams.get("to")     ?? "es";
+
+    if (secret !== (process.env.MEASURE_SECRET ?? "")) {
+      res.writeHead(403); res.end("Forbidden"); return;
+    }
+    const t0          = Date.now();
+    const translation = await translateServer(text, from, to);
+    const translateMs = Date.now() - t0;
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ translation, translateMs, from, to }));
     return;
   }
 
@@ -40,10 +104,7 @@ const httpServer = createServer((req, res) => {
 });
 
 const io = new Server(httpServer, {
-  cors: {
-    origin: ALLOWED_ORIGINS,
-    methods: ["GET", "POST"],
-  },
+  cors:       { origin: ALLOWED_ORIGINS, methods: ["GET", "POST"] },
   transports: ["polling", "websocket"],
 });
 
@@ -55,9 +116,7 @@ function closeDG(conn: DGConnection | null): null {
   return null;
 }
 
-// ── Middleware: valida JWT en el handshake ─────────────────────────────────
-// Rechaza la conexión si el token es inválido o está ausente.
-// socket.data.userId y socket.data.token quedan disponibles para todos los handlers.
+// ── Middleware JWT ─────────────────────────────────────────────────────────────
 io.use(async (socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token || typeof token !== "string") {
@@ -68,8 +127,8 @@ io.use(async (socket, next) => {
     if (error || !data?.claims?.sub) {
       return next(new Error("Unauthorized: invalid token"));
     }
-    socket.data.userId         = data.claims.sub as string;
-    socket.data.token          = token;
+    socket.data.userId          = data.claims.sub as string;
+    socket.data.token           = token;
     socket.data.authorizedRooms = new Set<string>();
     next();
   } catch {
@@ -80,18 +139,17 @@ io.use(async (socket, next) => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 io.on("connection", (socket: Socket) => {
-  console.log("[SPABLA] Usuario conectado:", socket.id, `(user=${(socket.data.userId as string).substring(0, 8)}...)`);
+  console.log("[SPABLA] Usuario conectado:", socket.id,
+    `(user=${(socket.data.userId as string).substring(0, 8)}...)`);
 
   let dgConn: DGConnection | null = null;
 
   socket.on("join-room", async (roomId: string) => {
-    // Validar formato UUID
     if (!UUID_REGEX.test(roomId)) {
       socket.emit("join-error", { message: "Invalid room ID" });
       return;
     }
 
-    // Cache: si la room ya fue validada durante esta conexión, no volver a consultar Supabase
     const authorizedRooms = socket.data.authorizedRooms as Set<string>;
     if (authorizedRooms.has(roomId)) {
       socket.join(roomId);
@@ -100,14 +158,11 @@ io.on("connection", (socket: Socket) => {
       return;
     }
 
-    // Cliente Supabase autenticado con el token del usuario.
-    // RLS garantiza que las queries solo devuelven filas propias del usuario.
     const userClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       global: { headers: { Authorization: `Bearer ${socket.data.token as string}` } },
       auth:   { persistSession: false, autoRefreshToken: false },
     });
 
-    // Condición 1: ¿es participante de la conversación?
     const { data: asParticipant } = await userClient
       .from("conversation_participants")
       .select("user_id")
@@ -115,7 +170,6 @@ io.on("connection", (socket: Socket) => {
       .eq("user_id", socket.data.userId)
       .maybeSingle();
 
-    // Condición 2 (solo si la 1 falla): ¿es el creador de la conversación?
     let asCreator = null;
     if (!asParticipant) {
       const { data } = await userClient
@@ -128,13 +182,13 @@ io.on("connection", (socket: Socket) => {
     }
 
     if (!asParticipant && !asCreator) {
-      console.log(`[SPABLA] REJECTED join-room: socket=${socket.id} room=${roomId} user=${(socket.data.userId as string).substring(0, 8)}`);
+      console.log(`[SPABLA] REJECTED join-room: socket=${socket.id} room=${roomId}`);
       socket.emit("join-error", { message: "Not authorized for this room" });
       return;
     }
 
-    // Añadir al cache de rooms autorizadas para esta conexión
     authorizedRooms.add(roomId);
+    socket.data.roomId = roomId; // guardado para translate server-side
 
     socket.join(roomId);
     socket.to(roomId).emit("user-joined", socket.id);
@@ -154,18 +208,26 @@ io.on("connection", (socket: Socket) => {
   });
 
   socket.on("subtitle", (data: {
-    roomId: string;
-    originalText: string;
-    translatedText: string;
-    fromLang: string;
-    toLang: string;
-    ts: number;
+    roomId: string; originalText: string; translatedText: string;
+    fromLang: string; toLang: string; ts: number;
   }) => {
     socket.to(data.roomId).emit("subtitle", { from: socket.id, ...data });
   });
 
-  socket.on("transcribe-start", async ({ lang }: { lang: string }) => {
+  // Actualiza el idioma destino sin reiniciar la sesión Deepgram
+  socket.on("update-target-lang", (targetLang: string | null) => {
+    socket.data.targetLang = targetLang ?? null;
+    console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
+  });
+
+  socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
+    lang: string; fromLang?: string; targetLang?: string | null;
+  }) => {
     dgConn = closeDG(dgConn);
+
+    // Almacenar idiomas para traducción server-side
+    socket.data.fromLang   = fromLang   ?? lang;
+    socket.data.targetLang = targetLang ?? null;
 
     if (!process.env.DEEPGRAM_API_KEY) {
       console.error("[SPABLA][DG] DEEPGRAM_API_KEY no configurada");
@@ -190,13 +252,51 @@ io.on("connection", (socket: Socket) => {
         console.log(`[SPABLA][DG] Sesión abierta: socket=${socket.id} lang=${lang}`);
       });
 
-      dgConn.on(LiveTranscriptionEvents.Transcript, (data: any) => {
-        const alt = data?.channel?.alternatives?.[0];
+      dgConn.on(LiveTranscriptionEvents.Transcript, async (dgData: any) => {
+        const alt = dgData?.channel?.alternatives?.[0];
         if (!alt || alt.transcript === undefined) return;
-        socket.emit("transcript-result", {
-          text:    alt.transcript as string,
-          isFinal: (data.is_final as boolean) ?? false,
-        });
+
+        const text    = alt.transcript as string;
+        const isFinal = (dgData.is_final as boolean) ?? false;
+
+        const fromL   = socket.data.fromLang   as string | undefined;
+        const toL     = socket.data.targetLang as string | undefined;
+        const roomId  = socket.data.roomId     as string | undefined;
+        const canTranslate = TRANSLATE_SERVER_SIDE
+          && isFinal
+          && !!text.trim()
+          && !!fromL && !!toL
+          && fromL !== toL
+          && !!roomId
+          && !!process.env.OPENAI_API_KEY;
+
+        if (canTranslate) {
+          // ── Experimento: traducción server-side ─────────────────────────
+          const tStart = Date.now();
+          const translated = await translateServer(text, fromL!, toL!);
+          const translateMs = Date.now() - tStart;
+          const tEmit = Date.now();
+
+          console.log(`[SPABLA][TR] server-side ${translateMs}ms | "${text.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
+
+          // Notificar al sender que el servidor traduce (omite /api/translate)
+          socket.emit("transcript-result", {
+            text, isFinal: true, serverWillTranslate: true,
+          });
+
+          // Emitir subtítulo al receptor (socket.to excluye al sender)
+          if (socket.connected) {
+            socket.to(roomId!).emit("subtitle", {
+              original: text,
+              translated,
+              fromLang: fromL,
+              _timings: { translateMs, serverEmitMs: tEmit },
+            });
+          }
+        } else {
+          // ── Comportamiento actual: cliente traduce ──────────────────────
+          socket.emit("transcript-result", { text, isFinal });
+        }
       });
 
       dgConn.on(LiveTranscriptionEvents.Error, (err: any) => {
@@ -236,4 +336,5 @@ io.on("connection", (socket: Socket) => {
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log("[SPABLA] Servidor de señalización en puerto", PORT);
+  console.log("[SPABLA] TRANSLATE_SERVER_SIDE:", TRANSLATE_SERVER_SIDE);
 });
