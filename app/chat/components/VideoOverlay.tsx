@@ -183,13 +183,6 @@ function CtrlBtn({ onClick, danger, active, children }: { onClick: () => void; d
   );
 }
 
-function SmallBtn({ onClick, danger, children }: { onClick: () => void; danger?: boolean; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} style={{ width: 32, height: 32, borderRadius: "50%", background: danger ? "rgba(255,50,70,.8)" : "rgba(255,255,255,.1)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-      {children}
-    </button>
-  );
-}
 
 // ── Iconos ───────────────────────────────────────────────────────
 

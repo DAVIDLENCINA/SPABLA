@@ -43,10 +43,10 @@ export default function Chat() {
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [otherLang, setOtherLang] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [showAttachMsg, setShowAttachMsg] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang, voiceEnabled);
 
   const loadMessages = useCallback(async () => {
@@ -391,13 +391,25 @@ export default function Chat() {
           backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)",
           borderTop: "1px solid rgba(255,255,255,0.06)",
         }}>
-          <input ref={fileInputRef} type="file" style={{ display: "none" }} onChange={() => {}} />
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button onClick={() => fileInputRef.current?.click()} style={{
-              width: 40, height: 40, borderRadius: "50%",
-              background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)",
-              display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
-            }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
+            {showAttachMsg && (
+              <div style={{
+                position: "absolute", bottom: 52, left: 0,
+                background: "rgba(13,19,34,0.97)", border: "1px solid rgba(255,255,255,0.12)",
+                borderRadius: 10, padding: "8px 14px", whiteSpace: "nowrap", zIndex: 10,
+                fontSize: 12, color: "rgba(255,255,255,0.7)", boxShadow: "0 4px 20px rgba(0,0,0,0.4)",
+              }}>
+                Próximamente: envío de imágenes, documentos y archivos.
+              </div>
+            )}
+            <button
+              onClick={() => { setShowAttachMsg(v => !v); setTimeout(() => setShowAttachMsg(false), 3000); }}
+              style={{
+                width: 40, height: 40, borderRadius: "50%",
+                background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.09)",
+                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
+              }}
+            >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
               </svg>
