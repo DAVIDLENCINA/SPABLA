@@ -3,6 +3,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useWebRTC } from "./hooks/useWebRTC";
+import { useCallSignaling } from "./hooks/useCallSignaling";
+import { useRingTone } from "./hooks/useRingTone";
 import VideoOverlay from "./components/VideoOverlay";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
@@ -47,7 +49,21 @@ export default function Chat() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
+
+  // Mode deferred until acceptance (receiver doesn't know mode from DB schema)
+  const pendingCallModeRef = useRef<'voice' | 'video'>('voice');
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const callHandlerInFlightRef = useRef(false);
+
   const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang, voiceEnabled);
+  const signaling = useCallSignaling(conversationId, user?.id ?? null);
+  const ring = useRingTone();
+
+  // Derived call state — single source of truth is signaling
+  const isRinging  = signaling.callStatus === 'ringing';
+  const isIncoming = signaling.callStatus === 'incoming';
+  const isInCall   = signaling.callStatus === 'accepted';
+  const voiceActive = isRinging || isInCall;
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
@@ -76,8 +92,6 @@ export default function Chat() {
       return;
     }
 
-    // Redirigir a onboarding si la sesión expira o el usuario cierra sesión.
-    // TOKEN_REFRESHED lo gestiona supabase-js automáticamente (actualiza el WS de Realtime).
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return;
       if (event === "SIGNED_OUT" || !session) {
@@ -107,6 +121,54 @@ export default function Chat() {
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+  // Remote audio for voice calls — assign stream when it arrives
+  useEffect(() => {
+    if (!remoteAudioRef.current || !webrtc.remoteStream) return;
+    remoteAudioRef.current.srcObject = webrtc.remoteStream;
+    remoteAudioRef.current.play().catch(() => {});
+  }, [webrtc.remoteStream]);
+
+  // Ring tones + WebRTC trigger on signaling state transitions
+  useEffect(() => {
+    const status = signaling.callStatus;
+    if (status === 'ringing') {
+      ring.startRingback();
+    } else if (status === 'incoming') {
+      ring.startRingtone();
+    } else if (status === 'accepted') {
+      console.log("[CALL][ACCEPTED] triggering WebRTC startCall", {
+        conversationId,
+        userId: user?.id,
+        mode: pendingCallModeRef.current,
+        callStatus: signaling.callStatus,
+        outgoingCallId: signaling.outgoingCallId,
+        incomingCall: signaling.incomingCall?.id,
+      });
+      ring.stop();
+      webrtc.startCall(pendingCallModeRef.current);
+    } else {
+      ring.stop();
+      // rejected / missed / cancelled / ended → tear down WebRTC if it was up
+      if (status !== 'idle') {
+        webrtc.endCall();
+        setVideoActive(false);
+        setVideoExpanded(false);
+      }
+    }
+  // ring/webrtc refs are stable — only re-run on callStatus change
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signaling.callStatus]);
+
+  // WebRTC ended externally (remote disconnected) → clean up signaling too
+  useEffect(() => {
+    if (webrtc.callEndedSignal === 0) return;
+    const sigId = signaling.outgoingCallId ?? signaling.incomingCall?.id ?? null;
+    if (sigId && signaling.callStatus === 'accepted') signaling.endCall(sigId);
+    setVideoActive(false);
+    setVideoExpanded(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [webrtc.callEndedSignal]);
 
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
@@ -155,9 +217,11 @@ export default function Chat() {
   };
 
   const translate = async (text: string, from: string, to: string): Promise<string> => {
+    console.log("[TR] from/to/text:", from, "→", to, "|", text);
     if (from === to || !text.trim()) return text;
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      console.log("[TR] token exists:", !!session?.access_token);
       if (!session?.access_token) return text;
       const url = `${window.location.origin}/api/translate`;
       const res = await fetch(url, {
@@ -168,10 +232,12 @@ export default function Chat() {
         },
         body: JSON.stringify({ text, from, to }),
       });
+      console.log("[TR] HTTP status:", res.status);
       if (!res.ok) return text;
       const data = await res.json();
+      console.log("[TR] response body:", data);
       return data.translation || text;
-    } catch { return text; }
+    } catch (e) { console.error("[TR] catch error:", e); return text; }
   };
 
   const sendMessage = async () => {
@@ -181,6 +247,7 @@ export default function Chat() {
     setInput("");
     let translated = text;
     let translatedLanguage = user.language_primary;
+    console.log("[SM] user language:", user.language_primary);
     try {
       const { data: participants } = await supabase
         .from("conversation_participants").select("user_id")
@@ -190,14 +257,18 @@ export default function Chat() {
         const { data: otherUsers } = await supabase
           .from("users").select("id, language_primary")
           .in("id", uniqueOtherIds).neq("language_primary", user.language_primary).limit(1);
+        console.log("[SM] other users:", otherUsers);
         const otherUser = otherUsers?.[0];
         if (otherUser?.language_primary) {
           translatedLanguage = otherUser.language_primary;
+          console.log("[SM] before translate:", { text, from: user.language_primary, to: otherUser.language_primary });
           translated = await translate(text, user.language_primary, otherUser.language_primary);
+          console.log("[SM] after translate:", translated);
           setOtherLang(otherUser.language_primary);
         }
       }
     } catch {}
+    console.log("[SM] insert payload:", { original_text: text, translated_text: translated, original_language: user.language_primary, translated_language: translatedLanguage });
     await supabase.from("messages").insert({
       conversation_id: conversationId, sender_id: user.id,
       original_text: text, translated_text: translated,
@@ -209,8 +280,42 @@ export default function Chat() {
 
   const shareLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiado."); };
 
-  const startVoice = async () => { await webrtc.startCall(); setVideoActive(true); };
-  const startVideo = async () => { await webrtc.startCall(); setVideoActive(true); setVideoExpanded(true); };
+  // ── Call handlers ─────────────────────────────────────────────────────────
+
+  const handlePhoneButton = async () => {
+    if (callHandlerInFlightRef.current) return;
+    callHandlerInFlightRef.current = true;
+    try {
+      const status = signaling.callStatus;
+      if (status === 'idle') {
+        // Initiate outgoing voice call — no getUserMedia yet
+        pendingCallModeRef.current = 'voice';
+        await signaling.initiateCall();
+      } else if (status === 'ringing' && signaling.outgoingCallId) {
+        // Cancel while still ringing
+        await signaling.cancelCall(signaling.outgoingCallId);
+      } else if (status === 'incoming' && signaling.incomingCall) {
+        // Accept incoming call — WebRTC starts via callStatus effect
+        pendingCallModeRef.current = 'voice';
+        await signaling.acceptCall(signaling.incomingCall.id);
+      } else if (status === 'accepted') {
+        // Hang up active call
+        const sigId = signaling.outgoingCallId ?? signaling.incomingCall?.id;
+        if (sigId) await signaling.endCall(sigId);
+        webrtc.endCall();
+      }
+    } finally {
+      callHandlerInFlightRef.current = false;
+    }
+  };
+
+  const handleDeclineButton = async () => {
+    if (signaling.callStatus === 'incoming' && signaling.incomingCall) {
+      await signaling.rejectCall(signaling.incomingCall.id);
+    }
+  };
+
+  const startVideo = async () => { await webrtc.startCall('video'); setVideoActive(true); setVideoExpanded(true); };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   if (!user) return null;
@@ -221,6 +326,10 @@ export default function Chat() {
     <>
       <style>{`
         @keyframes msgIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes phonePulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(65,255,157,0.5); }
+          50% { box-shadow: 0 0 0 9px rgba(65,255,157,0); }
+        }
         .msg { animation: msgIn 0.18s ease; }
         .action-btn:active { transform: scale(0.92); }
         .send-btn:active { transform: scale(0.94); }
@@ -248,16 +357,44 @@ export default function Chat() {
             <img src="/SPABLA_LOGO.png" alt="SPABLA" style={{ height: 26, opacity: 0.95 }} />
 
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              {/* Llamada de voz */}
-              <button className="action-btn" onClick={startVoice} title="Llamar" style={{
-                width: 38, height: 38, borderRadius: "50%",
-                background: "rgba(62,198,198,0.12)", border: "1px solid rgba(62,198,198,0.22)",
-                display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                transition: "transform .12s",
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
-                </svg>
+              {/* Llamada de voz — estado visual según signaling */}
+              <button
+                className="action-btn"
+                onClick={handlePhoneButton}
+                title={voiceActive ? "Colgar" : isIncoming ? "Aceptar llamada" : "Llamar"}
+                style={{
+                  width: 38, height: 38, borderRadius: "50%",
+                  background: voiceActive
+                    ? "rgba(232,22,46,0.85)"
+                    : isIncoming
+                    ? "rgba(65,255,157,0.18)"
+                    : "rgba(62,198,198,0.12)",
+                  border: `1px solid ${
+                    voiceActive ? "rgba(232,22,46,0.6)"
+                    : isIncoming ? "rgba(65,255,157,0.5)"
+                    : "rgba(62,198,198,0.22)"}`,
+                  display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+                  transition: "background .2s, border .2s, transform .12s",
+                  animation: isIncoming ? "phonePulse 1s ease-in-out infinite" : undefined,
+                }}
+              >
+                {voiceActive ? (
+                  /* Icono colgar */
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.42 19.42 0 01-3.33-2.67m-2.67-3.34a19.79 19.79 0 01-3.07-8.63A2 2 0 014.11 2H7a2 2 0 011.72 1.24c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L7.7 9.41"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                  </svg>
+                ) : isIncoming ? (
+                  /* Icono aceptar — verde */
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#41ff9d" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+                  </svg>
+                ) : (
+                  /* Icono llamar — cyan */
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
+                  </svg>
+                )}
               </button>
 
               {/* Videollamada */}
@@ -286,6 +423,46 @@ export default function Chat() {
               </button>
             </div>
           </div>
+
+          {/* Pastilla de estado de llamada */}
+          {(voiceActive || isIncoming) && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "4px 10px", marginBottom: 8, borderRadius: 20,
+              background: isIncoming ? "rgba(65,255,157,0.08)" : "rgba(232,22,46,0.12)",
+              border: `1px solid ${isIncoming ? "rgba(65,255,157,0.25)" : "rgba(232,22,46,0.3)"}`,
+              alignSelf: "flex-start",
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%",
+                background: isIncoming ? "#41ff9d" : "#e8162e",
+                display: "block",
+                boxShadow: `0 0 6px ${isIncoming ? "#41ff9d" : "#e8162e"}`,
+              }}/>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600, letterSpacing: "0.04em" }}>
+                {isIncoming
+                  ? "LLAMADA ENTRANTE"
+                  : isInCall && webrtc.hasRemote
+                  ? "EN LLAMADA"
+                  : "LLAMANDO…"}
+              </span>
+              {isIncoming && (
+                <button
+                  onClick={handleDeclineButton}
+                  style={{
+                    marginLeft: 4,
+                    background: "rgba(232,22,46,0.22)",
+                    border: "1px solid rgba(232,22,46,0.4)",
+                    borderRadius: 10, padding: "2px 8px",
+                    fontSize: 10, color: "rgba(255,255,255,0.75)",
+                    cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+                  }}
+                >
+                  Rechazar
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Selector de idioma */}
           <button onClick={() => setShowLangPicker(true)} style={{
@@ -347,7 +524,6 @@ export default function Chat() {
               <div key={msg.id} className="msg" style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
                 <div style={{ maxWidth: "80%" }}>
                   {isMe ? (
-                    // Mis mensajes — burbuja cyan
                     <div style={{
                       background: "linear-gradient(135deg, #1c7a7a 0%, #3ec6c6 100%)",
                       borderRadius: "20px 20px 5px 20px",
@@ -357,7 +533,6 @@ export default function Chat() {
                       <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
                     </div>
                   ) : (
-                    // Mensajes recibidos — burbuja oscura + traducción siempre visible
                     <div style={{
                       background: "rgba(255,255,255,0.055)",
                       border: "1px solid rgba(255,255,255,0.09)",
@@ -480,6 +655,9 @@ export default function Chat() {
             </div>
           </div>
         )}
+
+        {/* Audio remoto para llamadas de voz */}
+        <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
 
         {/* ── VIDEO OVERLAY ── */}
         {videoActive && (

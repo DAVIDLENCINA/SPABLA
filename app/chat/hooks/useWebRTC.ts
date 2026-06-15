@@ -58,7 +58,8 @@ export type WebRTCState = {
   localCaption:    Caption | null;
   remoteCaption:   Caption | null;
   captionsHistory: CaptionEntry[];
-  startCall:       () => Promise<void>;
+  callEndedSignal: number;
+  startCall:       (mode?: 'voice' | 'video') => Promise<void>;
   endCall:       () => void;
   toggleMic:     () => void;
   toggleCam:     () => void;
@@ -91,6 +92,12 @@ export function useWebRTC(
   // Fix 6 — watchdog interval for connection health monitoring
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Guard: prevents endCall() re-entering when socket.disconnect() triggers a "disconnect" event
+  const endingRef = useRef(false);
+  const hasCreatedOfferRef = useRef(false);
+  // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
+  const startingRef = useRef(false);
+
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
   const [connected,     setConnected]     = useState(false);
@@ -101,6 +108,7 @@ export function useWebRTC(
   const [localCaption,    setLocalCaption]    = useState<Caption | null>(null);
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
+  const [callEndedSignal, setCallEndedSignal] = useState(0);
 
   const { speak, cancel: cancelTTS } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -128,6 +136,11 @@ export function useWebRTC(
   }, [myLang]);
 
   const endCall = useCallback(() => {
+    if (endingRef.current) return;
+    console.trace("[SPABLA][ENDCALL] called from:");
+    endingRef.current = true;
+    setCallEndedSignal(prev => prev + 1);
+
     // Stop watchdog
     if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
 
@@ -163,19 +176,32 @@ export function useWebRTC(
     setLocalCaption(null);
     setRemoteCaption(null);
     setCaptionsHistory([]);  // clear history only on hang-up, not on minimize
+    startingRef.current = false;
+    socketRef.current = null;
+    pcRef.current = null;
   }, [cancelTTS]);
 
-  const startCall = useCallback(async () => {
+  const startCall = useCallback(async (mode: 'voice' | 'video' = 'video') => {
+    console.log("[SPABLA][STARTCALL]", {
+      conversationId,
+      mode,
+      voiceEnabled,
+    });
     if (socketRef.current?.connected) return;
     if (!conversationId) return;
+    if (startingRef.current) return;
+    startingRef.current = true;
 
+    endingRef.current = false;
+    hasCreatedOfferRef.current = false;
     setError(null);
 
     // 1 — Acquire media
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({ video: mode === 'video', audio: true });
     } catch (err: any) {
+      startingRef.current = false;
       setError(`Sin acceso a cámara/micrófono: ${err?.name} — ${err?.message}`);
       return;
     }
@@ -191,11 +217,13 @@ export function useWebRTC(
     stream.getTracks().forEach((t) => pc.addTrack(t, stream));
 
     pc.ontrack = (e) => {
+      const audioTracks = e.streams[0]?.getAudioTracks() ?? [];
+      console.log(`[SPABLA][WEBRTC][TRACK] kind:${e.track.kind} streams:${e.streams.length} audio:${audioTracks.length}`);
       setRemoteStream(e.streams[0]);
       setHasRemote(true);
       // Fix 5 — monitor remote track lifecycle to detect freeze source
       const ts = () => new Date().toISOString().slice(11, 23);
-      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); };
+      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); endCall(); };
       e.track.onmute   = () =>   console.warn(`[SPABLA][TRACK] ${ts()} muted:`,   e.track.kind);
       e.track.onunmute = () =>   console.log( `[SPABLA][TRACK] ${ts()} unmuted:`, e.track.kind);
     };
@@ -205,6 +233,7 @@ export function useWebRTC(
       console.log("[SPABLA][ICE] iceConnectionState →", pc.iceConnectionState);
       if (pc.iceConnectionState === "failed") {
         console.error("[SPABLA][ICE] connection failed — likely missing TURN server for cross-network calls");
+        endCall();
       }
     };
     pc.onconnectionstatechange = () => {
@@ -243,15 +272,36 @@ export function useWebRTC(
     });
     socketRef.current = socket;
 
+    const doCreateOffer = async () => {
+      if (hasCreatedOfferRef.current) return;
+      hasCreatedOfferRef.current = true;
+      console.log(`[SPABLA][WEBRTC][CREATE_OFFER] signalingState:${pc.signalingState}`);
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit("offer", { roomId: conversationId, offer });
+        console.log("[SPABLA][WEBRTC][OFFER_SENT]");
+      } catch (err) {
+        console.error("[SPABLA][WEBRTC][CREATE_OFFER_ERROR]:", err);
+        hasCreatedOfferRef.current = false;
+      }
+    };
+
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit("ice-candidate", { roomId: conversationId, candidate: e.candidate });
+      if (e.candidate) {
+        console.log("[SPABLA][WEBRTC][ICE_SENT]", e.candidate.type);
+        socket.emit("ice-candidate", { roomId: conversationId, candidate: e.candidate });
+      }
     };
 
     socket.on("connect", () => {
       const connTs = new Date().toISOString().slice(11, 23);
       console.log(`[SPABLA][SOCK] ${connTs} socket connected`);
       setConnected(true);
-      socket.emit("join-room", conversationId);
+      console.log("[SPABLA][ROOM] emitting join-room", conversationId);
+      socket.emit("join-room", conversationId, (ack: { ok: boolean; error?: string }) => {
+        console.log("[SPABLA][ROOM] join-room ack:", ack);
+      });
 
       // Start Deepgram transcription — incluir idiomas para experimento server-side
       socket.emit("transcribe-start", {
@@ -321,33 +371,61 @@ export function useWebRTC(
       }, 15_000);
     });
 
-    socket.on("disconnect", () => setConnected(false));
+    socket.on("disconnect", (reason: string) => {
+      console.warn("[SPABLA][SOCK] disconnected:", reason);
+      setConnected(false);
+      endCall();
+    });
+
+    socket.on("connect_error", (err: Error) => {
+      console.error("[SPABLA][SOCK] connect_error:", err.message);
+    });
 
     socket.on("join-error", ({ message }: { message: string }) => {
-      console.error("[SPABLA][SOCK] join-room rechazado:", message);
+      console.error("[SPABLA][ROOM] join-error:", message);
       setError(`No autorizado para esta sala: ${message}`);
       endCall();
     });
 
+    socket.on("room-users", async (otherSocketIds: string[]) => {
+      console.log(`[SPABLA][ROOM_USERS] recibido | others: ${JSON.stringify(otherSocketIds)}`);
+      if (otherSocketIds.length > 0) {
+        await doCreateOffer();
+      }
+    });
+
     // 4 — WebRTC negotiation
-    socket.on("user-joined", async () => {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.emit("offer", { roomId: conversationId, offer });
+    // user-joined: the remote peer joined. We are the existing peer — we do NOT create an offer.
+    // The joiner will receive room-users with our socket ID and create the offer from their side.
+    socket.on("user-joined", () => {
+      console.log(`[SPABLA][NEG] user-joined — remote joined, awaiting their offer | signalingState:${pc.signalingState}`);
     });
 
     socket.on("offer", async (d: { offer: RTCSessionDescriptionInit }) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit("answer", { roomId: conversationId, answer });
+      console.log(`[SPABLA][NEG] offer recibido — SOY EL ANSWERER | signalingState:${pc.signalingState}`);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
+        console.log(`[SPABLA][NEG] setRemoteDescription(offer) OK | signalingState:${pc.signalingState}`);
+        const answer = await pc.createAnswer();
+        console.log("[SPABLA][NEG] createAnswer OK — enviando answer");
+        await pc.setLocalDescription(answer);
+        socket.emit("answer", { roomId: conversationId, answer });
+      } catch (err) {
+        console.error("[SPABLA][NEG] offer handler ERROR:", err);
+      }
     });
 
     socket.on("answer", async (d: { answer: RTCSessionDescriptionInit }) => {
-      await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+      console.log(`[SPABLA][WEBRTC][ANSWER_RECEIVED] signalingState:${pc.signalingState}`);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
+      } catch (err) {
+        console.error("[SPABLA][NEG] answer handler ERROR:", err);
+      }
     });
 
     socket.on("ice-candidate", async (d: { candidate: RTCIceCandidateInit }) => {
+      console.log("[SPABLA][WEBRTC][ICE_RECEIVED]");
       try { await pc.addIceCandidate(d.candidate); } catch {}
     });
 
@@ -453,6 +531,7 @@ export function useWebRTC(
   return {
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
     localCaption, remoteCaption, captionsHistory,
+    callEndedSignal,
     startCall, endCall, toggleMic, toggleCam,
   };
 }
