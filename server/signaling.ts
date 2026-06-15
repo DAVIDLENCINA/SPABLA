@@ -152,8 +152,15 @@ io.on("connection", (socket: Socket) => {
 
     const authorizedRooms = socket.data.authorizedRooms as Set<string>;
     if (authorizedRooms.has(roomId)) {
+      console.log(`[SPABLA][ROOM][BEFORE_JOIN] cached socket=${socket.id} room=${roomId}`);
       socket.join(roomId);
+      console.log(`[SPABLA][ROOM][AFTER_JOIN] cached socket=${socket.id} room=${roomId}`);
+      const sockets = await io.in(roomId).fetchSockets();
+      const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
+      socket.emit("room-users", otherSocketIds);
+      console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] cached socket=${socket.id} room=${roomId}`);
       socket.to(roomId).emit("user-joined", socket.id);
+      console.log(`[SPABLA][ROOM_USERS] cached ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
       console.log(`[SPABLA] ${socket.id} re-joined sala (cached): ${roomId}`);
       return;
     }
@@ -190,8 +197,15 @@ io.on("connection", (socket: Socket) => {
     authorizedRooms.add(roomId);
     socket.data.roomId = roomId; // guardado para translate server-side
 
+    console.log(`[SPABLA][ROOM][BEFORE_JOIN] socket=${socket.id} room=${roomId}`);
     socket.join(roomId);
+    console.log(`[SPABLA][ROOM][AFTER_JOIN] socket=${socket.id} room=${roomId}`);
+    const sockets = await io.in(roomId).fetchSockets();
+    const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
+    socket.emit("room-users", otherSocketIds);
+    console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] socket=${socket.id} room=${roomId} → notifying others: [${otherSocketIds.join(", ")}]`);
     socket.to(roomId).emit("user-joined", socket.id);
+    console.log(`[SPABLA][ROOM_USERS] ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
     console.log(`[SPABLA] ${socket.id} (user=${(socket.data.userId as string).substring(0, 8)}) entró en sala: ${roomId}`);
   });
 

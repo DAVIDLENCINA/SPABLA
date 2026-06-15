@@ -28,9 +28,11 @@ const LANG_NAMES: Record<string, string> = {
 const MAX_TEXT_LENGTH = 1000;
 
 export async function POST(req: NextRequest) {
+  console.log("[TRANSLATE] request received");
   // ── 1. Auth — getClaims() verifies ES256 signature locally (no network after JWKS cache) ──
   const token = req.headers.get("authorization")?.replace("Bearer ", "").trim();
   if (!token) {
+    console.error("[TRANSLATE] no token in request");
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   let claimsData: Awaited<ReturnType<typeof supabase.auth.getClaims>>["data"];
@@ -61,6 +63,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  console.log("[TRANSLATE] from/to/text:", from, "→", to, "|", text);
   if (!text?.trim() || from === to) {
     return NextResponse.json({ translation: text ?? "" });
   }
@@ -111,6 +114,8 @@ export async function POST(req: NextRequest) {
 
     const data        = await res.json();
     const translation = data?.choices?.[0]?.message?.content?.trim() ?? text;
+    console.log("[TRANSLATE] OpenAI response status:", res.status);
+    console.log("[TRANSLATE] final translation:", translation);
 
     return NextResponse.json({ translation }, { headers: { "x-translate-ms": String(duration) } });
 
