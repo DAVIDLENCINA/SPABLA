@@ -59,9 +59,12 @@ export function useRingTone() {
     if (typeof window === "undefined") return;
     activeRef.current = true;
 
-    const tick = () => {
+    const tick = async () => {
       if (!activeRef.current) return;
-      playBurst(getCtx(), [440], 1.0);
+      const ctx = getCtx();
+      await ctx.resume();
+      if (!activeRef.current) return;
+      playBurst(ctx, [440], 1.0);
       schedulerRef.current = setTimeout(tick, 4000);
     };
     tick();
@@ -73,9 +76,12 @@ export function useRingTone() {
     if (typeof window === "undefined") return;
     activeRef.current = true;
 
-    const tick = () => {
+    const tick = async () => {
       if (!activeRef.current) return;
-      playBurst(getCtx(), [480, 440], 2.0);
+      const ctx = getCtx();
+      await ctx.resume();
+      if (!activeRef.current) return;
+      playBurst(ctx, [480, 440], 2.0);
       schedulerRef.current = setTimeout(tick, 3000);
     };
     tick();
