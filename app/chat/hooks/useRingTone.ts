@@ -22,9 +22,10 @@ export function useRingTone() {
     ctx: AudioContext,
     frequencies: number[],
     duration: number,
-    volume = 0.12
+    volume = 0.12,
+    startOffset = 0
   ) => {
-    const now  = ctx.currentTime;
+    const now  = ctx.currentTime + startOffset;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(volume, now);
     gain.gain.setValueAtTime(volume, now + Math.max(0, duration - 0.05));
@@ -53,7 +54,7 @@ export function useRingTone() {
     ctxRef.current = null;
   }, []);
 
-  // Ringback — caller hears while waiting: 440 Hz, 1 s on / 3 s off (period 4 s)
+  // Ringback — caller hears while waiting: 440 Hz, 200 ms on / 800 ms off (period 1 s)
   const startRingback = useCallback(() => {
     stop();
     if (typeof window === "undefined") return;
@@ -64,13 +65,14 @@ export function useRingTone() {
       const ctx = getCtx();
       await ctx.resume();
       if (!activeRef.current) return;
-      playBurst(ctx, [440], 1.0);
-      schedulerRef.current = setTimeout(tick, 4000);
+      playBurst(ctx, [440], 0.2);
+      schedulerRef.current = setTimeout(tick, 1000);
     };
     tick();
   }, [stop]);
 
-  // Ringtone — receiver hears incoming: dual tone 480 + 440 Hz, 2 s on / 1 s off (period 3 s)
+  // Ringtone — receiver hears incoming: double bell 880 Hz → 660 Hz, period 3.7 s
+  // 880 Hz 700ms | pause 300ms | 660 Hz 700ms | pause 2000ms
   const startRingtone = useCallback(() => {
     stop();
     if (typeof window === "undefined") return;
@@ -81,8 +83,9 @@ export function useRingTone() {
       const ctx = getCtx();
       await ctx.resume();
       if (!activeRef.current) return;
-      playBurst(ctx, [480, 440], 2.0);
-      schedulerRef.current = setTimeout(tick, 3000);
+      playBurst(ctx, [880], 0.7);
+      playBurst(ctx, [660], 0.7, 0.12, 1.0);
+      schedulerRef.current = setTimeout(tick, 3700);
     };
     tick();
   }, [stop]);
