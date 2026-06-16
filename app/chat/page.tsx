@@ -88,7 +88,7 @@ export default function Chat() {
     const stored = localStorage.getItem("spabla_user");
     if (!stored) {
       hasRedirected.current = true;
-      router.push("/onboarding");
+      router.push(`/onboarding?redirect=${encodeURIComponent(window.location.href)}`);
       return;
     }
 
@@ -101,14 +101,37 @@ export default function Chat() {
       }
     });
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (cancelled) return;
       if (!session) {
         hasRedirected.current = true;
         router.push("/onboarding");
         return;
       }
-      const u = JSON.parse(stored);
+
+      const sessionUserId = session.user.id;
+      const localUser = JSON.parse(stored) as User;
+      console.log("[AUTH] SESSION_USER", sessionUserId);
+      console.log("[AUTH] LOCAL_USER", localUser?.id ?? "null");
+
+      let u: User = localUser;
+      if (localUser?.id !== sessionUserId) {
+        const { data: dbUser } = await supabase
+          .from("users")
+          .select("*")
+          .eq("id", sessionUserId)
+          .single();
+        if (!dbUser) {
+          hasRedirected.current = true;
+          router.push("/onboarding");
+          return;
+        }
+        localStorage.setItem("spabla_user", JSON.stringify(dbUser));
+        u = dbUser as User;
+        console.log("[AUTH] USER_MISMATCH_FIXED", { stale: localUser?.id, real: sessionUserId });
+      }
+
+      if (cancelled) return;
       setUser(u);
       initConversation(u);
     });

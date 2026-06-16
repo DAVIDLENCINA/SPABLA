@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 const LANGUAGES = [
@@ -16,8 +16,9 @@ const LANGUAGES = [
   { code: "ru", flag: "🇷🇺", name: "Русский" },
 ];
 
-export default function Onboarding() {
+function OnboardingForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [name, setName] = useState("");
   const [language, setLanguage] = useState("es");
   const [loading, setLoading] = useState(false);
@@ -37,7 +38,8 @@ export default function Onboarding() {
         .single();
       if (error) throw error;
       localStorage.setItem("spabla_user", JSON.stringify(data));
-      router.push("/chat");
+      const redirect = searchParams.get("redirect");
+      router.push(redirect ?? "/chat");
     } catch (e) {
       setError("Error al crear usuario. Inténtalo de nuevo.");
     }
@@ -99,5 +101,13 @@ export default function Onboarding() {
         </button>
       </div>
     </div>
+  );
+}
+
+export default function Onboarding() {
+  return (
+    <Suspense>
+      <OnboardingForm />
+    </Suspense>
   );
 }
