@@ -28,6 +28,7 @@ function OnboardingForm() {
     if (!name.trim()) { setError("Escribe tu nombre"); return; }
     setLoading(true);
     try {
+      await supabase.auth.signOut();
       const { data: authData, error: authError } = await supabase.auth.signInAnonymously();
       if (authError || !authData.user) throw authError ?? new Error("No auth");
       const uid = authData.user.id;
