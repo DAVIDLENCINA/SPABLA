@@ -267,7 +267,10 @@ export function useWebRTC(
     // 3 — Signaling socket — token en el handshake para que el middleware lo valide
     const { data: { session: callSession } } = await supabase.auth.getSession();
     const socket = io(SERVER_URL, {
-      transports: ["polling", "websocket"],
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 500,
       auth: { token: callSession?.access_token ?? "" },
     });
     socketRef.current = socket;
@@ -374,11 +377,34 @@ export function useWebRTC(
     socket.on("disconnect", (reason: string) => {
       console.warn("[SPABLA][SOCK] disconnected:", reason);
       setConnected(false);
-      endCall();
+      if (reason === "io server disconnect" || reason === "io client disconnect") {
+        // Intentional close — tear down the call.
+        endCall();
+      }
+      // "transport close" | "transport error" | "ping timeout":
+      // Socket.IO will auto-reconnect — keep the call alive.
     });
 
     socket.on("connect_error", (err: Error) => {
       console.error("[SPABLA][SOCK] connect_error:", err.message);
+    });
+
+    socket.on("reconnect_attempt", (attempt: number) => {
+      console.log(`[SPABLA][SOCK] reconnect_attempt #${attempt}`);
+    });
+
+    socket.on("reconnect", (attempt: number) => {
+      console.log(`[SPABLA][SOCK] reconnected after ${attempt} attempt(s) — re-joining room`);
+      if (conversationId) socket.emit("join-room", conversationId);
+    });
+
+    socket.on("reconnect_error", (err: Error) => {
+      console.warn("[SPABLA][SOCK] reconnect_error:", err.message);
+    });
+
+    socket.on("reconnect_failed", () => {
+      console.error("[SPABLA][SOCK] reconnect_failed — all attempts exhausted");
+      endCall();
     });
 
     socket.on("join-error", ({ message }: { message: string }) => {
