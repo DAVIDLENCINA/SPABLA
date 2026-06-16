@@ -5,6 +5,7 @@ import { supabase } from "@/lib/supabase";
 import { useWebRTC } from "./hooks/useWebRTC";
 import { useCallSignaling } from "./hooks/useCallSignaling";
 import { useRingTone } from "./hooks/useRingTone";
+import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import VideoOverlay from "./components/VideoOverlay";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
@@ -263,11 +264,11 @@ export default function Chat() {
     } catch (e) { console.error("[TR] catch error:", e); return text; }
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || !user || !conversationId || loading) return;
+  const sendMessage = async (textOverride?: string) => {
+    const text = (textOverride ?? input).trim();
+    if (!text || !user || !conversationId || loading) return;
     setLoading(true);
-    const text = input.trim();
-    setInput("");
+    if (!textOverride) setInput("");
     let translated = text;
     let translatedLanguage = user.language_primary;
     console.log("[SM] user language:", user.language_primary);
@@ -291,15 +292,49 @@ export default function Chat() {
         }
       }
     } catch {}
-    console.log("[SM] insert payload:", { original_text: text, translated_text: translated, original_language: user.language_primary, translated_language: translatedLanguage });
-    await supabase.from("messages").insert({
-      conversation_id: conversationId, sender_id: user.id,
-      original_text: text, translated_text: translated,
-      original_language: user.language_primary, translated_language: translatedLanguage,
-    });
-    if (pollingRef.current) await loadMessages();
-    setLoading(false);
+    try {
+      console.log("[SM] insert payload:", { original_text: text, translated_text: translated, original_language: user.language_primary, translated_language: translatedLanguage });
+      await supabase.from("messages").insert({
+        conversation_id: conversationId, sender_id: user.id,
+        original_text: text, translated_text: translated,
+        original_language: user.language_primary, translated_language: translatedLanguage,
+      });
+      if (pollingRef.current) await loadMessages();
+    } finally {
+      setLoading(false);
+    }
   };
+
+  // Always-current ref: lets queue effects call the latest sendMessage without stale closure
+  const sendMessageRef = useRef(sendMessage);
+  sendMessageRef.current = sendMessage;
+
+  // Voice queue: holds transcripts that arrived while sendMessage was loading
+  const voiceQueueRef = useRef<string[]>([]);
+
+  // Drain one queued transcript each time loading completes
+  useEffect(() => {
+    if (loading || voiceQueueRef.current.length === 0) return;
+    sendMessageRef.current(voiceQueueRef.current.shift());
+  }, [loading]);
+
+  // Enqueue callback passed to the hook — serializes voice messages, ignores loading state
+  const enqueueTranscript = useCallback((text: string) => {
+    const q = voiceQueueRef.current;
+    if (q.length > 0 && q[q.length - 1] === text) return; // dedupe last queued item
+    if (!loading) {
+      sendMessageRef.current(text); // idle: send immediately
+    } else {
+      q.push(text); // busy: queue for later
+    }
+  }, [loading]);
+
+  useVoiceTranscription(
+    signaling.callStatus,
+    webrtc.localStream,
+    user?.language_primary ?? "es",
+    enqueueTranscript
+  );
 
   const shareLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiado."); };
 
@@ -628,7 +663,7 @@ export default function Chat() {
             />
             <button
               className="send-btn"
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={loading || !input.trim()}
               style={{
                 width: 44, height: 44, borderRadius: "50%",
