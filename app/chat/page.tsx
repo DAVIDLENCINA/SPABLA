@@ -6,6 +6,7 @@ import { useWebRTC } from "./hooks/useWebRTC";
 import { useCallSignaling } from "./hooks/useCallSignaling";
 import { useRingTone } from "./hooks/useRingTone";
 import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
+import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
@@ -336,6 +337,12 @@ export default function Chat() {
     enqueueTranscript
   );
 
+  const dictation = useDictation(
+    signaling.callStatus,
+    user?.language_primary ?? "es",
+    enqueueTranscript
+  );
+
   const shareLink = () => { navigator.clipboard.writeText(window.location.href); alert("Link copiado."); };
 
   // ── Call handlers ─────────────────────────────────────────────────────────
@@ -387,6 +394,10 @@ export default function Chat() {
         @keyframes phonePulse {
           0%, 100% { box-shadow: 0 0 0 0 rgba(65,255,157,0.5); }
           50% { box-shadow: 0 0 0 9px rgba(65,255,157,0); }
+        }
+        @keyframes micPulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(232,22,46,0.6); }
+          50% { box-shadow: 0 0 0 7px rgba(232,22,46,0); }
         }
         .msg { animation: msgIn 0.18s ease; }
         .action-btn:active { transform: scale(0.92); }
@@ -647,6 +658,42 @@ export default function Chat() {
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/>
               </svg>
             </button>
+            {dictation.isSupported && (
+              <button
+                onMouseDown={dictation.startDictation}
+                onMouseUp={dictation.stopDictation}
+                onMouseLeave={dictation.stopDictation}
+                onTouchStart={(e) => { e.preventDefault(); dictation.startDictation(); }}
+                onTouchEnd={dictation.stopDictation}
+                onTouchCancel={dictation.stopDictation}
+                onContextMenu={(e) => e.preventDefault()}
+                disabled={signaling.callStatus !== "idle"}
+                title={dictation.isDictating ? "Escuchando…" : "Mantén para dictar"}
+                style={{
+                  width: 40, height: 40, borderRadius: "50%", flexShrink: 0,
+                  background: dictation.isDictating
+                    ? "rgba(232,22,46,0.85)"
+                    : "rgba(255,255,255,0.06)",
+                  border: `1px solid ${dictation.isDictating ? "rgba(232,22,46,0.6)" : "rgba(255,255,255,0.09)"}`,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: signaling.callStatus !== "idle" ? "not-allowed" : "pointer",
+                  opacity: signaling.callStatus !== "idle" ? 0.35 : 1,
+                  transition: "background .15s, border .15s",
+                  animation: dictation.isDictating ? "micPulse 1s ease-in-out infinite" : undefined,
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke={dictation.isDictating ? "#fff" : "rgba(255,255,255,0.45)"}
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                  <line x1="12" y1="19" x2="12" y2="22"/>
+                  <line x1="8" y1="22" x2="16" y2="22"/>
+                </svg>
+              </button>
+            )}
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
