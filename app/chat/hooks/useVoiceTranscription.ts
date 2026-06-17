@@ -3,6 +3,12 @@
 import { useEffect, useRef } from "react";
 import type { CallStatus } from "./useCallSignaling";
 
+// Temporarily disabled: SpeechRecognition opens a second concurrent mic capture
+// that disrupts the WebRTC audio session on macOS Chrome (CoreAudio reconfigures
+// mid-setup, leaving the WebRTC MediaStreamTrack in ended state before ontrack fires).
+// Set to true once the audio conflict is resolved (e.g. feed localStream directly).
+const ENABLED = false;
+
 export function useVoiceTranscription(
   callStatus: CallStatus,
   localStream: MediaStream | null,
@@ -14,6 +20,7 @@ export function useVoiceTranscription(
   useEffect(() => { onTranscriptRef.current = onTranscript; });
 
   useEffect(() => {
+    if (!ENABLED) return;
     if (typeof window === "undefined") return;
 
     const SR: any =
