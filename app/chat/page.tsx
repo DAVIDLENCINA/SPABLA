@@ -1,13 +1,14 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
-import { useWebRTC } from "./hooks/useWebRTC";
+import { useWebRTC, type CaptionEntry } from "./hooks/useWebRTC";
 import { useCallSignaling } from "./hooks/useCallSignaling";
 import { useRingTone } from "./hooks/useRingTone";
 import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
+import VoiceCaptionsOverlay from "./components/VoiceCaptionsOverlay";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
   es: { flag: "🇪🇸", name: "Español" },
@@ -48,6 +49,7 @@ export default function Chat() {
   const [otherLang, setOtherLang] = useState<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [showAttachMsg, setShowAttachMsg] = useState(false);
+  const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
@@ -145,7 +147,17 @@ export default function Chat() {
     };
   }, []);
 
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, voiceChatEntries]);
+
+  // Accumulate caption finals into voiceChatEntries so they survive endCall()'s setCaptionsHistory([])
+  useEffect(() => {
+    if (webrtc.captionsHistory.length === 0) return;
+    setVoiceChatEntries(prev => {
+      const seen = new Set(prev.map(e => e.id));
+      const next = webrtc.captionsHistory.filter(e => !seen.has(e.id));
+      return next.length === 0 ? prev : [...prev, ...next];
+    });
+  }, [webrtc.captionsHistory]);
 
   // Remote audio for voice calls — assign stream when it arrives
   useEffect(() => {
@@ -211,6 +223,7 @@ export default function Chat() {
     }
     convIdRef.current = convId;
     setConversationId(convId);
+    setVoiceChatEntries([]);
     await loadMessages();
     const { data: participants } = await supabase
       .from("conversation_participants").select("user_id")
@@ -382,6 +395,20 @@ export default function Chat() {
 
   const startVideo = async () => { await webrtc.startCall('video'); setVideoActive(true); setVideoExpanded(true); };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
+
+  // Combined timeline — text messages and voice captions sorted by timestamp
+  const combinedTimeline = useMemo(() => [
+    ...messages.map(msg => ({
+      kind: "text" as const,
+      ts:   new Date(msg.created_at).getTime(),
+      payload: msg,
+    })),
+    ...voiceChatEntries.map(e => ({
+      kind: "voice" as const,
+      ts:   Number(e.id),   // id = Date.now().toString() — ms epoch, directly comparable
+      payload: e,
+    })),
+  ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries]);
 
   if (!user) return null;
   const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
@@ -560,7 +587,7 @@ export default function Chat() {
         <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px 8px", display: "flex", flexDirection: "column", gap: 10 }}>
 
           {/* Estado vacío */}
-          {messages.length === 0 && (
+          {combinedTimeline.length === 0 && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "40px 24px" }}>
               <div style={{ width: 56, height: 56, borderRadius: "50%", background: "rgba(62,198,198,0.08)", border: "1px solid rgba(62,198,198,0.15)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
                 <svg width="24" height="24" viewBox="0 0 28 28" fill="none">
@@ -581,45 +608,83 @@ export default function Chat() {
             </div>
           )}
 
-          {/* Burbujas */}
-          {messages.map(msg => {
-            const isMe = msg.sender_id === user.id;
-            const displayText = isMe
-              ? msg.original_text
-              : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
-            const wasTranslated = !isMe && msg.original_text !== displayText;
-            const fromLang = LANGUAGES[msg.original_language];
+          {/* Timeline unificado — mensajes de texto y burbujas VOZ ordenados por timestamp */}
+          {combinedTimeline.map(item => {
+            if (item.kind === "text") {
+              const msg = item.payload;
+              const isMe = msg.sender_id === user.id;
+              const displayText = isMe
+                ? msg.original_text
+                : (msg.translated_language === user.language_primary ? (msg.translated_text || msg.original_text) : msg.original_text);
+              const wasTranslated = !isMe && msg.original_text !== displayText;
+              const fromLang = LANGUAGES[msg.original_language];
+              return (
+                <div key={`t-${msg.id}`} className="msg" style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
+                  <div style={{ maxWidth: "80%" }}>
+                    {isMe ? (
+                      <div style={{
+                        background: "linear-gradient(135deg, #1c7a7a 0%, #3ec6c6 100%)",
+                        borderRadius: "20px 20px 5px 20px",
+                        padding: "11px 15px",
+                        boxShadow: "0 3px 16px rgba(62,198,198,0.18)",
+                      }}>
+                        <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
+                      </div>
+                    ) : (
+                      <div style={{
+                        background: "rgba(255,255,255,0.055)",
+                        border: "1px solid rgba(255,255,255,0.09)",
+                        borderRadius: "5px 20px 20px 20px",
+                        padding: "11px 15px",
+                        backdropFilter: "blur(12px)",
+                        WebkitBackdropFilter: "blur(12px)",
+                      }}>
+                        <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 500 }}>{displayText}</p>
+                        {wasTranslated && (
+                          <div style={{ marginTop: 7, paddingTop: 7, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                            <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 12, margin: 0, lineHeight: 1.45 }}>
+                              {fromLang?.flag ?? "🌐"} {msg.original_text}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            const entry   = item.payload;
+            const isLocal = entry.speaker === "local";
+            const showOrig = !!entry.original && entry.original !== entry.text;
             return (
-              <div key={msg.id} className="msg" style={{ display: "flex", justifyContent: isMe ? "flex-end" : "flex-start" }}>
+              <div key={`v-${entry.id}`} className="msg" style={{ display: "flex", justifyContent: isLocal ? "flex-end" : "flex-start" }}>
                 <div style={{ maxWidth: "80%" }}>
-                  {isMe ? (
-                    <div style={{
-                      background: "linear-gradient(135deg, #1c7a7a 0%, #3ec6c6 100%)",
-                      borderRadius: "20px 20px 5px 20px",
-                      padding: "11px 15px",
-                      boxShadow: "0 3px 16px rgba(62,198,198,0.18)",
-                    }}>
-                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
-                    </div>
-                  ) : (
-                    <div style={{
-                      background: "rgba(255,255,255,0.055)",
-                      border: "1px solid rgba(255,255,255,0.09)",
-                      borderRadius: "5px 20px 20px 20px",
-                      padding: "11px 15px",
-                      backdropFilter: "blur(12px)",
-                      WebkitBackdropFilter: "blur(12px)",
-                    }}>
-                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 500 }}>{displayText}</p>
-                      {wasTranslated && (
-                        <div style={{ marginTop: 7, paddingTop: 7, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-                          <p style={{ color: "rgba(255,255,255,0.35)", fontSize: 12, margin: 0, lineHeight: 1.45 }}>
-                            {fromLang?.flag ?? "🌐"} {msg.original_text}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <div style={{
+                    fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 3,
+                    color:        isLocal ? "rgba(62,198,198,0.6)"  : "rgba(232,82,74,0.6)",
+                    textAlign:    isLocal ? "right" : "left",
+                    paddingRight: isLocal ? 4 : 0,
+                    paddingLeft:  isLocal ? 0 : 4,
+                  }}>VOZ</div>
+                  <div style={{
+                    background:           isLocal ? "rgba(62,198,198,0.10)"  : "rgba(232,82,74,0.07)",
+                    border:               `1px solid ${isLocal ? "rgba(62,198,198,0.22)" : "rgba(232,82,74,0.18)"}`,
+                    borderRadius:         isLocal ? "20px 20px 5px 20px" : "5px 20px 20px 20px",
+                    padding:              "11px 15px",
+                    backdropFilter:       "blur(12px)",
+                    WebkitBackdropFilter: "blur(12px)",
+                  }}>
+                    <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>
+                      {entry.text}
+                    </p>
+                    {showOrig && (
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                        <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: 0, lineHeight: 1.45, fontStyle: "italic" }}>
+                          {entry.original}
+                        </p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -763,6 +828,11 @@ export default function Chat() {
 
         {/* Audio remoto para llamadas de voz */}
         <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
+        {/* ── VOICE CAPTIONS (solo voz, sin video) ── */}
+        {isInCall && !videoActive && (
+          <VoiceCaptionsOverlay localCaption={webrtc.localCaption} />
+        )}
 
         {/* ── VIDEO OVERLAY ── */}
         {videoActive && (
