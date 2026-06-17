@@ -56,6 +56,7 @@ export default function Chat() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
   const persistedVoiceIdsRef = useRef<Set<string>>(new Set());
+  const seenVoiceEntryIdsRef = useRef<Set<string>>(new Set());
   const channelCleanupRef    = useRef<(() => void) | null>(null);
 
   // Mode deferred until acceptance (receiver doesn't know mode from DB schema)
@@ -157,21 +158,35 @@ export default function Chat() {
   // Accumulate caption finals and persist remote entries (receptor inserta, sin doble traducción)
   useEffect(() => {
     if (webrtc.captionsHistory.length === 0) return;
-    const toInsert: CaptionEntry[] = [];
-    setVoiceChatEntries(prev => {
-      const seen = new Set(prev.map(e => e.id));
-      const next = webrtc.captionsHistory.filter(e => !seen.has(e.id));
-      if (next.length === 0) return prev;
-      next.filter(e => e.speaker === "remote" && !persistedVoiceIdsRef.current.has(e.id))
-          .forEach(e => toInsert.push(e));
-      return [...prev, ...next];
-    });
-    if (toInsert.length && conversationId && user && otherUserId) {
+
+    // Calculate outside setState so toInsert is reliable regardless of React batching
+    const newEntries = webrtc.captionsHistory.filter(e => !seenVoiceEntryIdsRef.current.has(e.id));
+    if (newEntries.length === 0) return;
+
+    newEntries.forEach(e => seenVoiceEntryIdsRef.current.add(e.id));
+    setVoiceChatEntries(prev => [...prev, ...newEntries]);
+
+    const toInsert = newEntries.filter(e => e.speaker === "remote" && !persistedVoiceIdsRef.current.has(e.id));
+
+    if (toInsert.length && conversationId && user) {
       toInsert.forEach(async (entry) => {
         if (persistedVoiceIdsRef.current.has(entry.id)) return;
+        // Lazy-resolve: otherUserId puede ser null si este usuario abrió la conversación primero
+        let senderId = otherUserId;
+        if (!senderId) {
+          const { data: parts } = await supabase
+            .from("conversation_participants")
+            .select("user_id")
+            .eq("conversation_id", conversationId)
+            .neq("user_id", user.id)
+            .limit(1);
+          senderId = parts?.[0]?.user_id ?? null;
+          if (senderId) setOtherUserId(senderId);
+        }
+        if (!senderId) return;
         const { error } = await supabase.from("messages").insert({
           conversation_id:     conversationId,
-          sender_id:           otherUserId,
+          sender_id:           senderId,
           original_text:       entry.original,
           translated_text:     entry.text,
           original_language:   otherLang ?? "unknown",
@@ -187,7 +202,10 @@ export default function Chat() {
   // Reload messages after hang-up to surface persisted voice messages
   const prevIsInCallRef = useRef(false);
   useEffect(() => {
-    if (prevIsInCallRef.current && !isInCall) loadMessages();
+    if (prevIsInCallRef.current && !isInCall) {
+      setVoiceChatEntries([]);
+      loadMessages();
+    }
     prevIsInCallRef.current = isInCall;
   }, [isInCall, loadMessages]);
 
@@ -258,6 +276,7 @@ export default function Chat() {
     setVoiceChatEntries([]);
     setOtherUserId(null);
     persistedVoiceIdsRef.current = new Set();
+    seenVoiceEntryIdsRef.current = new Set();
     await loadMessages();
     const { data: participants } = await supabase
       .from("conversation_participants").select("user_id")
@@ -342,6 +361,7 @@ export default function Chat() {
           translated = await translate(text, user.language_primary, otherUser.language_primary);
           console.log("[SM] after translate:", translated);
           setOtherLang(otherUser.language_primary);
+          if (otherUser.id && !otherUserId) setOtherUserId(otherUser.id);
         }
       }
     } catch {}

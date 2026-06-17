@@ -103,8 +103,9 @@ export function useCallSignaling(
           return;
         }
 
-        // Update on an incoming call we are tracking
-        if (row.caller_id !== userId && callStatusRef.current === "incoming") {
+        // Update on an incoming call we are tracking (accepted = call in progress)
+        if (row.caller_id !== userId &&
+            (callStatusRef.current === "incoming" || callStatusRef.current === "accepted")) {
           if (next === "cancelled" || next === "missed") {
             setCallStatus(next);
             setIncomingCall(null);
