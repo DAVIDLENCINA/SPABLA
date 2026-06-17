@@ -56,6 +56,7 @@ export default function Chat() {
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
   const persistedVoiceIdsRef = useRef<Set<string>>(new Set());
+  const channelCleanupRef    = useRef<(() => void) | null>(null);
 
   // Mode deferred until acceptance (receiver doesn't know mode from DB schema)
   const pendingCallModeRef = useRef<'voice' | 'video'>('voice');
@@ -147,6 +148,7 @@ export default function Chat() {
       cancelled = true;
       subscription.unsubscribe();
       if (pollingRef.current) clearInterval(pollingRef.current);
+      channelCleanupRef.current?.();
     };
   }, []);
 
@@ -167,8 +169,7 @@ export default function Chat() {
     if (toInsert.length && conversationId && user && otherUserId) {
       toInsert.forEach(async (entry) => {
         if (persistedVoiceIdsRef.current.has(entry.id)) return;
-        persistedVoiceIdsRef.current.add(entry.id);
-        await supabase.from("messages").insert({
+        const { error } = await supabase.from("messages").insert({
           conversation_id:     conversationId,
           sender_id:           otherUserId,
           original_text:       entry.original,
@@ -177,6 +178,8 @@ export default function Chat() {
           translated_language: user.language_primary,
           source:              "voice",
         });
+        if (error) { console.error("[VOICE] persist failed, will retry:", error.message); return; }
+        persistedVoiceIdsRef.current.add(entry.id);
       });
     }
   }, [webrtc.captionsHistory, conversationId, user, otherUserId, otherLang]);
@@ -276,7 +279,9 @@ export default function Chat() {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") startPolling();
         if (status === "SUBSCRIBED") stopPolling();
       });
-    return () => { supabase.removeChannel(channel); };
+    const cleanup = () => { supabase.removeChannel(channel); };
+    channelCleanupRef.current = cleanup;
+    return cleanup;
   };
 
   const changeLang = async (lang: string) => {
