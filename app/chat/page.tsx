@@ -31,6 +31,7 @@ type Message = {
   original_language: string;
   translated_language: string;
   created_at: string;
+  source: 'text' | 'voice';
 };
 type User = { id: string; name: string; language_primary: string };
 
@@ -50,9 +51,11 @@ export default function Chat() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [showAttachMsg, setShowAttachMsg] = useState(false);
   const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
+  const [otherUserId, setOtherUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
+  const persistedVoiceIdsRef = useRef<Set<string>>(new Set());
 
   // Mode deferred until acceptance (receiver doesn't know mode from DB schema)
   const pendingCallModeRef = useRef<'voice' | 'video'>('voice');
@@ -149,15 +152,41 @@ export default function Chat() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, voiceChatEntries]);
 
-  // Accumulate caption finals into voiceChatEntries so they survive endCall()'s setCaptionsHistory([])
+  // Accumulate caption finals and persist remote entries (receptor inserta, sin doble traducción)
   useEffect(() => {
     if (webrtc.captionsHistory.length === 0) return;
+    const toInsert: CaptionEntry[] = [];
     setVoiceChatEntries(prev => {
       const seen = new Set(prev.map(e => e.id));
       const next = webrtc.captionsHistory.filter(e => !seen.has(e.id));
-      return next.length === 0 ? prev : [...prev, ...next];
+      if (next.length === 0) return prev;
+      next.filter(e => e.speaker === "remote" && !persistedVoiceIdsRef.current.has(e.id))
+          .forEach(e => toInsert.push(e));
+      return [...prev, ...next];
     });
-  }, [webrtc.captionsHistory]);
+    if (toInsert.length && conversationId && user && otherUserId) {
+      toInsert.forEach(async (entry) => {
+        if (persistedVoiceIdsRef.current.has(entry.id)) return;
+        persistedVoiceIdsRef.current.add(entry.id);
+        await supabase.from("messages").insert({
+          conversation_id:     conversationId,
+          sender_id:           otherUserId,
+          original_text:       entry.original,
+          translated_text:     entry.text,
+          original_language:   otherLang ?? "unknown",
+          translated_language: user.language_primary,
+          source:              "voice",
+        });
+      });
+    }
+  }, [webrtc.captionsHistory, conversationId, user, otherUserId, otherLang]);
+
+  // Reload messages after hang-up to surface persisted voice messages
+  const prevIsInCallRef = useRef(false);
+  useEffect(() => {
+    if (prevIsInCallRef.current && !isInCall) loadMessages();
+    prevIsInCallRef.current = isInCall;
+  }, [isInCall, loadMessages]);
 
   // Remote audio for voice calls — assign stream when it arrives
   useEffect(() => {
@@ -224,16 +253,21 @@ export default function Chat() {
     convIdRef.current = convId;
     setConversationId(convId);
     setVoiceChatEntries([]);
+    setOtherUserId(null);
+    persistedVoiceIdsRef.current = new Set();
     await loadMessages();
     const { data: participants } = await supabase
       .from("conversation_participants").select("user_id")
       .eq("conversation_id", convId).neq("user_id", u.id);
     if (participants?.length) {
       const { data: otherUsers } = await supabase
-        .from("users").select("language_primary")
+        .from("users").select("id, language_primary")
         .in("id", participants.map((p: { user_id: string }) => p.user_id))
         .neq("language_primary", u.language_primary).limit(1);
-      if (otherUsers?.[0]) setOtherLang(otherUsers[0].language_primary);
+      if (otherUsers?.[0]) {
+        setOtherLang(otherUsers[0].language_primary);
+        setOtherUserId(otherUsers[0].id);
+      }
     }
     const channel = supabase.channel(`messages:${convId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
@@ -396,19 +430,21 @@ export default function Chat() {
   const startVideo = async () => { await webrtc.startCall('video'); setVideoActive(true); setVideoExpanded(true); };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
-  // Combined timeline — text messages and voice captions sorted by timestamp
+  // Combined timeline — messages from DB and live voice captions sorted by timestamp
   const combinedTimeline = useMemo(() => [
-    ...messages.map(msg => ({
-      kind: "text" as const,
-      ts:   new Date(msg.created_at).getTime(),
-      payload: msg,
-    })),
+    ...messages
+      .filter(msg => !(isInCall && msg.source === 'voice'))
+      .map(msg => ({
+        kind: "msg" as const,
+        ts:   new Date(msg.created_at).getTime(),
+        payload: msg,
+      })),
     ...voiceChatEntries.map(e => ({
       kind: "voice" as const,
-      ts:   Number(e.id),   // id = Date.now().toString() — ms epoch, directly comparable
+      ts:   Number(e.id),
       payload: e,
     })),
-  ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries]);
+  ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries, isInCall]);
 
   if (!user) return null;
   const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
@@ -608,10 +644,46 @@ export default function Chat() {
             </div>
           )}
 
-          {/* Timeline unificado — mensajes de texto y burbujas VOZ ordenados por timestamp */}
+          {/* Timeline — mensajes DB y subtítulos de voz en vivo ordenados por timestamp */}
           {combinedTimeline.map(item => {
-            if (item.kind === "text") {
+            if (item.kind === "msg") {
               const msg = item.payload;
+
+              if (msg.source === 'voice') {
+                const isLocal     = msg.sender_id === user.id;
+                const showOrig    = msg.original_text !== msg.translated_text;
+                const displayText = isLocal ? msg.original_text : (msg.translated_text || msg.original_text);
+                const secondary   = isLocal ? msg.translated_text : msg.original_text;
+                return (
+                  <div key={`vm-${msg.id}`} className="msg" style={{ display: "flex", justifyContent: isLocal ? "flex-end" : "flex-start" }}>
+                    <div style={{ maxWidth: "80%" }}>
+                      <div style={{
+                        fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 3,
+                        color:        isLocal ? "rgba(62,198,198,0.6)"  : "rgba(232,82,74,0.6)",
+                        textAlign:    isLocal ? "right" : "left",
+                        paddingRight: isLocal ? 4 : 0,
+                        paddingLeft:  isLocal ? 0 : 4,
+                      }}>VOZ</div>
+                      <div style={{
+                        background:           isLocal ? "rgba(62,198,198,0.10)"  : "rgba(232,82,74,0.07)",
+                        border:               `1px solid ${isLocal ? "rgba(62,198,198,0.22)" : "rgba(232,82,74,0.18)"}`,
+                        borderRadius:         isLocal ? "20px 20px 5px 20px" : "5px 20px 20px 20px",
+                        padding:              "11px 15px",
+                        backdropFilter:       "blur(12px)",
+                        WebkitBackdropFilter: "blur(12px)",
+                      }}>
+                        <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
+                        {showOrig && (
+                          <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                            <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: 0, lineHeight: 1.45, fontStyle: "italic" }}>{secondary}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
               const isMe = msg.sender_id === user.id;
               const displayText = isMe
                 ? msg.original_text
