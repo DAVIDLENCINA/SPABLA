@@ -396,6 +396,14 @@ export function useWebRTC(
     socket.on("reconnect", (attempt: number) => {
       console.log(`[SPABLA][SOCK] reconnected after ${attempt} attempt(s) — re-joining room`);
       if (conversationId) socket.emit("join-room", conversationId);
+      if (localStreamRef.current) {
+        socket.emit("transcribe-start", {
+          lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
+          fromLang:   myLangRef.current,
+          targetLang: targetLangRef.current,
+        });
+        console.log("[SPABLA][DG] transcribe-start re-emitted after reconnect");
+      }
     });
 
     socket.on("reconnect_error", (err: Error) => {

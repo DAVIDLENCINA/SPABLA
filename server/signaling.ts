@@ -259,7 +259,7 @@ io.on("connection", (socket: Socket) => {
         interim_results: true,
         punctuate:       true,
         smart_format:    true,
-        endpointing:     300,
+        endpointing:     500,
       });
 
       dgConn.on(LiveTranscriptionEvents.Open, () => {
