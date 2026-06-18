@@ -115,7 +115,10 @@ export function useWebRTC(
 
   // Keep lang refs in sync when props change between renders
   useEffect(() => { myLangRef.current = myLang; },             [myLang]);
-  useEffect(() => { voiceEnabledRef.current = voiceEnabled; }, [voiceEnabled]);
+  useEffect(() => {
+    voiceEnabledRef.current = voiceEnabled;
+    console.log("[TTS] voiceEnabled →", voiceEnabled);
+  }, [voiceEnabled]);
   useEffect(() => {
     targetLangRef.current = targetLang;
     // Notificar al servidor cuando cambia el idioma destino (experimento server-side)
@@ -531,6 +534,7 @@ export function useWebRTC(
       if (!text) return;
 
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
+      console.log("[TTS] subtitle recv | voiceEnabledRef:", voiceEnabledRef.current, "| text:", text.substring(0, 30));
       if (voiceEnabledRef.current) {
         speak(text, myLangRef.current);
       }

@@ -26,7 +26,10 @@ export function useTranslatedSpeech() {
       u.rate   = 1.0;
       u.volume = 1.0;
       window.speechSynthesis.speak(u);
-      console.log("[TTS] speak:", text.substring(0, 40), "| lang:", u.lang);
+      console.log("[TTS] speak:", text.substring(0, 40), "| lang:", u.lang,
+        "| speaking:", window.speechSynthesis.speaking,
+        "| pending:", window.speechSynthesis.pending,
+        "| paused:", window.speechSynthesis.paused);
     },
     [supported],
   );

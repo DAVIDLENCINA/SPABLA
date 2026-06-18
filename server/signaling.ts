@@ -22,6 +22,14 @@ const LANG_NAMES: Record<string, string> = {
   ar: "Arabic",  ru: "Russian",
 };
 
+// Silence threshold (ms) before Deepgram commits speech_final per language.
+// Shorter for fast-rhythm languages (ja, zh), longer for languages with natural mid-clause pauses.
+const ENDPOINTING_BY_LANG: Record<string, number> = {
+  es: 600, en: 500, fr: 500, de: 600,
+  it: 550, pt: 600, ja: 400, zh: 400,
+  ar: 600, ru: 550,
+};
+
 // ── Función de traducción server-side (llamada desde Render → OpenAI, ambos US) ──
 async function translateServer(text: string, fromLang: string, toLang: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -250,6 +258,8 @@ io.on("connection", (socket: Socket) => {
     }
 
     try {
+      const endpointing = ENDPOINTING_BY_LANG[socket.data.fromLang as string] ?? 500;
+      console.log(`[STT] opening session lang=${lang} fromLang=${socket.data.fromLang} endpointing=${endpointing}ms`);
       dgConn = deepgram.listen.live({
         language:        lang,
         model:           "nova-2",
@@ -259,7 +269,7 @@ io.on("connection", (socket: Socket) => {
         interim_results: true,
         punctuate:       true,
         smart_format:    true,
-        endpointing:     500,
+        endpointing,
       });
 
       dgConn.on(LiveTranscriptionEvents.Open, () => {
@@ -270,14 +280,25 @@ io.on("connection", (socket: Socket) => {
         const alt = dgData?.channel?.alternatives?.[0];
         if (!alt || alt.transcript === undefined) return;
 
-        const text    = alt.transcript as string;
-        const isFinal = (dgData.is_final as boolean) ?? false;
+        const text        = alt.transcript as string;
+        const isFinal     = (dgData.is_final     as boolean) ?? false;
+        const speechFinal = (dgData.speech_final as boolean) ?? false;
+        const tReceived   = Date.now();
+
+        // Diagnostic log — compare is_final vs speech_final in production
+        if (isFinal || text.trim()) {
+          console.log(`[STT] lang=${socket.data.fromLang} is_final=${isFinal} speech_final=${speechFinal} "${text.substring(0, 45)}"`);
+        }
+
+        // speech_final = complete utterance (silence confirmed). Use as the only trigger
+        // for translation. is_final-only events become running partials in the client caption.
+        const isActualFinal = speechFinal;
 
         const fromL   = socket.data.fromLang   as string | undefined;
         const toL     = socket.data.targetLang as string | undefined;
         const roomId  = socket.data.roomId     as string | undefined;
         const canTranslate = TRANSLATE_SERVER_SIDE
-          && isFinal
+          && isActualFinal
           && !!text.trim()
           && !!fromL && !!toL
           && fromL !== toL
@@ -291,7 +312,7 @@ io.on("connection", (socket: Socket) => {
           const translateMs = Date.now() - tStart;
           const tEmit = Date.now();
 
-          console.log(`[SPABLA][TR] server-side ${translateMs}ms | "${text.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
+          console.log(`[STT] speech_final→translate ${translateMs}ms total=${tEmit - tReceived}ms | "${text.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
 
           // Notificar al sender que el servidor traduce (omite /api/translate)
           socket.emit("transcript-result", {
@@ -309,7 +330,8 @@ io.on("connection", (socket: Socket) => {
           }
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
-          socket.emit("transcript-result", { text, isFinal });
+          // isFinal reflects speech_final — only true for complete utterances
+          socket.emit("transcript-result", { text, isFinal: isActualFinal });
         }
       });
 

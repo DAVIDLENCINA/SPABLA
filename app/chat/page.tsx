@@ -618,6 +618,55 @@ export default function Chat() {
                   Rechazar
                 </button>
               )}
+              {isInCall && webrtc.hasRemote && !videoActive && (
+                <button
+                  onClick={() => setVoiceEnabled(e => !e)}
+                  title={voiceEnabled ? "Silenciar traducción" : "Escuchar traducción"}
+                  style={{
+                    marginLeft: 4, display: "flex", alignItems: "center", gap: 4,
+                    background: voiceEnabled ? "rgba(62,198,198,0.18)" : "rgba(255,255,255,0.08)",
+                    border: `1px solid ${voiceEnabled ? "rgba(62,198,198,0.5)" : "rgba(255,255,255,0.18)"}`,
+                    borderRadius: 10, padding: "2px 8px",
+                    fontSize: 10, color: voiceEnabled ? "#3ec6c6" : "rgba(255,255,255,0.65)",
+                    cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+                    transition: "background .15s, border .15s, color .15s",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                    stroke={voiceEnabled ? "#3ec6c6" : "rgba(255,255,255,0.65)"}
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                    {voiceEnabled
+                      ? <><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></>
+                      : <line x1="23" y1="9" x2="17" y2="15"/>}
+                  </svg>
+                  Escuchar
+                </button>
+              )}
+              {isInCall && !videoActive && (
+                <button
+                  onClick={webrtc.toggleMic}
+                  title={webrtc.micOn ? "Silenciar micrófono" : "Activar micrófono"}
+                  style={{
+                    marginLeft: 4, display: "flex", alignItems: "center", gap: 4,
+                    background: webrtc.micOn ? "rgba(255,255,255,0.08)" : "rgba(232,22,46,0.22)",
+                    border: `1px solid ${webrtc.micOn ? "rgba(255,255,255,0.18)" : "rgba(232,22,46,0.5)"}`,
+                    borderRadius: 10, padding: "2px 8px",
+                    fontSize: 10, color: webrtc.micOn ? "rgba(255,255,255,0.65)" : "#ff6b7a",
+                    cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+                    transition: "background .15s, border .15s, color .15s",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                    stroke={webrtc.micOn ? "rgba(255,255,255,0.65)" : "#ff6b7a"}
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {webrtc.micOn
+                      ? <><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/></>
+                      : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6"/></>}
+                  </svg>
+                  {webrtc.micOn ? "Mic" : "Muted"}
+                </button>
+              )}
             </div>
           )}
 
