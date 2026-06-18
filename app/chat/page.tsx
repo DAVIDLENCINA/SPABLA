@@ -620,7 +620,19 @@ export default function Chat() {
               )}
               {isInCall && webrtc.hasRemote && !videoActive && (
                 <button
-                  onClick={() => setVoiceEnabled(e => !e)}
+                  onClick={() => {
+                    const next = !voiceEnabled;
+                    setVoiceEnabled(next);
+                    // Unlock speechSynthesis on iOS/mobile within the gesture handler.
+                    // iOS blocks speak() from async callbacks unless the API was first
+                    // invoked synchronously inside a user gesture.
+                    if (next && typeof window !== "undefined" && window.speechSynthesis) {
+                      const unlock = new SpeechSynthesisUtterance(" ");
+                      unlock.volume = 0;
+                      window.speechSynthesis.speak(unlock);
+                      console.log("[TTS] speechSynthesis unlocked via gesture");
+                    }
+                  }}
                   title={voiceEnabled ? "Silenciar traducción" : "Escuchar traducción"}
                   style={{
                     marginLeft: 4, display: "flex", alignItems: "center", gap: 4,

@@ -470,21 +470,34 @@ export function useWebRTC(
     socket.on("transcript-result", async ({
       text, isFinal, serverWillTranslate,
     }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
+      console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
+
       const original = text?.trim();
-      if (!original) return;
+
+      // Always clear the partial caption when a final arrives, even if text is empty.
+      // Previously setLocalCaption(null) was after the !original guard, leaving grey
+      // captions stuck on screen when speech_final fired with an empty transcript.
+      if (isFinal) {
+        setLocalCaption(null);
+      }
+
+      if (!original) {
+        if (isFinal) console.log("[STT CLIENT] empty final ignored after clearing caption");
+        return;
+      }
 
       if (!isFinal) {
         setLocalCaption({ text: original, original, partial: true });
         return;
       }
-      setLocalCaption(null);
+
+      console.log("[STT CLIENT] final received:", original.substring(0, 45));
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
         setCaptionsHistory(prev => [...prev, {
           id: Date.now().toString(), speaker: "local", text: original, original,
         }]);
-        // No llamar a /api/translate ni emitir subtitle — servidor lo hace
         return;
       }
 
@@ -495,6 +508,7 @@ export function useWebRTC(
 
       if (to && from !== to) {
         const _tStart = Date.now();
+        console.log("[STT CLIENT] translating final | from:", from, "to:", to);
         try {
           const { data: { session } } = await supabase.auth.getSession();
           const res = await fetch("/api/translate", {
@@ -507,14 +521,17 @@ export function useWebRTC(
           });
           const data = await res.json();
           translated = data.translation || original;
+          console.log("[STT CLIENT] translation ok:", translated.substring(0, 45));
         } catch { }
-        console.log(`[TIMING:client] translate=${Date.now()-_tStart}ms`);
+        console.log(`[STT CLIENT] [TIMING] translate=${Date.now()-_tStart}ms`);
       }
 
+      console.log("[STT CLIENT] adding captionsHistory:", original.substring(0, 45));
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: original, original,
       }]);
 
+      console.log("[STT CLIENT] emitting subtitle | original:", original.substring(0, 30), "translated:", translated.substring(0, 30));
       socket.emit("subtitle", { roomId: conversationId, original, translated, fromLang: from });
     });
 
@@ -534,7 +551,8 @@ export function useWebRTC(
       if (!text) return;
 
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
-      console.log("[TTS] subtitle recv | voiceEnabledRef:", voiceEnabledRef.current, "| text:", text.substring(0, 30));
+      console.log("[TTS] subtitle received | text:", text.substring(0, 40));
+      console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
       if (voiceEnabledRef.current) {
         speak(text, myLangRef.current);
       }
