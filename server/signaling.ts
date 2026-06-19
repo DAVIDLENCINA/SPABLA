@@ -304,6 +304,7 @@ io.on("connection", (socket: Socket) => {
         // On speech_final use the full accumulated text (covers multi-segment long phrases).
         const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
         if (isActualFinal) accumulatedText = "";
+        if (isActualFinal && finalText) console.log(`[STT SERVER ACCUMULATED] final="${finalText.substring(0, 60)}"`);
 
         const fromL   = socket.data.fromLang   as string | undefined;
         const toL     = socket.data.targetLang as string | undefined;
