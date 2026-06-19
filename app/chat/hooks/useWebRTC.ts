@@ -217,7 +217,14 @@ export function useWebRTC(
     // 1 — Acquire media
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: mode === 'video', audio: true });
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: mode === 'video',
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
     } catch (err: any) {
       startingRef.current = false;
       setError(`Sin acceso a cámara/micrófono: ${err?.name} — ${err?.message}`);
