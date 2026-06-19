@@ -335,6 +335,8 @@ export function useWebRTC(
       // Start audio capture → PCM chunks → socket
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = new AudioCtx({ sampleRate: 48000 });
+      console.log("[STT AUDIO] actual sampleRate:", ctx.sampleRate);
+      console.log("[STT AUDIO] sending sampleRate:", ctx.sampleRate);
       audioCtxRef.current = ctx;
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
