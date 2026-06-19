@@ -202,6 +202,18 @@ export function useWebRTC(
     hasCreatedOfferRef.current = false;
     setError(null);
 
+    // Create and unlock AudioContext synchronously within the user gesture.
+    // iOS Safari suspends any AudioContext created or resumed outside a
+    // synchronous gesture handler — resume() in async callbacks is silently ignored,
+    // which makes ScriptProcessor read all-zero buffers (silence → Deepgram empty).
+    // Must happen before the first await.
+    if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      audioCtxRef.current = new AudioCtx({ sampleRate: 48000 });
+    }
+    audioCtxRef.current.resume().catch(() => {});
+    console.log("[TRACE AUDIO CONTEXT] created in gesture | state=", audioCtxRef.current.state, "sampleRate=", audioCtxRef.current.sampleRate);
+
     // 1 — Acquire media
     let stream: MediaStream;
     try {
@@ -319,25 +331,30 @@ export function useWebRTC(
         targetLang: targetLangRef.current,
       });
 
-      // Fix 1 — close any existing audio pipeline BEFORE creating a new one.
-      // socket.on("connect") fires on every (re)connection. Without this, each
-      // reconnect adds a new AudioContext that keeps running in parallel,
-      // multiplying the audio-chunk emission rate and saturating the socket buffer.
+      // Fix 1 — teardown processor/source only. Do NOT close the AudioContext:
+      // it was created and resumed in startCall() within the user gesture.
+      // Closing it here (async network callback) would require a new user gesture
+      // to reopen it on iOS Safari, resulting in silence again.
       try {
         processorRef.current?.disconnect();
         sourceRef.current?.disconnect();
-        audioCtxRef.current?.close();
       } catch {}
       processorRef.current = null;
       sourceRef.current    = null;
-      audioCtxRef.current  = null;
 
-      // Start audio capture → PCM chunks → socket
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      const ctx = new AudioCtx({ sampleRate: 48000 });
-      console.log("[STT AUDIO] actual sampleRate:", ctx.sampleRate);
-      console.log("[STT AUDIO] sending sampleRate:", ctx.sampleRate);
-      audioCtxRef.current = ctx;
+      // Reuse the AudioContext created in startCall() (inside user gesture).
+      const ctx = audioCtxRef.current;
+      if (!ctx) { console.error("[TRACE AUDIO CONTEXT] null — AudioContext missing"); return; }
+      console.log("[TRACE AUDIO CONTEXT] reused | state=", ctx.state, "sampleRate=", ctx.sampleRate);
+      ctx.resume().catch(() => {});
+
+      // Log mic track health before building the pipeline
+      const _audioTracks = stream.getAudioTracks();
+      if (_audioTracks[0]) {
+        const _t = _audioTracks[0];
+        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
+      }
+
       const source = ctx.createMediaStreamSource(stream);
       sourceRef.current = source;
       const processor = ctx.createScriptProcessor(4096, 1, 1);
