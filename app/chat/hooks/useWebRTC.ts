@@ -235,6 +235,48 @@ export function useWebRTC(
     setMicOn(true);
     setCamOn(true);
 
+    // Audio pipeline created here — before pc.addTrack — so iOS Web Audio claims the
+    // mic track before WebRTC does. On iOS, once addTrack transfers the track to the
+    // WebRTC engine, createMediaStreamSource delivers silence (rms=0, nonZero=0%).
+    {
+      try { processorRef.current?.disconnect(); sourceRef.current?.disconnect(); } catch {}
+      processorRef.current = null;
+      sourceRef.current    = null;
+      const _ctx = audioCtxRef.current!;
+      console.log("[TRACE AUDIO CONTEXT] reused | state=", _ctx.state, "sampleRate=", _ctx.sampleRate);
+      _ctx.resume().catch(() => {});
+      const _audioTracks = stream.getAudioTracks();
+      if (_audioTracks[0]) {
+        const _t = _audioTracks[0];
+        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
+      }
+      const _source = _ctx.createMediaStreamSource(stream);
+      sourceRef.current = _source;
+      const _processor = _ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = _processor;
+      let _lastAudioLog = 0;
+      _processor.onaudioprocess = (e) => {
+        if (!socketRef.current?.connected) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        socketRef.current.emit("audio-chunk", pcm.buffer);
+        const _now = Date.now();
+        if (_now - _lastAudioLog >= 2000) {
+          _lastAudioLog = _now;
+          let sumSq = 0, nonZero = 0;
+          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
+          const rms = Math.sqrt(sumSq / input.length);
+          console.log(`[TRACE AUDIO CLIENT] sampleRate=${_ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
+        }
+      };
+      _source.connect(_processor);
+      _processor.connect(_ctx.destination);
+    }
+
     // 2 — PeerConnection (ICE servers fetched server-side — no credentials in client bundle)
     const iceServers = await fetchIceServers();
     const pc = new RTCPeerConnection({ iceServers });
@@ -338,57 +380,8 @@ export function useWebRTC(
         targetLang: targetLangRef.current,
       });
 
-      // Fix 1 — teardown processor/source only. Do NOT close the AudioContext:
-      // it was created and resumed in startCall() within the user gesture.
-      // Closing it here (async network callback) would require a new user gesture
-      // to reopen it on iOS Safari, resulting in silence again.
-      try {
-        processorRef.current?.disconnect();
-        sourceRef.current?.disconnect();
-      } catch {}
-      processorRef.current = null;
-      sourceRef.current    = null;
-
-      // Reuse the AudioContext created in startCall() (inside user gesture).
       const ctx = audioCtxRef.current;
-      if (!ctx) { console.error("[TRACE AUDIO CONTEXT] null — AudioContext missing"); return; }
-      console.log("[TRACE AUDIO CONTEXT] reused | state=", ctx.state, "sampleRate=", ctx.sampleRate);
-      ctx.resume().catch(() => {});
-
-      // Log mic track health before building the pipeline
-      const _audioTracks = stream.getAudioTracks();
-      if (_audioTracks[0]) {
-        const _t = _audioTracks[0];
-        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
-      }
-
-      const source = ctx.createMediaStreamSource(stream);
-      sourceRef.current = source;
-      const processor = ctx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-      let _lastAudioLog = 0;
-      processor.onaudioprocess = (e) => {
-        // Fix 2 — drop chunks while socket is offline to prevent buffer accumulation
-        if (!socket.connected) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        socket.emit("audio-chunk", pcm.buffer);
-        const _now = Date.now();
-        if (_now - _lastAudioLog >= 2000) {
-          _lastAudioLog = _now;
-          let sumSq = 0, nonZero = 0;
-          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
-          const rms = Math.sqrt(sumSq / input.length);
-          console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
-        }
-      };
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      ctx.resume().catch(() => {});
+      if (ctx) ctx.resume().catch(() => {});
 
       // Fix 6 — watchdog: log connection health every 15s for post-mortem diagnosis
       if (watchdogRef.current) clearInterval(watchdogRef.current);
