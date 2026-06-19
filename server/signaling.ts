@@ -262,7 +262,11 @@ io.on("connection", (socket: Socket) => {
       const endpointing = ENDPOINTING_BY_LANG[socket.data.fromLang as string] ?? 500;
       console.log(`[STT] opening session lang=${lang} fromLang=${socket.data.fromLang} endpointing=${endpointing}ms`);
       let accumulatedText = "";
-      dgConn = deepgram.listen.live({
+      // Capture the connection in a local const so Close/Error handlers
+      // can check whether dgConn still refers to THIS session before
+      // nulling it. Without this, a stale Close event from a previous
+      // session overwrites the current dgConn with null (closure bug).
+      const thisConn = deepgram.listen.live({
         language:        lang,
         model:           "nova-2",
         encoding:        "linear16",
@@ -273,12 +277,13 @@ io.on("connection", (socket: Socket) => {
         smart_format:    true,
         endpointing,
       });
+      dgConn = thisConn;
 
-      dgConn.on(LiveTranscriptionEvents.Open, () => {
+      thisConn.on(LiveTranscriptionEvents.Open, () => {
         console.log(`[SPABLA][DG] Sesión abierta: socket=${socket.id} lang=${lang}`);
       });
 
-      dgConn.on(LiveTranscriptionEvents.Transcript, async (dgData: any) => {
+      thisConn.on(LiveTranscriptionEvents.Transcript, async (dgData: any) => {
         const alt = dgData?.channel?.alternatives?.[0];
         if (!alt || alt.transcript === undefined) return;
 
@@ -351,15 +356,15 @@ io.on("connection", (socket: Socket) => {
         }
       });
 
-      dgConn.on(LiveTranscriptionEvents.Error, (err: any) => {
+      thisConn.on(LiveTranscriptionEvents.Error, (err: any) => {
         console.error("[SPABLA][DG] Error:", err?.message ?? err);
         socket.emit("transcript-result", { text: "", isFinal: false, error: true });
-        dgConn = closeDG(dgConn);
+        if (dgConn === thisConn) dgConn = closeDG(thisConn);
       });
 
-      dgConn.on(LiveTranscriptionEvents.Close, () => {
+      thisConn.on(LiveTranscriptionEvents.Close, () => {
         console.log(`[SPABLA][DG] Sesión cerrada: socket=${socket.id}`);
-        dgConn = null;
+        if (dgConn === thisConn) dgConn = null;
       });
 
     } catch (err: any) {
