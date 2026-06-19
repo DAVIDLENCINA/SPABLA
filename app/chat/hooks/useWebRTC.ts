@@ -342,6 +342,7 @@ export function useWebRTC(
       sourceRef.current = source;
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      let _lastAudioLog = 0;
       processor.onaudioprocess = (e) => {
         // Fix 2 — drop chunks while socket is offline to prevent buffer accumulation
         if (!socket.connected) return;
@@ -352,6 +353,14 @@ export function useWebRTC(
           pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
         socket.emit("audio-chunk", pcm.buffer);
+        const _now = Date.now();
+        if (_now - _lastAudioLog >= 2000) {
+          _lastAudioLog = _now;
+          let sumSq = 0, nonZero = 0;
+          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
+          const rms = Math.sqrt(sumSq / input.length);
+          console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
+        }
       };
       source.connect(processor);
       processor.connect(ctx.destination);

@@ -151,6 +151,7 @@ io.on("connection", (socket: Socket) => {
     `(user=${(socket.data.userId as string).substring(0, 8)}...)`);
 
   let dgConn: DGConnection | null = null;
+  let _audioChunks = 0, _audioBytes = 0, _dgBytes = 0, _audioLogT = Date.now();
 
   socket.on("join-room", async (roomId: string) => {
     if (!UUID_REGEX.test(roomId)) {
@@ -369,7 +370,17 @@ io.on("connection", (socket: Socket) => {
   });
 
   socket.on("audio-chunk", (chunk: ArrayBuffer) => {
+    _audioChunks++;
+    _audioBytes += chunk.byteLength;
+    const _now = Date.now();
+    if (_now - _audioLogT >= 1000) {
+      const s = (_now - _audioLogT) / 1000;
+      console.log(`[TRACE AUDIO SERVER] chunks=${Math.round(_audioChunks / s)}/s bytes=${Math.round(_audioBytes / s)}/s`);
+      console.log(`[TRACE DEEPGRAM FEED] bytesSent=${Math.round(_dgBytes / s)}/s`);
+      _audioChunks = 0; _audioBytes = 0; _dgBytes = 0; _audioLogT = _now;
+    }
     if (!dgConn) return;
+    _dgBytes += chunk.byteLength;
     try { dgConn.send(chunk); } catch { }
   });
 
