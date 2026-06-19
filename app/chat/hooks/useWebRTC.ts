@@ -566,6 +566,7 @@ export function useWebRTC(
       const rawSpoken = (payload.original || text).trim();
       if (!text) return;
 
+      console.log(`[TRACE-4] remote received subtitle text="${text.substring(0,60)}"`);
       console.log("[STT CLIENT] subtitle received | text:", text.substring(0, 40));
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
       console.log("[TTS] subtitle received | text:", text.substring(0, 40));
@@ -575,6 +576,7 @@ export function useWebRTC(
       }
 
       // Append to conversation history — remote speaker, text is already in our language
+      console.log(`[TRACE-5] creating bubble text="${text.substring(0,60)}"`);
       setCaptionsHistory(prev => [...prev, {
         id:      Date.now().toString(),
         speaker: "remote",

@@ -303,6 +303,7 @@ io.on("connection", (socket: Socket) => {
 
         // On speech_final use the full accumulated text (covers multi-segment long phrases).
         const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
+        if (isActualFinal) console.log(`[TRACE-1] DG speech_final | raw="${text.substring(0,60)}" accumulated="${accumulatedText.substring(0,60)}" finalText="${finalText.substring(0,60)}"`);
         if (isActualFinal) accumulatedText = "";
         if (isActualFinal && finalText) console.log(`[STT SERVER ACCUMULATED] final="${finalText.substring(0, 60)}"`);
 
@@ -333,6 +334,7 @@ io.on("connection", (socket: Socket) => {
 
           // Emitir subtítulo al receptor (socket.to excluye al sender)
           if (socket.connected) {
+            console.log(`[TRACE-3] server→receiver subtitle original="${finalText.substring(0,60)}" translated="${translated.substring(0,60)}"`);
             socket.to(roomId!).emit("subtitle", {
               original: finalText,
               translated,
@@ -343,6 +345,7 @@ io.on("connection", (socket: Socket) => {
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
           // isFinal reflects speech_final — only true for complete utterances
+          if (isActualFinal) console.log(`[TRACE-3] server→sender transcript-result text="${finalText.substring(0,60)}"`);
           socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
       });
