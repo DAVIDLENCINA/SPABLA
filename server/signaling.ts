@@ -260,6 +260,7 @@ io.on("connection", (socket: Socket) => {
     try {
       const endpointing = ENDPOINTING_BY_LANG[socket.data.fromLang as string] ?? 500;
       console.log(`[STT] opening session lang=${lang} fromLang=${socket.data.fromLang} endpointing=${endpointing}ms`);
+      let accumulatedText = "";
       dgConn = deepgram.listen.live({
         language:        lang,
         model:           "nova-2",
@@ -285,6 +286,12 @@ io.on("connection", (socket: Socket) => {
         const speechFinal = (dgData.speech_final as boolean) ?? false;
         const tReceived   = Date.now();
 
+        // Accumulate is_final segments — speech_final often arrives with empty text
+        // when Deepgram already delivered content via earlier is_final events.
+        if (isFinal && text.trim()) {
+          accumulatedText = (accumulatedText + " " + text).trim();
+        }
+
         // Diagnostic log — compare is_final vs speech_final in production
         if (isFinal || text.trim()) {
           console.log(`[STT] lang=${socket.data.fromLang} is_final=${isFinal} speech_final=${speechFinal} "${text.substring(0, 45)}"`);
@@ -294,12 +301,16 @@ io.on("connection", (socket: Socket) => {
         // for translation. is_final-only events become running partials in the client caption.
         const isActualFinal = speechFinal;
 
+        // On speech_final use the full accumulated text (covers multi-segment long phrases).
+        const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
+        if (isActualFinal) accumulatedText = "";
+
         const fromL   = socket.data.fromLang   as string | undefined;
         const toL     = socket.data.targetLang as string | undefined;
         const roomId  = socket.data.roomId     as string | undefined;
         const canTranslate = TRANSLATE_SERVER_SIDE
           && isActualFinal
-          && !!text.trim()
+          && !!finalText
           && !!fromL && !!toL
           && fromL !== toL
           && !!roomId
@@ -308,21 +319,21 @@ io.on("connection", (socket: Socket) => {
         if (canTranslate) {
           // ── Experimento: traducción server-side ─────────────────────────
           const tStart = Date.now();
-          const translated = await translateServer(text, fromL!, toL!);
+          const translated = await translateServer(finalText, fromL!, toL!);
           const translateMs = Date.now() - tStart;
           const tEmit = Date.now();
 
-          console.log(`[STT] speech_final→translate ${translateMs}ms total=${tEmit - tReceived}ms | "${text.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
+          console.log(`[STT] speech_final→translate ${translateMs}ms total=${tEmit - tReceived}ms | "${finalText.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
 
           // Notificar al sender que el servidor traduce (omite /api/translate)
           socket.emit("transcript-result", {
-            text, isFinal: true, serverWillTranslate: true,
+            text: finalText, isFinal: true, serverWillTranslate: true,
           });
 
           // Emitir subtítulo al receptor (socket.to excluye al sender)
           if (socket.connected) {
             socket.to(roomId!).emit("subtitle", {
-              original: text,
+              original: finalText,
               translated,
               fromLang: fromL,
               _timings: { translateMs, serverEmitMs: tEmit },
@@ -331,7 +342,7 @@ io.on("connection", (socket: Socket) => {
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
           // isFinal reflects speech_final — only true for complete utterances
-          socket.emit("transcript-result", { text, isFinal: isActualFinal });
+          socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
       });
 
