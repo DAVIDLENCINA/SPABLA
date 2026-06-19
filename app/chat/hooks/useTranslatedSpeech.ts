@@ -37,7 +37,7 @@ export function useTranslatedSpeech() {
       u.onend   = () => console.log("[TTS] utterance end");
       u.onerror = (e: SpeechSynthesisErrorEvent) => console.warn("[TTS] utterance error:", e.error);
 
-      if (speaking) {
+      if (speaking || pending) {
         // Delay speak slightly after cancel to avoid WebKit race condition
         window.speechSynthesis.cancel();
         setTimeout(() => window.speechSynthesis.speak(u), 80);
