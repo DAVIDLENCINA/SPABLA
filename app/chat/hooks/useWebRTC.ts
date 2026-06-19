@@ -47,6 +47,18 @@ export type CaptionEntry = {
   original: string;             // secondary text (shown if different from text)
 };
 
+export type DiagReport = {
+  micOk:       boolean;
+  audioOk:     boolean;
+  rms:         number;
+  nonZeroPct:  number;
+  chunksSent:  number;
+  partialsRx:  number;
+  finalsRx:    number;
+  ttsCount:    number;
+  ts:          number;
+};
+
 export type WebRTCState = {
   localStream:   MediaStream | null;
   remoteStream:  MediaStream | null;
@@ -59,6 +71,8 @@ export type WebRTCState = {
   remoteCaption:   Caption | null;
   captionsHistory: CaptionEntry[];
   callEndedSignal: number;
+  localDiag:  DiagReport | null;
+  remoteDiag: DiagReport | null;
   startCall:       (mode?: 'voice' | 'video') => Promise<void>;
   endCall:       () => void;
   toggleMic:     () => void;
@@ -101,6 +115,10 @@ export function useWebRTC(
   // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
   const startingRef = useRef(false);
 
+  // Diagnostic counters — reset on each startCall, updated throughout the pipeline
+  const diagRef         = useRef({ rms: 0, nonZeroPct: 0, chunksSent: 0, partialsRx: 0, finalsRx: 0, ttsCount: 0 });
+  const diagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
   const [connected,     setConnected]     = useState(false);
@@ -112,6 +130,8 @@ export function useWebRTC(
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
   const [callEndedSignal, setCallEndedSignal] = useState(0);
+  const [localDiag,       setLocalDiag]       = useState<DiagReport | null>(null);
+  const [remoteDiag,      setRemoteDiag]      = useState<DiagReport | null>(null);
 
   const { speak, cancel: cancelTTS } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -147,8 +167,11 @@ export function useWebRTC(
     endingRef.current = true;
     setCallEndedSignal(prev => prev + 1);
 
-    // Stop watchdog
-    if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+    // Stop watchdog and diagnostic interval
+    if (watchdogRef.current)    { clearInterval(watchdogRef.current);    watchdogRef.current    = null; }
+    if (diagIntervalRef.current){ clearInterval(diagIntervalRef.current); diagIntervalRef.current = null; }
+    setLocalDiag(null);
+    setRemoteDiag(null);
 
     // Stop TTS if speaking
     cancelTTS();
@@ -201,6 +224,7 @@ export function useWebRTC(
     endingRef.current = false;
     hasCreatedOfferRef.current = false;
     setError(null);
+    diagRef.current = { rms: 0, nonZeroPct: 0, chunksSent: 0, partialsRx: 0, finalsRx: 0, ttsCount: 0 };
 
     // Create and unlock AudioContext synchronously within the user gesture.
     // iOS Safari suspends any AudioContext created or resumed outside a
@@ -264,12 +288,15 @@ export function useWebRTC(
           pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
         socketRef.current.emit("audio-chunk", pcm.buffer);
+        diagRef.current.chunksSent++;
         const _now = Date.now();
         if (_now - _lastAudioLog >= 2000) {
           _lastAudioLog = _now;
           let sumSq = 0, nonZero = 0;
           for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
           const rms = Math.sqrt(sumSq / input.length);
+          diagRef.current.rms        = rms;
+          diagRef.current.nonZeroPct = Math.round(nonZero / input.length * 100);
           console.log(`[TRACE AUDIO CLIENT] sampleRate=${_ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
         }
       };
@@ -382,6 +409,32 @@ export function useWebRTC(
 
       const ctx = audioCtxRef.current;
       if (ctx) ctx.resume().catch(() => {});
+
+      // Diagnostic: emit local pipeline stats every 3s and receive remote stats
+      if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
+      diagIntervalRef.current = setInterval(() => {
+        if (!socket.connected || !conversationId) return;
+        const d  = diagRef.current;
+        const ls = localStreamRef.current;
+        const micOk = !!(ls?.getAudioTracks()[0]?.readyState === "live");
+        const report: DiagReport = {
+          micOk,
+          audioOk:    d.rms > 0.002,
+          rms:        d.rms,
+          nonZeroPct: d.nonZeroPct,
+          chunksSent: d.chunksSent,
+          partialsRx: d.partialsRx,
+          finalsRx:   d.finalsRx,
+          ttsCount:   d.ttsCount,
+          ts:         Date.now(),
+        };
+        setLocalDiag(report);
+        socket.emit("diagnostic-report", { roomId: conversationId, report });
+      }, 3000);
+
+      socket.on("diagnostic-report", ({ report }: { report: DiagReport }) => {
+        setRemoteDiag(report);
+      });
 
       // Fix 6 — watchdog: log connection health every 15s for post-mortem diagnosis
       if (watchdogRef.current) clearInterval(watchdogRef.current);
@@ -517,6 +570,7 @@ export function useWebRTC(
           lastPartialTranscriptRef.current = original;
           console.log("[STT CLIENT] partial stored:", original.substring(0, 45));
           setLocalCaption({ text: original, original, partial: true });
+          diagRef.current.partialsRx++;
         }
         return;
       }
@@ -534,6 +588,7 @@ export function useWebRTC(
       }
 
       lastPartialTranscriptRef.current = "";
+      diagRef.current.finalsRx++;
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
@@ -599,6 +654,7 @@ export function useWebRTC(
       console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
       if (voiceEnabledRef.current) {
         speak(text, myLangRef.current);
+        diagRef.current.ttsCount++;
       }
 
       // Append to conversation history — remote speaker, text is already in our language
@@ -633,6 +689,7 @@ export function useWebRTC(
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
+    localDiag, remoteDiag,
     startCall, endCall, toggleMic, toggleCam,
   };
 }

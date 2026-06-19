@@ -394,6 +394,10 @@ io.on("connection", (socket: Socket) => {
     console.log(`[SPABLA][DG] Transcripción detenida por ${socket.id}`);
   });
 
+  socket.on("diagnostic-report", ({ roomId, report }: { roomId: string; report: unknown }) => {
+    if (typeof roomId === "string") socket.to(roomId).emit("diagnostic-report", { report });
+  });
+
   socket.on("disconnect", () => {
     dgConn = closeDG(dgConn);
     console.log("[SPABLA] Usuario desconectado:", socket.id);

@@ -9,6 +9,7 @@ import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
 import VoiceCaptionsOverlay from "./components/VoiceCaptionsOverlay";
+import DiagnosticsPanel from "./components/DiagnosticsPanel";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
   es: { flag: "🇪🇸", name: "Español" },
@@ -986,6 +987,11 @@ export default function Chat() {
 
         {/* Audio remoto para llamadas de voz */}
         <audio ref={remoteAudioRef} autoPlay playsInline style={{ display: "none" }} />
+
+        {/* ── DIAGNÓSTICO STT (visible durante llamada) ── */}
+        {isInCall && (
+          <DiagnosticsPanel localDiag={webrtc.localDiag} remoteDiag={webrtc.remoteDiag} />
+        )}
 
         {/* ── VOICE CAPTIONS (solo voz, sin video) ── */}
         {isInCall && !videoActive && (
