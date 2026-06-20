@@ -533,11 +533,9 @@ export function useWebRTC(
 
       const original = text?.trim();
 
-      // Partial: store and wait for final
+      // Partial: update local caption only, do not translate
       if (!isFinal) {
         if (original) {
-          lastPartialTranscriptRef.current = original;
-          console.log("[STT CLIENT] partial stored:", original.substring(0, 45));
           setLocalCaption({ text: original, original, partial: true });
         }
         return;
@@ -545,23 +543,15 @@ export function useWebRTC(
 
       // isFinal === true from here
       setLocalCaption(null);
+      lastPartialTranscriptRef.current = "";
 
-      let finalOriginal = original;
-
-      if (!finalOriginal) {
-        const fallback = lastPartialTranscriptRef.current;
-        if (fallback) {
-          console.log("[STT] fallback-partial:", fallback.substring(0, 45));
-          finalOriginal = fallback;
-        } else {
-          console.log("[STT CLIENT] final ignored no fallback");
-          return;
-        }
-      } else {
-        console.log("[STT CLIENT] final processed:", finalOriginal.substring(0, 45));
+      if (!original) {
+        console.log("[STT CLIENT] final ignored no fallback");
+        return;
       }
 
-      lastPartialTranscriptRef.current = "";
+      const finalOriginal = original;
+      console.log("[STT CLIENT] final processed:", finalOriginal.substring(0, 45));
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
@@ -653,7 +643,10 @@ export function useWebRTC(
       console.log("[TTS] subtitle received | text:", text.substring(0, 40));
       console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
       if (voiceEnabledRef.current) {
+        console.log("[TTS] speak() invoked | text:", text.substring(0, 40));
         speak(text, myLangRef.current);
+      } else {
+        console.log("[TTS] speak() skipped — voiceEnabled=false");
       }
 
       // Append to conversation history — remote speaker, text is already in our language
