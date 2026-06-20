@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 // BCP-47 codes for SpeechSynthesisUtterance.lang
 const LANG_BCP47: Record<string, string> = {
@@ -14,6 +14,10 @@ export function useTranslatedSpeech() {
   if (typeof window !== "undefined" && !supported) {
     console.warn("[TTS] Web Speech API not available — voice output disabled");
   }
+
+  // Holds the next utterance to play once the current one ends.
+  // Overwritten on each new speak() call while busy — only the latest matters.
+  const pendingRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   const speak = useCallback(
     (text: string, lang: string) => {
@@ -34,13 +38,25 @@ export function useTranslatedSpeech() {
       u.rate   = 1.0;
       u.volume = 1.0;
       u.onstart = () => console.log("[TTS] utterance start | lang:", bcp47);
-      u.onend   = () => console.log("[TTS] utterance end");
-      u.onerror = (e: SpeechSynthesisErrorEvent) => console.warn("[TTS] utterance error:", e.error);
+      u.onend = () => {
+        console.log("[TTS] utterance end");
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next) window.speechSynthesis.speak(next);
+      };
+      u.onerror = (e: SpeechSynthesisErrorEvent) => {
+        // "canceled" is expected when cancel() is called intentionally (hang-up, toggle off).
+        // Don't warn for it, but still drain the queue so we don't get stuck.
+        if (e.error !== "canceled") console.warn("[TTS] utterance error:", e.error);
+        const next = pendingRef.current;
+        pendingRef.current = null;
+        if (next) window.speechSynthesis.speak(next);
+      };
 
       if (speaking || pending) {
-        // Delay speak slightly after cancel to avoid WebKit race condition
-        window.speechSynthesis.cancel();
-        setTimeout(() => window.speechSynthesis.speak(u), 80);
+        // Engine is busy — queue this utterance, discarding any previous pending one.
+        // The current utterance's onend/onerror will drain the queue when it finishes.
+        pendingRef.current = u;
       } else {
         window.speechSynthesis.speak(u);
       }
@@ -48,9 +64,11 @@ export function useTranslatedSpeech() {
     [supported],
   );
 
-  // Para llamar en endCall o al desactivar la voz.
   const cancel = useCallback(() => {
-    if (supported) window.speechSynthesis.cancel();
+    if (supported) {
+      pendingRef.current = null;
+      window.speechSynthesis.cancel();
+    }
   }, [supported]);
 
   return { speak, cancel, supported };
