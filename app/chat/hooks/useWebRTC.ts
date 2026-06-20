@@ -531,15 +531,9 @@ export function useWebRTC(
       }
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
 
-      const original  = text?.trim();
-      const fallback  = lastPartialTranscriptRef.current?.trim();
-      const finalOriginal = original || (isFinal ? fallback : "");
+      const original = text?.trim();
 
-      // Always clear the partial caption when a final arrives, even if text is empty.
-      if (isFinal) {
-        setLocalCaption(null);
-      }
-
+      // Partial: store and wait for final
       if (!isFinal) {
         if (original) {
           lastPartialTranscriptRef.current = original;
@@ -550,13 +544,19 @@ export function useWebRTC(
       }
 
       // isFinal === true from here
-      if (!finalOriginal) {
-        console.log("[STT CLIENT] final ignored no fallback");
-        return;
-      }
+      setLocalCaption(null);
 
-      if (!original && fallback) {
-        console.log("[STT CLIENT] empty final using fallback:", fallback.substring(0, 45));
+      let finalOriginal = original;
+
+      if (!finalOriginal) {
+        const fallback = lastPartialTranscriptRef.current;
+        if (fallback) {
+          console.log("[STT] fallback-partial:", fallback.substring(0, 45));
+          finalOriginal = fallback;
+        } else {
+          console.log("[STT CLIENT] final ignored no fallback");
+          return;
+        }
       } else {
         console.log("[STT CLIENT] final processed:", finalOriginal.substring(0, 45));
       }
