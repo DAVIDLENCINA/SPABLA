@@ -638,7 +638,7 @@ export default function Chat() {
                   Rechazar
                 </button>
               )}
-              {isInCall && webrtc.hasRemote && !videoActive && (
+              {isInCall && !videoActive && (
                 <button
                   onClick={() => {
                     const next = !voiceEnabled;
