@@ -8,12 +8,16 @@ export function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
 
+  console.log("[TRACE-TTS-1] unlockAudio() called | audioCtx state:", audioCtx?.state ?? "null");
+
   // Technique 1: HTMLAudioElement
   const htmlAudio = new Audio();
   htmlAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
   htmlAudio.play()
     .then(() => console.log("[TTS] html audio unlock ok"))
     .catch((err) => console.log("[TTS] html audio unlock fail:", err?.message ?? err));
+
+  console.log("[TRACE-TTS-2] htmlAudio.play() dispatched — creating AudioContext now");
 
   // Technique 2: AudioContext — stored globally so speak() can reuse it
   try {
@@ -43,6 +47,7 @@ export function useTranslatedSpeech() {
     if (typeof window === "undefined" || !text.trim()) return;
 
     const myGen = generationRef.current;
+    console.log("[TRACE-TTS-3] speak() entered | lang:", lang, "| audioUnlocked:", audioUnlocked, "| audioCtx state:", audioCtx?.state ?? "null", "| text:", text.substring(0, 40));
     console.log("[TTS] speak requested | lang:", lang, "| text:", text.substring(0, 40));
     console.log("[TTS] audioUnlocked:", audioUnlocked);
 
