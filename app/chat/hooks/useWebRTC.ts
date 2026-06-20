@@ -381,8 +381,8 @@ export function useWebRTC(
       processorRef.current = processor;
       let _lastAudioLog = 0;
       processor.onaudioprocess = (e) => {
-        // Fix 2 — drop chunks while socket is offline to prevent buffer accumulation
-        if (!socket.connected) return;
+        // Fix 2 — drop chunks while socket is offline or call is ending
+        if (!socket.connected || endingRef.current) return;
         const input = e.inputBuffer.getChannelData(0);
         const pcm = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {
@@ -521,6 +521,7 @@ export function useWebRTC(
     socket.on("transcript-result", async ({
       text, isFinal, serverWillTranslate,
     }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
+      if (endingRef.current) return;
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
 
       const original  = text?.trim();
@@ -588,6 +589,9 @@ export function useWebRTC(
         console.log(`[STT CLIENT] [TIMING] translate=${Date.now()-_tStart}ms`);
       }
 
+      // Guard 3 — re-check after awaits: endCall() may have run during translate fetch
+      if (endingRef.current) return;
+
       console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
@@ -602,6 +606,7 @@ export function useWebRTC(
       original?: string; translated?: string;
       _timings?: { translateMs: number; serverEmitMs: number };
     }) => {
+      if (endingRef.current) return;
       // Timing del experimento server-side
       if (payload._timings) {
         const networkMs = Date.now() - payload._timings.serverEmitMs;
