@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useWebRTC, type CaptionEntry } from "./hooks/useWebRTC";
+import { unlockAudio } from "./hooks/useTranslatedSpeech";
 import { useCallSignaling } from "./hooks/useCallSignaling";
 import { useRingTone } from "./hooks/useRingTone";
 import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
@@ -645,15 +646,9 @@ export default function Chat() {
                   onClick={() => {
                     const next = !voiceEnabled;
                     setVoiceEnabled(next);
-                    // Unlock speechSynthesis on iOS/mobile within the gesture handler.
-                    // iOS blocks speak() from async callbacks unless the API was first
-                    // invoked synchronously inside a user gesture.
-                    if (next && typeof window !== "undefined" && window.speechSynthesis) {
-                      const unlock = new SpeechSynthesisUtterance(" ");
-                      unlock.volume = 0;
-                      window.speechSynthesis.speak(unlock);
-                      console.log("[TTS] speechSynthesis unlocked via gesture");
-                    }
+                    // Unlock HTMLAudioElement on iOS: play() must be called synchronously
+                    // inside a user gesture before async play() calls are allowed.
+                    if (next) unlockAudio();
                   }}
                   title={voiceEnabled ? "Silenciar traducción" : "Escuchar traducción"}
                   style={{
