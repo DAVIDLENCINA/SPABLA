@@ -1,33 +1,26 @@
 import { useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
-// Module-level flag — shared across all hook instances.
-// iOS Safari blocks audio.play() from async contexts until the user has
-// triggered at least one play() call synchronously inside a user gesture.
 let audioUnlocked = false;
 
-// Call this synchronously inside a user gesture handler (e.g. onClick).
-// Uses two complementary techniques to unlock audio on iOS Safari:
-// 1. HTMLAudioElement.play() with a silent WAV
-// 2. AudioContext.resume() + silent buffer source (more reliable on iOS 16+)
 export function unlockAudio() {
   if (audioUnlocked) return;
-  audioUnlocked = true; // mark immediately so concurrent calls don't race
+  audioUnlocked = true;
 
-  // ── Technique 1: HTMLAudioElement ─────────────────────────────────────────
+  // Technique 1: HTMLAudioElement
   const htmlAudio = new Audio();
   htmlAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
   htmlAudio.play()
     .then(() => console.log("[TTS] html audio unlock ok"))
     .catch((err) => console.log("[TTS] html audio unlock fail:", err?.message ?? err));
 
-  // ── Technique 2: AudioContext ─────────────────────────────────────────────
+  // Technique 2: AudioContext (more reliable on iOS 16+)
   try {
     const AudioCtx = window.AudioContext ?? (window as any).webkitAudioContext;
     if (AudioCtx) {
       const ctx = new AudioCtx();
       ctx.resume().then(() => {
-        const buffer = ctx.createBuffer(1, 1, 22050); // 1 sample of silence
+        const buffer = ctx.createBuffer(1, 1, 22050);
         const source = ctx.createBufferSource();
         source.buffer = buffer;
         source.connect(ctx.destination);
@@ -43,16 +36,21 @@ export function unlockAudio() {
 export function useTranslatedSpeech() {
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const currentUrlRef   = useRef<string | null>(null);
+  // Incremented on every cancel() — lets in-flight speak() calls detect stale requests.
+  const generationRef   = useRef(0);
 
   const speak = useCallback(async (text: string, lang: string) => {
     if (typeof window === "undefined" || !text.trim()) return;
 
+    const myGen = generationRef.current;
     console.log("[TTS] speak requested | lang:", lang, "| text:", text.substring(0, 40));
     console.log("[TTS] audioUnlocked:", audioUnlocked);
 
-    // Cancel any audio already playing — prefer latest subtitle over queuing.
+    // Stop whatever is playing right now before fetching new audio.
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
+      currentAudioRef.current.src = "";
+      currentAudioRef.current.load();
       currentAudioRef.current = null;
     }
     if (currentUrlRef.current) {
@@ -62,6 +60,10 @@ export function useTranslatedSpeech() {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
+
+      // Guard 1 — cancel() may have been called while awaiting getSession()
+      if (generationRef.current !== myGen) { console.log("[TTS] cancelled before fetch"); return; }
+
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: {
@@ -71,13 +73,20 @@ export function useTranslatedSpeech() {
         body: JSON.stringify({ text: text.trim(), lang }),
       });
 
+      // Guard 2 — cancel() may have been called while awaiting fetch
+      if (generationRef.current !== myGen) { console.log("[TTS] cancelled after fetch"); return; }
+
       if (!res.ok) {
         console.warn("[TTS] /api/tts error:", res.status);
         return;
       }
 
       const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
+
+      // Guard 3 — cancel() may have been called while awaiting blob
+      if (generationRef.current !== myGen) { console.log("[TTS] cancelled after blob"); return; }
+
+      const url = URL.createObjectURL(blob);
       currentUrlRef.current = url;
 
       const audio = new Audio(url);
@@ -105,8 +114,11 @@ export function useTranslatedSpeech() {
   }, []);
 
   const cancel = useCallback(() => {
+    generationRef.current += 1; // invalidates all in-flight speak() calls
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
+      currentAudioRef.current.src = "";
+      currentAudioRef.current.load();
       currentAudioRef.current = null;
     }
     if (currentUrlRef.current) {
