@@ -143,15 +143,16 @@ export function useWebRTC(
 
   const endCall = useCallback(() => {
     if (endingRef.current) return;
-    console.trace("[SPABLA][ENDCALL] called from:");
     endingRef.current = true;
+
+    // Stop TTS immediately — must be first so no audio plays during teardown
+    cancelTTS();
+
+    console.trace("[SPABLA][ENDCALL] called from:");
     setCallEndedSignal(prev => prev + 1);
 
     // Stop watchdog
     if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
-
-    // Stop TTS if speaking
-    cancelTTS();
 
     // Stop Deepgram and audio processing
     socketRef.current?.emit("transcribe-stop");
@@ -167,6 +168,10 @@ export function useWebRTC(
     // Clear caption timers
     if (hideLocalRef.current)  clearTimeout(hideLocalRef.current);
     if (hideRemoteRef.current) clearTimeout(hideRemoteRef.current);
+
+    // Remove ALL socket listeners before disconnect so in-flight events
+    // (transcript-result / subtitle buffered in the event queue) have no handler to fire.
+    socketRef.current?.removeAllListeners();
 
     // Stop tracks, socket, peer connection
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -545,6 +550,7 @@ export function useWebRTC(
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
+        if (endingRef.current) return;
         setCaptionsHistory(prev => [...prev, {
           id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
         }]);
@@ -606,6 +612,10 @@ export function useWebRTC(
 
       console.log(`[TRACE-4] remote received subtitle text="${text.substring(0,60)}"`);
       console.log("[STT CLIENT] subtitle received | text:", text.substring(0, 40));
+      // Guard before TTS + bubble — subtitle handler entry already checks endingRef,
+      // but re-check here in case any async microtask ran between entry and this point.
+      if (endingRef.current) return;
+
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
       console.log("[TTS] subtitle received | text:", text.substring(0, 40));
       console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
