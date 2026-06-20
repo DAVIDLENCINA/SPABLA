@@ -47,18 +47,6 @@ export type CaptionEntry = {
   original: string;             // secondary text (shown if different from text)
 };
 
-export type DiagReport = {
-  micOk:       boolean;
-  audioOk:     boolean;
-  rms:         number;
-  nonZeroPct:  number;
-  chunksSent:  number;
-  partialsRx:  number;
-  finalsRx:    number;
-  ttsCount:    number;
-  ts:          number;
-};
-
 export type WebRTCState = {
   localStream:   MediaStream | null;
   remoteStream:  MediaStream | null;
@@ -71,8 +59,6 @@ export type WebRTCState = {
   remoteCaption:   Caption | null;
   captionsHistory: CaptionEntry[];
   callEndedSignal: number;
-  localDiag:  DiagReport | null;
-  remoteDiag: DiagReport | null;
   startCall:       (mode?: 'voice' | 'video') => Promise<void>;
   endCall:       () => void;
   toggleMic:     () => void;
@@ -115,10 +101,6 @@ export function useWebRTC(
   // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
   const startingRef = useRef(false);
 
-  // Diagnostic counters — reset on each startCall, updated throughout the pipeline
-  const diagRef         = useRef({ rms: 0, nonZeroPct: 0, chunksSent: 0, partialsRx: 0, finalsRx: 0, ttsCount: 0 });
-  const diagIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
   const [connected,     setConnected]     = useState(false);
@@ -130,8 +112,6 @@ export function useWebRTC(
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
   const [callEndedSignal, setCallEndedSignal] = useState(0);
-  const [localDiag,       setLocalDiag]       = useState<DiagReport | null>(null);
-  const [remoteDiag,      setRemoteDiag]      = useState<DiagReport | null>(null);
 
   const { speak, cancel: cancelTTS } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -167,11 +147,8 @@ export function useWebRTC(
     endingRef.current = true;
     setCallEndedSignal(prev => prev + 1);
 
-    // Stop watchdog and diagnostic interval
-    if (watchdogRef.current)    { clearInterval(watchdogRef.current);    watchdogRef.current    = null; }
-    if (diagIntervalRef.current){ clearInterval(diagIntervalRef.current); diagIntervalRef.current = null; }
-    setLocalDiag(null);
-    setRemoteDiag(null);
+    // Stop watchdog
+    if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
 
     // Stop TTS if speaking
     cancelTTS();
@@ -224,7 +201,6 @@ export function useWebRTC(
     endingRef.current = false;
     hasCreatedOfferRef.current = false;
     setError(null);
-    diagRef.current = { rms: 0, nonZeroPct: 0, chunksSent: 0, partialsRx: 0, finalsRx: 0, ttsCount: 0 };
 
     // Create and unlock AudioContext synchronously within the user gesture.
     // iOS Safari suspends any AudioContext created or resumed outside a
@@ -258,51 +234,6 @@ export function useWebRTC(
     setLocalStream(stream);
     setMicOn(true);
     setCamOn(true);
-
-    // Audio pipeline created here — before pc.addTrack — so iOS Web Audio claims the
-    // mic track before WebRTC does. On iOS, once addTrack transfers the track to the
-    // WebRTC engine, createMediaStreamSource delivers silence (rms=0, nonZero=0%).
-    {
-      try { processorRef.current?.disconnect(); sourceRef.current?.disconnect(); } catch {}
-      processorRef.current = null;
-      sourceRef.current    = null;
-      const _ctx = audioCtxRef.current!;
-      console.log("[TRACE AUDIO CONTEXT] reused | state=", _ctx.state, "sampleRate=", _ctx.sampleRate);
-      _ctx.resume().catch(() => {});
-      const _audioTracks = stream.getAudioTracks();
-      if (_audioTracks[0]) {
-        const _t = _audioTracks[0];
-        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
-      }
-      const _source = _ctx.createMediaStreamSource(stream);
-      sourceRef.current = _source;
-      const _processor = _ctx.createScriptProcessor(4096, 1, 1);
-      processorRef.current = _processor;
-      let _lastAudioLog = 0;
-      _processor.onaudioprocess = (e) => {
-        if (!socketRef.current?.connected) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-        socketRef.current.emit("audio-chunk", pcm.buffer);
-        diagRef.current.chunksSent++;
-        const _now = Date.now();
-        if (_now - _lastAudioLog >= 2000) {
-          _lastAudioLog = _now;
-          let sumSq = 0, nonZero = 0;
-          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
-          const rms = Math.sqrt(sumSq / input.length);
-          diagRef.current.rms        = rms;
-          diagRef.current.nonZeroPct = Math.round(nonZero / input.length * 100);
-          console.log(`[TRACE AUDIO CLIENT] sampleRate=${_ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
-        }
-      };
-      _source.connect(_processor);
-      _processor.connect(_ctx.destination);
-    }
 
     // 2 — PeerConnection (ICE servers fetched server-side — no credentials in client bundle)
     const iceServers = await fetchIceServers();
@@ -407,34 +338,57 @@ export function useWebRTC(
         targetLang: targetLangRef.current,
       });
 
+      // Fix 1 — teardown processor/source only. Do NOT close the AudioContext:
+      // it was created and resumed in startCall() within the user gesture.
+      // Closing it here (async network callback) would require a new user gesture
+      // to reopen it on iOS Safari, resulting in silence again.
+      try {
+        processorRef.current?.disconnect();
+        sourceRef.current?.disconnect();
+      } catch {}
+      processorRef.current = null;
+      sourceRef.current    = null;
+
+      // Reuse the AudioContext created in startCall() (inside user gesture).
       const ctx = audioCtxRef.current;
-      if (ctx) ctx.resume().catch(() => {});
+      if (!ctx) { console.error("[TRACE AUDIO CONTEXT] null — AudioContext missing"); return; }
+      console.log("[TRACE AUDIO CONTEXT] reused | state=", ctx.state, "sampleRate=", ctx.sampleRate);
+      ctx.resume().catch(() => {});
 
-      // Diagnostic: emit local pipeline stats every 3s and receive remote stats
-      if (diagIntervalRef.current) clearInterval(diagIntervalRef.current);
-      diagIntervalRef.current = setInterval(() => {
-        if (!socket.connected || !conversationId) return;
-        const d  = diagRef.current;
-        const ls = localStreamRef.current;
-        const micOk = !!(ls?.getAudioTracks()[0]?.readyState === "live");
-        const report: DiagReport = {
-          micOk,
-          audioOk:    d.rms > 0.002,
-          rms:        d.rms,
-          nonZeroPct: d.nonZeroPct,
-          chunksSent: d.chunksSent,
-          partialsRx: d.partialsRx,
-          finalsRx:   d.finalsRx,
-          ttsCount:   d.ttsCount,
-          ts:         Date.now(),
-        };
-        setLocalDiag(report);
-        socket.emit("diagnostic-report", { roomId: conversationId, report });
-      }, 3000);
+      // Log mic track health before building the pipeline
+      const _audioTracks = stream.getAudioTracks();
+      if (_audioTracks[0]) {
+        const _t = _audioTracks[0];
+        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
+      }
 
-      socket.on("diagnostic-report", ({ report }: { report: DiagReport }) => {
-        setRemoteDiag(report);
-      });
+      const source = ctx.createMediaStreamSource(stream);
+      sourceRef.current = source;
+      const processor = ctx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+      let _lastAudioLog = 0;
+      processor.onaudioprocess = (e) => {
+        // Fix 2 — drop chunks while socket is offline to prevent buffer accumulation
+        if (!socket.connected) return;
+        const input = e.inputBuffer.getChannelData(0);
+        const pcm = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+          const s = Math.max(-1, Math.min(1, input[i]));
+          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        }
+        socket.emit("audio-chunk", pcm.buffer);
+        const _now = Date.now();
+        if (_now - _lastAudioLog >= 2000) {
+          _lastAudioLog = _now;
+          let sumSq = 0, nonZero = 0;
+          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
+          const rms = Math.sqrt(sumSq / input.length);
+          console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
+        }
+      };
+      source.connect(processor);
+      processor.connect(ctx.destination);
+      ctx.resume().catch(() => {});
 
       // Fix 6 — watchdog: log connection health every 15s for post-mortem diagnosis
       if (watchdogRef.current) clearInterval(watchdogRef.current);
@@ -570,7 +524,6 @@ export function useWebRTC(
           lastPartialTranscriptRef.current = original;
           console.log("[STT CLIENT] partial stored:", original.substring(0, 45));
           setLocalCaption({ text: original, original, partial: true });
-          diagRef.current.partialsRx++;
         }
         return;
       }
@@ -588,7 +541,6 @@ export function useWebRTC(
       }
 
       lastPartialTranscriptRef.current = "";
-      diagRef.current.finalsRx++;
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
@@ -654,7 +606,6 @@ export function useWebRTC(
       console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
       if (voiceEnabledRef.current) {
         speak(text, myLangRef.current);
-        diagRef.current.ttsCount++;
       }
 
       // Append to conversation history — remote speaker, text is already in our language
@@ -689,7 +640,6 @@ export function useWebRTC(
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
-    localDiag, remoteDiag,
     startCall, endCall, toggleMic, toggleCam,
   };
 }
