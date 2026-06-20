@@ -51,6 +51,7 @@ export default function Chat() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [showAttachMsg, setShowAttachMsg] = useState(false);
   const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
+  const [callStartTime, setCallStartTime]       = useState(0);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -199,11 +200,20 @@ export default function Chat() {
     }
   }, [webrtc.captionsHistory, conversationId, user, otherUserId, otherLang]);
 
-  // Reload messages after hang-up to surface persisted voice messages
+  // Manage voice entries across call lifecycle
   const prevIsInCallRef = useRef(false);
   useEffect(() => {
-    if (prevIsInCallRef.current && !isInCall) {
+    if (!prevIsInCallRef.current && isInCall) {
+      // New call starting: snapshot the start time and reset live entries.
+      // callStartTime is used by combinedTimeline to exclude DB voice records
+      // from this session (they're already in voiceChatEntries with correct alignment).
+      setCallStartTime(Date.now());
       setVoiceChatEntries([]);
+      seenVoiceEntryIdsRef.current = new Set();
+    }
+    if (prevIsInCallRef.current && !isInCall) {
+      // Call ended: keep voiceChatEntries so alignment (entry.speaker) is preserved.
+      // DB voice records from this session are filtered out in combinedTimeline.
       loadMessages();
     }
     prevIsInCallRef.current = isInCall;
@@ -458,7 +468,17 @@ export default function Chat() {
   // Combined timeline — messages from DB and live voice captions sorted by timestamp
   const combinedTimeline = useMemo(() => [
     ...messages
-      .filter(msg => !(isInCall && msg.source === 'voice'))
+      .filter(msg => {
+        // Hide DB voice records while in call (voiceChatEntries covers them live)
+        if (isInCall && msg.source === 'voice') return false;
+        // Hide DB voice records from the current session after hang-up:
+        // they are already in voiceChatEntries with correct speaker alignment.
+        // Only show DB voice records older than when this call session started.
+        if (msg.source === 'voice' && callStartTime > 0) {
+          return new Date(msg.created_at).getTime() < callStartTime;
+        }
+        return true;
+      })
       .map(msg => ({
         kind: "msg" as const,
         ts:   new Date(msg.created_at).getTime(),
@@ -469,7 +489,7 @@ export default function Chat() {
       ts:   Number(e.id),
       payload: e,
     })),
-  ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries, isInCall]);
+  ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries, isInCall, callStartTime]);
 
   if (!user) return null;
   const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
