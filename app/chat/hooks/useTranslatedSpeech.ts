@@ -15,23 +15,31 @@ export function useTranslatedSpeech() {
     console.warn("[TTS] Web Speech API not available — voice output disabled");
   }
 
-  // Holds the next utterance to play once the current one ends.
-  // Overwritten on each new speak() call while busy — only the latest matters.
-  const pendingRef = useRef<SpeechSynthesisUtterance | null>(null);
+  // Own state — never trust window.speechSynthesis.speaking (can get stuck as true).
+  const isSpeakingRef       = useRef(false);
+  const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const pendingRef          = useRef<SpeechSynthesisUtterance | null>(null);
+
+  const drain = useCallback(() => {
+    const next = pendingRef.current;
+    pendingRef.current = null;
+    if (!next) return;
+    isSpeakingRef.current       = true;
+    currentUtteranceRef.current = next;
+    window.speechSynthesis.speak(next);
+  }, []);
 
   const speak = useCallback(
     (text: string, lang: string) => {
       if (!supported || !text.trim()) return;
 
-      const bcp47   = LANG_BCP47[lang] ?? lang;
-      const voices  = window.speechSynthesis.getVoices();
-      const speaking = window.speechSynthesis.speaking;
-      const pending  = window.speechSynthesis.pending;
+      const bcp47  = LANG_BCP47[lang] ?? lang;
+      const voices = window.speechSynthesis.getVoices();
 
       console.log("[TTS] speak requested | lang:", bcp47, "| text:", text.substring(0, 40));
       console.log("[TTS] speechSynthesis available:", !!window.speechSynthesis);
       console.log("[TTS] voices count:", voices.length);
-      console.log("[TTS] speaking before:", speaking, "| pending before:", pending);
+      console.log("[TTS] isSpeaking (own ref):", isSpeakingRef.current, "| browser speaking:", window.speechSynthesis.speaking);
 
       const u = new SpeechSynthesisUtterance(text);
       u.lang   = bcp47;
@@ -40,35 +48,35 @@ export function useTranslatedSpeech() {
       u.onstart = () => console.log("[TTS] utterance start | lang:", bcp47);
       u.onend = () => {
         console.log("[TTS] utterance end");
-        const next = pendingRef.current;
-        pendingRef.current = null;
-        if (next) window.speechSynthesis.speak(next);
+        isSpeakingRef.current       = false;
+        currentUtteranceRef.current = null;
+        drain();
       };
       u.onerror = (e: SpeechSynthesisErrorEvent) => {
-        // "canceled" is expected when cancel() is called intentionally (hang-up, toggle off).
-        // Don't warn for it, but still drain the queue so we don't get stuck.
         if (e.error !== "canceled") console.warn("[TTS] utterance error:", e.error);
-        const next = pendingRef.current;
-        pendingRef.current = null;
-        if (next) window.speechSynthesis.speak(next);
+        isSpeakingRef.current       = false;
+        currentUtteranceRef.current = null;
+        drain();
       };
 
-      if (speaking || pending) {
-        // Engine is busy — queue this utterance, discarding any previous pending one.
-        // The current utterance's onend/onerror will drain the queue when it finishes.
+      if (isSpeakingRef.current) {
+        // Engine busy (by our own tracking) — queue latest, discard previous pending.
         pendingRef.current = u;
       } else {
+        isSpeakingRef.current       = true;
+        currentUtteranceRef.current = u;
         window.speechSynthesis.speak(u);
       }
     },
-    [supported],
+    [supported, drain],
   );
 
   const cancel = useCallback(() => {
-    if (supported) {
-      pendingRef.current = null;
-      window.speechSynthesis.cancel();
-    }
+    if (!supported) return;
+    isSpeakingRef.current       = false;
+    currentUtteranceRef.current = null;
+    pendingRef.current          = null;
+    window.speechSynthesis.cancel();
   }, [supported]);
 
   return { speak, cancel, supported };
