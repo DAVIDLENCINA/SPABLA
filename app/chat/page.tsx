@@ -257,6 +257,10 @@ export default function Chat() {
       });
       ring.stop();
       webrtc.startCall(pendingCallModeRef.current);
+      if (pendingCallModeRef.current === 'video') {
+        setVideoActive(true);
+        setVideoExpanded(true);
+      }
     } else {
       ring.stop();
       // rejected / missed / cancelled / ended → tear down WebRTC if it was up
@@ -460,7 +464,7 @@ export default function Chat() {
         await signaling.cancelCall(signaling.outgoingCallId);
       } else if (status === 'incoming' && signaling.incomingCall) {
         // Accept incoming call — WebRTC starts via callStatus effect
-        pendingCallModeRef.current = 'voice';
+        pendingCallModeRef.current = signaling.incomingCall.mode ?? 'voice';
         await signaling.acceptCall(signaling.incomingCall.id);
       } else if (status === 'accepted') {
         // Hang up active call
@@ -479,7 +483,11 @@ export default function Chat() {
     }
   };
 
-  const startVideo = async () => { await webrtc.startCall('video'); setVideoActive(true); setVideoExpanded(true); };
+  const startVideo = async () => {
+    unlockAudio();
+    pendingCallModeRef.current = 'video';
+    await signaling.initiateCall('video');
+  };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   // Combined timeline — messages from DB and live voice captions sorted by timestamp
@@ -635,7 +643,7 @@ export default function Chat() {
               }}/>
               <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600, letterSpacing: "0.04em" }}>
                 {isIncoming
-                  ? "LLAMADA ENTRANTE"
+                  ? (signaling.incomingCall?.mode === "video" ? "VIDEOLLAMADA ENTRANTE" : "LLAMADA ENTRANTE")
                   : isInCall && webrtc.hasRemote
                   ? "EN LLAMADA"
                   : "LLAMANDO…"}

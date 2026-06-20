@@ -16,6 +16,7 @@ export type CallStatus =
 export type IncomingCall = {
   id:       string;
   callerId: string;
+  mode:     "voice" | "video";
 };
 
 type CallSignalRow = {
@@ -23,6 +24,7 @@ type CallSignalRow = {
   conversation_id: string;
   caller_id:       string;
   status:          string;
+  call_mode:       string | null;
 };
 
 const RING_TIMEOUT_MS = 30_000;
@@ -76,7 +78,7 @@ export function useCallSignaling(
         });
         if (row.caller_id !== userId && callStatusRef.current === "idle") {
           console.log("[CALL] INCOMING_CALL_DETECTED", row);
-          setIncomingCall({ id: row.id, callerId: row.caller_id });
+          setIncomingCall({ id: row.id, callerId: row.caller_id, mode: (row.call_mode ?? "voice") as "voice" | "video" });
           setCallStatus("incoming");
         }
         return;
@@ -149,13 +151,13 @@ export function useCallSignaling(
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  const initiateCall = useCallback(async (): Promise<string | null> => {
+  const initiateCall = useCallback(async (mode: "voice" | "video" = "voice"): Promise<string | null> => {
     if (!conversationId || !userId) return null;
     if (callStatusRef.current !== "idle") return null;
 
     const { data, error } = await supabase
       .from("call_signals")
-      .insert({ conversation_id: conversationId, caller_id: userId, status: "ringing" })
+      .insert({ conversation_id: conversationId, caller_id: userId, status: "ringing", call_mode: mode })
       .select("id")
       .single();
 
