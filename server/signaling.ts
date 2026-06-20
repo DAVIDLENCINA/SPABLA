@@ -87,8 +87,6 @@ const httpServer = createServer(async (req, res) => {
   }
 
   // ── Endpoint de medición para el experimento ───────────────────────────────
-  // Mide la latencia de traducción server-side (Render→OpenAI) con 1 llamada real.
-  // Protegido con secreto en query param para evitar abuso.
   if (req.url?.startsWith("/measure-translate")) {
     const url    = new URL(req.url, "http://localhost");
     const secret = url.searchParams.get("secret") ?? "";
@@ -153,104 +151,12 @@ io.on("connection", (socket: Socket) => {
   let dgConn: DGConnection | null = null;
   let _audioChunks = 0, _audioBytes = 0, _dgBytes = 0, _audioLogT = Date.now();
 
-  socket.on("join-room", async (roomId: string) => {
-    if (!UUID_REGEX.test(roomId)) {
-      socket.emit("join-error", { message: "Invalid room ID" });
-      return;
-    }
+  // Timestamps of recent Deepgram auto-reopens — for rate limiting.
+  const dgReopenTimes: number[] = [];
 
-    const authorizedRooms = socket.data.authorizedRooms as Set<string>;
-    if (authorizedRooms.has(roomId)) {
-      console.log(`[SPABLA][ROOM][BEFORE_JOIN] cached socket=${socket.id} room=${roomId}`);
-      socket.join(roomId);
-      console.log(`[SPABLA][ROOM][AFTER_JOIN] cached socket=${socket.id} room=${roomId}`);
-      const sockets = await io.in(roomId).fetchSockets();
-      const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
-      socket.emit("room-users", otherSocketIds);
-      console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] cached socket=${socket.id} room=${roomId}`);
-      socket.to(roomId).emit("user-joined", socket.id);
-      console.log(`[SPABLA][ROOM_USERS] cached ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
-      console.log(`[SPABLA] ${socket.id} re-joined sala (cached): ${roomId}`);
-      return;
-    }
-
-    const userClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${socket.data.token as string}` } },
-      auth:   { persistSession: false, autoRefreshToken: false },
-    });
-
-    const { data: asParticipant } = await userClient
-      .from("conversation_participants")
-      .select("user_id")
-      .eq("conversation_id", roomId)
-      .eq("user_id", socket.data.userId)
-      .maybeSingle();
-
-    let asCreator = null;
-    if (!asParticipant) {
-      const { data } = await userClient
-        .from("conversations")
-        .select("id")
-        .eq("id", roomId)
-        .eq("created_by", socket.data.userId)
-        .maybeSingle();
-      asCreator = data;
-    }
-
-    if (!asParticipant && !asCreator) {
-      console.log(`[SPABLA] REJECTED join-room: socket=${socket.id} room=${roomId}`);
-      socket.emit("join-error", { message: "Not authorized for this room" });
-      return;
-    }
-
-    authorizedRooms.add(roomId);
-    socket.data.roomId = roomId; // guardado para translate server-side
-
-    console.log(`[SPABLA][ROOM][BEFORE_JOIN] socket=${socket.id} room=${roomId}`);
-    socket.join(roomId);
-    console.log(`[SPABLA][ROOM][AFTER_JOIN] socket=${socket.id} room=${roomId}`);
-    const sockets = await io.in(roomId).fetchSockets();
-    const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
-    socket.emit("room-users", otherSocketIds);
-    console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] socket=${socket.id} room=${roomId} → notifying others: [${otherSocketIds.join(", ")}]`);
-    socket.to(roomId).emit("user-joined", socket.id);
-    console.log(`[SPABLA][ROOM_USERS] ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
-    console.log(`[SPABLA] ${socket.id} (user=${(socket.data.userId as string).substring(0, 8)}) entró en sala: ${roomId}`);
-  });
-
-  socket.on("offer", (data: { roomId: string; offer: RTCSessionDescriptionInit }) => {
-    socket.to(data.roomId).emit("offer", { from: socket.id, offer: data.offer });
-  });
-
-  socket.on("answer", (data: { roomId: string; answer: RTCSessionDescriptionInit }) => {
-    socket.to(data.roomId).emit("answer", { from: socket.id, answer: data.answer });
-  });
-
-  socket.on("ice-candidate", (data: { roomId: string; candidate: RTCIceCandidateInit }) => {
-    socket.to(data.roomId).emit("ice-candidate", { from: socket.id, candidate: data.candidate });
-  });
-
-  socket.on("subtitle", (data: {
-    roomId: string; originalText: string; translatedText: string;
-    fromLang: string; toLang: string; ts: number;
-  }) => {
-    socket.to(data.roomId).emit("subtitle", { from: socket.id, ...data });
-  });
-
-  // Actualiza el idioma destino sin reiniciar la sesión Deepgram
-  socket.on("update-target-lang", (targetLang: string | null) => {
-    socket.data.targetLang = targetLang ?? null;
-    console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
-  });
-
-  socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
-    lang: string; fromLang?: string; targetLang?: string | null;
-  }) => {
+  // ── Opens (or reopens) a Deepgram live session with the given params ────────
+  function openDeepgram(lang: string, fromLang: string, targetLang: string | null) {
     dgConn = closeDG(dgConn);
-
-    // Almacenar idiomas para traducción server-side
-    socket.data.fromLang   = fromLang   ?? lang;
-    socket.data.targetLang = targetLang ?? null;
 
     if (!process.env.DEEPGRAM_API_KEY) {
       console.error("[SPABLA][DG] DEEPGRAM_API_KEY no configurada");
@@ -259,13 +165,10 @@ io.on("connection", (socket: Socket) => {
     }
 
     try {
-      const endpointing = ENDPOINTING_BY_LANG[socket.data.fromLang as string] ?? 500;
-      console.log(`[STT] opening session lang=${lang} fromLang=${socket.data.fromLang} endpointing=${endpointing}ms`);
+      const endpointing = ENDPOINTING_BY_LANG[fromLang] ?? 500;
+      console.log(`[STT] opening session lang=${lang} fromLang=${fromLang} endpointing=${endpointing}ms`);
       let accumulatedText = "";
-      // Capture the connection in a local const so Close/Error handlers
-      // can check whether dgConn still refers to THIS session before
-      // nulling it. Without this, a stale Close event from a previous
-      // session overwrites the current dgConn with null (closure bug).
+
       const thisConn = deepgram.listen.live({
         language:        lang,
         model:           "nova-2",
@@ -350,7 +253,6 @@ io.on("connection", (socket: Socket) => {
           }
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
-          // isFinal reflects speech_final — only true for complete utterances
           if (isActualFinal) console.log(`[TRACE-3] server→sender transcript-result text="${finalText.substring(0,60)}"`);
           socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
@@ -363,8 +265,32 @@ io.on("connection", (socket: Socket) => {
       });
 
       thisConn.on(LiveTranscriptionEvents.Close, () => {
-        console.log(`[SPABLA][DG] Sesión cerrada: socket=${socket.id}`);
-        if (dgConn === thisConn) dgConn = null;
+        console.log(`[SPABLA][DG] closed: socket=${socket.id}`);
+        if (dgConn !== thisConn) return;
+        dgConn = null;
+
+        if (!socket.connected || !socket.data.dgTranscribing) {
+          console.log(`[SPABLA][DG] reopen skipped (connected=${socket.connected} transcribing=${socket.data.dgTranscribing})`);
+          return;
+        }
+
+        // Rate limit: max 3 auto-reopens in 60 seconds
+        const now = Date.now();
+        while (dgReopenTimes.length > 0 && dgReopenTimes[0] < now - 60_000) {
+          dgReopenTimes.shift();
+        }
+        if (dgReopenTimes.length >= 3) {
+          console.warn(`[SPABLA][DG] reopen skipped — rate limit (${dgReopenTimes.length} in last 60s): socket=${socket.id}`);
+          return;
+        }
+
+        dgReopenTimes.push(now);
+        console.log(`[SPABLA][DG] reopening after close (attempt ${dgReopenTimes.length}/3 in last 60s): socket=${socket.id} lang=${socket.data.dgLang}`);
+        openDeepgram(
+          socket.data.dgLang     as string,
+          socket.data.dgFromLang as string,
+          socket.data.dgTargetLang as string | null,
+        );
       });
 
     } catch (err: any) {
@@ -372,6 +298,114 @@ io.on("connection", (socket: Socket) => {
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
       dgConn = null;
     }
+  }
+  // ── End openDeepgram ────────────────────────────────────────────────────────
+
+  socket.on("join-room", async (roomId: string) => {
+    if (!UUID_REGEX.test(roomId)) {
+      socket.emit("join-error", { message: "Invalid room ID" });
+      return;
+    }
+
+    const authorizedRooms = socket.data.authorizedRooms as Set<string>;
+    if (authorizedRooms.has(roomId)) {
+      console.log(`[SPABLA][ROOM][BEFORE_JOIN] cached socket=${socket.id} room=${roomId}`);
+      socket.join(roomId);
+      console.log(`[SPABLA][ROOM][AFTER_JOIN] cached socket=${socket.id} room=${roomId}`);
+      const sockets = await io.in(roomId).fetchSockets();
+      const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
+      socket.emit("room-users", otherSocketIds);
+      console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] cached socket=${socket.id} room=${roomId}`);
+      socket.to(roomId).emit("user-joined", socket.id);
+      console.log(`[SPABLA][ROOM_USERS] cached ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
+      console.log(`[SPABLA] ${socket.id} re-joined sala (cached): ${roomId}`);
+      return;
+    }
+
+    const userClient = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${socket.data.token as string}` } },
+      auth:   { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { data: asParticipant } = await userClient
+      .from("conversation_participants")
+      .select("user_id")
+      .eq("conversation_id", roomId)
+      .eq("user_id", socket.data.userId)
+      .maybeSingle();
+
+    let asCreator = null;
+    if (!asParticipant) {
+      const { data } = await userClient
+        .from("conversations")
+        .select("id")
+        .eq("id", roomId)
+        .eq("created_by", socket.data.userId)
+        .maybeSingle();
+      asCreator = data;
+    }
+
+    if (!asParticipant && !asCreator) {
+      console.log(`[SPABLA] REJECTED join-room: socket=${socket.id} room=${roomId}`);
+      socket.emit("join-error", { message: "Not authorized for this room" });
+      return;
+    }
+
+    authorizedRooms.add(roomId);
+    socket.data.roomId = roomId;
+
+    console.log(`[SPABLA][ROOM][BEFORE_JOIN] socket=${socket.id} room=${roomId}`);
+    socket.join(roomId);
+    console.log(`[SPABLA][ROOM][AFTER_JOIN] socket=${socket.id} room=${roomId}`);
+    const sockets = await io.in(roomId).fetchSockets();
+    const otherSocketIds = sockets.filter(s => s.id !== socket.id).map(s => s.id);
+    socket.emit("room-users", otherSocketIds);
+    console.log(`[SPABLA][ROOM][USER_JOINED_EMIT] socket=${socket.id} room=${roomId} → notifying others: [${otherSocketIds.join(", ")}]`);
+    socket.to(roomId).emit("user-joined", socket.id);
+    console.log(`[SPABLA][ROOM_USERS] ${socket.id} → room ${roomId} | others: [${otherSocketIds.join(", ")}]`);
+    console.log(`[SPABLA] ${socket.id} (user=${(socket.data.userId as string).substring(0, 8)}) entró en sala: ${roomId}`);
+  });
+
+  socket.on("offer", (data: { roomId: string; offer: RTCSessionDescriptionInit }) => {
+    socket.to(data.roomId).emit("offer", { from: socket.id, offer: data.offer });
+  });
+
+  socket.on("answer", (data: { roomId: string; answer: RTCSessionDescriptionInit }) => {
+    socket.to(data.roomId).emit("answer", { from: socket.id, answer: data.answer });
+  });
+
+  socket.on("ice-candidate", (data: { roomId: string; candidate: RTCIceCandidateInit }) => {
+    socket.to(data.roomId).emit("ice-candidate", { from: socket.id, candidate: data.candidate });
+  });
+
+  socket.on("subtitle", (data: {
+    roomId: string; originalText: string; translatedText: string;
+    fromLang: string; toLang: string; ts: number;
+  }) => {
+    socket.to(data.roomId).emit("subtitle", { from: socket.id, ...data });
+  });
+
+  // Actualiza el idioma destino sin reiniciar la sesión Deepgram
+  socket.on("update-target-lang", (targetLang: string | null) => {
+    socket.data.targetLang    = targetLang ?? null;
+    socket.data.dgTargetLang  = targetLang ?? null;
+    console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
+  });
+
+  socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
+    lang: string; fromLang?: string; targetLang?: string | null;
+  }) => {
+    // Persist params so openDeepgram() can reuse them on auto-reopen
+    socket.data.dgLang        = lang;
+    socket.data.dgFromLang    = fromLang   ?? lang;
+    socket.data.dgTargetLang  = targetLang ?? null;
+    socket.data.dgTranscribing = true;
+
+    // Also keep legacy fields used by transcript handler
+    socket.data.fromLang   = fromLang   ?? lang;
+    socket.data.targetLang = targetLang ?? null;
+
+    openDeepgram(lang, socket.data.dgFromLang as string, socket.data.dgTargetLang as string | null);
   });
 
   socket.on("audio-chunk", (chunk: ArrayBuffer) => {
@@ -390,11 +424,13 @@ io.on("connection", (socket: Socket) => {
   });
 
   socket.on("transcribe-stop", () => {
+    socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
     console.log(`[SPABLA][DG] Transcripción detenida por ${socket.id}`);
   });
 
   socket.on("disconnect", () => {
+    socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
     console.log("[SPABLA] Usuario desconectado:", socket.id);
   });
