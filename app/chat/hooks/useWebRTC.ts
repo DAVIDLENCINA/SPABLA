@@ -122,6 +122,19 @@ export function useWebRTC(
     voiceEnabledRef.current = voiceEnabled;
     console.log("[TTS] voiceEnabled →", voiceEnabled);
   }, [voiceEnabled]);
+
+  // TTS — fires in React's commit phase after captionsHistory is updated,
+  // guaranteeing voiceEnabledRef.current is current (all prop effects have run).
+  // Replaces the previous speak() call inside the socket subtitle handler,
+  // which could race against the voiceEnabled prop update effect.
+  useEffect(() => {
+    if (!voiceEnabledRef.current || captionsHistory.length === 0) return;
+    const last = captionsHistory[captionsHistory.length - 1];
+    if (last.speaker !== "remote" || !last.text) return;
+    console.log("[TTS] captionsHistory effect → speak | text:", last.text.substring(0, 40));
+    speak(last.text, myLangRef.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [captionsHistory]);
   useEffect(() => {
     targetLangRef.current = targetLang;
     // Notificar al servidor cuando cambia el idioma destino (experimento server-side)
@@ -601,14 +614,10 @@ export function useWebRTC(
 
       console.log(`[TRACE-4] remote received subtitle text="${text.substring(0,60)}"`);
       console.log("[STT CLIENT] subtitle received | text:", text.substring(0, 40));
-      // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
-      console.log("[TTS] subtitle received | text:", text.substring(0, 40));
-      console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
-      if (voiceEnabledRef.current) {
-        speak(text, myLangRef.current);
-      }
 
-      // Append to conversation history — remote speaker, text is already in our language
+      // Append to conversation history — remote speaker, text is already in our language.
+      // TTS is triggered by the captionsHistory useEffect below (outside this closure)
+      // so voiceEnabledRef is guaranteed to be current when speak() is called.
       console.log(`[TRACE-5] creating bubble text="${text.substring(0,60)}"`);
       setCaptionsHistory(prev => [...prev, {
         id:      Date.now().toString(),
