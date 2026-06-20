@@ -95,10 +95,6 @@ export function useWebRTC(
   // Fix 6 — watchdog interval for connection health monitoring
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Lifecycle guards — block async callbacks from touching state after hang-up
-  const callActiveRef     = useRef(false);
-  const conversationIdRef = useRef<string | null>(conversationId);
-
   // Guard: prevents endCall() re-entering when socket.disconnect() triggers a "disconnect" event
   const endingRef = useRef(false);
   const hasCreatedOfferRef = useRef(false);
@@ -133,7 +129,6 @@ export function useWebRTC(
       socketRef.current.emit("update-target-lang", targetLang);
     }
   }, [targetLang]);
-  useEffect(() => { conversationIdRef.current = conversationId; }, [conversationId]);
 
   // Fix A — restart Deepgram when the user changes language during an active call.
   // Without this, Deepgram keeps transcribing in the old language and produces
@@ -149,8 +144,7 @@ export function useWebRTC(
   const endCall = useCallback(() => {
     if (endingRef.current) return;
     console.trace("[SPABLA][ENDCALL] called from:");
-    endingRef.current   = true;
-    callActiveRef.current = false; // block all pending async callbacks immediately
+    endingRef.current = true;
     setCallEndedSignal(prev => prev + 1);
 
     // Stop watchdog
@@ -332,7 +326,6 @@ export function useWebRTC(
       const connTs = new Date().toISOString().slice(11, 23);
       console.log(`[SPABLA][SOCK] ${connTs} socket connected`);
       setConnected(true);
-      callActiveRef.current = true;
       console.log("[SPABLA][ROOM] emitting join-room", conversationId);
       socket.emit("join-room", conversationId, (ack: { ok: boolean; error?: string }) => {
         console.log("[SPABLA][ROOM] join-room ack:", ack);
@@ -551,7 +544,6 @@ export function useWebRTC(
 
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
-        if (!callActiveRef.current) return;
         setCaptionsHistory(prev => [...prev, {
           id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
         }]);
@@ -583,19 +575,13 @@ export function useWebRTC(
         console.log(`[STT CLIENT] [TIMING] translate=${Date.now()-_tStart}ms`);
       }
 
-      // Guard: call may have ended during the async translation fetch
-      if (!callActiveRef.current) {
-        console.log("[STT CLIENT] call ended during translation — discarding bubble");
-        return;
-      }
-
       console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
       }]);
 
       console.log("[STT CLIENT] subtitle emitted | original:", finalOriginal.substring(0, 30), "translated:", translated.substring(0, 30));
-      socket.emit("subtitle", { roomId: conversationIdRef.current, original: finalOriginal, translated, fromLang: from });
+      socket.emit("subtitle", { roomId: conversationId, original: finalOriginal, translated, fromLang: from });
     });
 
     // 6 — Incoming subtitle from remote participant (already translated by the sender)
