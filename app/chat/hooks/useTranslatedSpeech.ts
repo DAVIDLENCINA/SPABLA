@@ -92,23 +92,47 @@ export function useTranslatedSpeech() {
       }
       await audioCtx.resume();
 
-      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      if (audioCtx.state === "running") {
+        // Web Audio API path — preferred on iOS Safari where HTMLAudioElement is blocked
+        let webAudioDone = false;
+        try {
+          const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-      // Guard 4 — cancel() may have been called while decoding
-      if (generationRef.current !== myGen) { console.log("[TTS] cancelled after decode"); return; }
+          // Guard 4 — cancel() may have been called while decoding
+          if (generationRef.current !== myGen) { console.log("[TTS] cancelled after decode"); return; }
 
-      const source = audioCtx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioCtx.destination);
-      source.onended = () => {
-        console.log("[TTS] audio ended");
-        if (currentSourceRef.current === source) currentSourceRef.current = null;
+          const source = audioCtx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioCtx.destination);
+          source.onended = () => {
+            console.log("[TTS] audio ended");
+            if (currentSourceRef.current === source) currentSourceRef.current = null;
+          };
+          currentSourceRef.current = source;
+
+          console.log("[TTS] calling source.start()");
+          source.start();
+          console.log("[TTS] source.start() called");
+          webAudioDone = true;
+        } catch (webAudioErr: any) {
+          console.warn("[TTS] Web Audio failed, using HTMLAudioElement fallback:", webAudioErr?.name, webAudioErr?.message ?? webAudioErr);
+        }
+        if (webAudioDone) return;
+      }
+
+      // HTMLAudioElement fallback — audioCtx suspended (desktop) or Web Audio threw
+      // arrayBuffer is still intact here because decodeAudioData was either not called
+      // (suspended path) or failed before consuming it.
+      if (generationRef.current !== myGen) return;
+      console.warn("[TTS] HTMLAudioElement fallback | audioCtx state:", audioCtx?.state ?? "null");
+      const blob = new Blob([arrayBuffer], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      const htmlAudio = new Audio(url);
+      htmlAudio.onended = () => {
+        console.log("[TTS] htmlAudio fallback ended");
+        URL.revokeObjectURL(url);
       };
-      currentSourceRef.current = source;
-
-      console.log("[TTS] calling source.start()");
-      source.start();
-      console.log("[TTS] source.start() called");
+      await htmlAudio.play();
     } catch (err: any) {
       console.warn("[TTS] speak error:", err?.name, err?.message ?? err);
     }
