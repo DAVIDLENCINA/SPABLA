@@ -78,6 +78,15 @@ export default function Chat() {
   // Show voice controls whenever WebRTC is active, even if signaling state lags behind
   const showVoiceControls = (isInCall || webrtc.connected || webrtc.hasRemote) && !videoActive;
 
+  // Auto-enable voice when a call becomes active — user should not need to tap Escuchar.
+  // unlockAudio() is guarded for browser-only; useEffect never runs during SSR.
+  useEffect(() => {
+    if (showVoiceControls) {
+      setVoiceEnabled(true);
+      if (typeof window !== "undefined") unlockAudio();
+    }
+  }, [showVoiceControls]);
+
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
     if (!id) return;
