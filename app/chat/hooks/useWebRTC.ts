@@ -92,6 +92,12 @@ export function useWebRTC(
   // Last non-empty partial transcript — fallback when speech_final fires with empty text
   const lastPartialTranscriptRef = useRef<string>("");
 
+  // STT warm-up: timestamp after which transcript-result events are processed
+  const sttWarmupUntilRef  = useRef<number>(0);
+  // Dedup: last subtitle emitted locally and last subtitle received remotely
+  const lastLocalEmitRef   = useRef<{ text: string; ts: number } | null>(null);
+  const lastRemoteRecvRef  = useRef<{ text: string; ts: number } | null>(null);
+
   // Fix 6 — watchdog interval for connection health monitoring
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -119,7 +125,12 @@ export function useWebRTC(
   // Keep lang refs in sync when props change between renders
   useEffect(() => { myLangRef.current = myLang; },             [myLang]);
   useEffect(() => {
+    const wasEnabled = voiceEnabledRef.current;
     voiceEnabledRef.current = voiceEnabled;
+    if (voiceEnabled && !wasEnabled) {
+      sttWarmupUntilRef.current = Date.now() + 2000;
+      console.log("[STT] warmup started — ignoring results for 2000ms");
+    }
     console.log("[TTS] voiceEnabled →", voiceEnabled);
   }, [voiceEnabled]);
   useEffect(() => {
@@ -514,6 +525,10 @@ export function useWebRTC(
       text, isFinal, serverWillTranslate,
     }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
       if (endingRef.current) return;
+      if (Date.now() < sttWarmupUntilRef.current) {
+        console.log("[STT] warmup — ignoring result isFinal:", isFinal, "text:", (text ?? "").substring(0, 45));
+        return;
+      }
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
 
       const original  = text?.trim();
@@ -585,6 +600,15 @@ export function useWebRTC(
       // Guard 3 — re-check after awaits: endCall() may have run during translate fetch
       if (endingRef.current) return;
 
+      // Dedup — skip if this exact text was emitted locally within the last 4 s
+      const _nowLocal = Date.now();
+      const _lastLocal = lastLocalEmitRef.current;
+      if (_lastLocal && _lastLocal.text === finalOriginal && _nowLocal - _lastLocal.ts < 4000) {
+        console.log("[STT] dedup-skip local:", finalOriginal.substring(0, 45));
+        return;
+      }
+      lastLocalEmitRef.current = { text: finalOriginal, ts: _nowLocal };
+
       console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
@@ -609,6 +633,15 @@ export function useWebRTC(
       const text      = (payload.translated || payload.original || "").trim();
       const rawSpoken = (payload.original || text).trim();
       if (!text) return;
+
+      // Dedup — skip if this exact text was received remotely within the last 4 s
+      const _nowRemote = Date.now();
+      const _lastRemote = lastRemoteRecvRef.current;
+      if (_lastRemote && _lastRemote.text === text && _nowRemote - _lastRemote.ts < 4000) {
+        console.log("[STT] dedup-skip remote:", text.substring(0, 45));
+        return;
+      }
+      lastRemoteRecvRef.current = { text, ts: _nowRemote };
 
       console.log(`[TRACE-4] remote received subtitle text="${text.substring(0,60)}"`);
       console.log("[STT CLIENT] subtitle received | text:", text.substring(0, 40));
