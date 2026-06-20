@@ -7,19 +7,37 @@ import { supabase } from "@/lib/supabase";
 let audioUnlocked = false;
 
 // Call this synchronously inside a user gesture handler (e.g. onClick).
-// Creates a silent audio element and plays it to unlock HTMLAudioElement on iOS.
+// Uses two complementary techniques to unlock audio on iOS Safari:
+// 1. HTMLAudioElement.play() with a silent WAV
+// 2. AudioContext.resume() + silent buffer source (more reliable on iOS 16+)
 export function unlockAudio() {
   if (audioUnlocked) return;
-  const audio = new Audio();
-  // Minimal valid WAV: 44-byte header + 0 samples = silence
-  audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-  audio.play()
-    .then(() => { audioUnlocked = true; console.log("[TTS] audio unlocked ✓"); })
-    .catch((err) => {
-      // Mark as attempted regardless — some iOS versions unlock even on failed play().
-      audioUnlocked = true;
-      console.log("[TTS] audio unlock attempt (may still work):", err?.message ?? err);
-    });
+  audioUnlocked = true; // mark immediately so concurrent calls don't race
+
+  // ── Technique 1: HTMLAudioElement ─────────────────────────────────────────
+  const htmlAudio = new Audio();
+  htmlAudio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+  htmlAudio.play()
+    .then(() => console.log("[TTS] html audio unlock ok"))
+    .catch((err) => console.log("[TTS] html audio unlock fail:", err?.message ?? err));
+
+  // ── Technique 2: AudioContext ─────────────────────────────────────────────
+  try {
+    const AudioCtx = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (AudioCtx) {
+      const ctx = new AudioCtx();
+      ctx.resume().then(() => {
+        const buffer = ctx.createBuffer(1, 1, 22050); // 1 sample of silence
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        console.log("[TTS] audio context unlock ok");
+      }).catch((err) => console.log("[TTS] audio context unlock fail:", err?.message ?? err));
+    }
+  } catch (err: any) {
+    console.log("[TTS] audio context unlock fail:", err?.message ?? err);
+  }
 }
 
 export function useTranslatedSpeech() {
