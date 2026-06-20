@@ -74,6 +74,8 @@ export default function Chat() {
   const isIncoming = signaling.callStatus === 'incoming';
   const isInCall   = signaling.callStatus === 'accepted';
   const voiceActive = isRinging || isInCall;
+  // Show voice controls whenever WebRTC is active, even if signaling state lags behind
+  const showVoiceControls = (isInCall || webrtc.connected || webrtc.hasRemote) && !videoActive;
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
@@ -602,7 +604,7 @@ export default function Chat() {
           </div>
 
           {/* Pastilla de estado de llamada */}
-          {(voiceActive || isIncoming) && (
+          {(voiceActive || isIncoming || showVoiceControls) && (
             <div style={{
               display: "flex", alignItems: "center", gap: 6,
               padding: "4px 10px", marginBottom: 8, borderRadius: 20,
@@ -638,7 +640,7 @@ export default function Chat() {
                   Rechazar
                 </button>
               )}
-              {isInCall && !videoActive && (
+              {showVoiceControls && (
                 <button
                   onClick={() => {
                     const next = !voiceEnabled;
@@ -675,7 +677,7 @@ export default function Chat() {
                   Escuchar
                 </button>
               )}
-              {isInCall && !videoActive && (
+              {showVoiceControls && (
                 <button
                   onClick={webrtc.toggleMic}
                   title={webrtc.micOn ? "Silenciar micrófono" : "Activar micrófono"}
