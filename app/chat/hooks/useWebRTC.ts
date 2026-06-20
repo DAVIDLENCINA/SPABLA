@@ -202,6 +202,14 @@ export function useWebRTC(
     hasCreatedOfferRef.current = false;
     setError(null);
 
+    // Unlock speechSynthesis within the user gesture so Chrome allows speak()
+    // from async socket callbacks later in the call. Must happen before first await.
+    if (typeof window !== "undefined" && window.speechSynthesis) {
+      const _u = new SpeechSynthesisUtterance(" ");
+      _u.volume = 0;
+      window.speechSynthesis.speak(_u);
+    }
+
     // Create and unlock AudioContext synchronously within the user gesture.
     // iOS Safari suspends any AudioContext created or resumed outside a
     // synchronous gesture handler — resume() in async callbacks is silently ignored,

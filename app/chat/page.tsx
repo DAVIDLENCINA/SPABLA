@@ -48,7 +48,7 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [otherLang, setOtherLang] = useState<string | null>(null);
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [showAttachMsg, setShowAttachMsg] = useState(false);
   const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
