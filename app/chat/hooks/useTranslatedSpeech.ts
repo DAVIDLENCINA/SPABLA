@@ -19,6 +19,9 @@ export function useTranslatedSpeech() {
   const isSpeakingRef       = useRef(false);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const pendingRef          = useRef<SpeechSynthesisUtterance | null>(null);
+  // Chrome may have a stale speaking state at the start of a session.
+  // We flush it with cancel() before the very first speak() call.
+  const hasPrimedRef        = useRef(false);
 
   const drain = useCallback(() => {
     const next = pendingRef.current;
@@ -27,6 +30,12 @@ export function useTranslatedSpeech() {
     isSpeakingRef.current       = true;
     currentUtteranceRef.current = next;
     window.speechSynthesis.speak(next);
+  }, []);
+
+  const speakNow = useCallback((u: SpeechSynthesisUtterance) => {
+    isSpeakingRef.current       = true;
+    currentUtteranceRef.current = u;
+    window.speechSynthesis.speak(u);
   }, []);
 
   const speak = useCallback(
@@ -59,20 +68,28 @@ export function useTranslatedSpeech() {
         drain();
       };
 
+      if (!hasPrimedRef.current) {
+        // First speak of this session: flush any stale Chrome speaking state
+        // before queuing the real utterance.
+        hasPrimedRef.current = true;
+        console.log("[TTS] priming — cancel + defer first utterance");
+        window.speechSynthesis.cancel();
+        setTimeout(() => speakNow(u), 0);
+        return;
+      }
+
       if (isSpeakingRef.current) {
-        // Engine busy (by our own tracking) — queue latest, discard previous pending.
         pendingRef.current = u;
       } else {
-        isSpeakingRef.current       = true;
-        currentUtteranceRef.current = u;
-        window.speechSynthesis.speak(u);
+        speakNow(u);
       }
     },
-    [supported, drain],
+    [supported, drain, speakNow],
   );
 
   const cancel = useCallback(() => {
     if (!supported) return;
+    hasPrimedRef.current        = false;
     isSpeakingRef.current       = false;
     currentUtteranceRef.current = null;
     pendingRef.current          = null;
