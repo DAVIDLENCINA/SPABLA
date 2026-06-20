@@ -79,11 +79,12 @@ export default function Chat() {
   const showVoiceControls = (isInCall || webrtc.connected || webrtc.hasRemote) && !videoActive;
 
   // Auto-enable voice when a call becomes active — user should not need to tap Escuchar.
-  // unlockAudio() is guarded for browser-only; useEffect never runs during SSR.
+  // Auto-enable voice state when call becomes active.
+  // unlockAudio() is NOT called here — useEffect is async and not a user gesture,
+  // so iOS Safari would abort the play(). Unlock happens in handlePhoneButton instead.
   useEffect(() => {
     if (showVoiceControls) {
       setVoiceEnabled(true);
-      if (typeof window !== "undefined") unlockAudio();
     }
   }, [showVoiceControls]);
 
@@ -443,6 +444,10 @@ export default function Chat() {
 
   const handlePhoneButton = async () => {
     if (callHandlerInFlightRef.current) return;
+    // Unlock TTS audio context synchronously inside the user gesture,
+    // before any await — iOS Safari requires this before getUserMedia activates
+    // the audio session in record mode.
+    unlockAudio();
     callHandlerInFlightRef.current = true;
     try {
       const status = signaling.callStatus;
