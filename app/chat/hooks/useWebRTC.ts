@@ -198,6 +198,7 @@ export function useWebRTC(
     setLocalCaption(null);
     setRemoteCaption(null);
     setCaptionsHistory([]);  // clear history only on hang-up, not on minimize
+    setMicOn(true);          // reset so next call doesn't show stale "Muted"
     startingRef.current = false;
     socketRef.current = null;
     pcRef.current = null;
