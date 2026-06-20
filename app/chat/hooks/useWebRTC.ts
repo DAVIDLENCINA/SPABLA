@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { supabase } from "@/lib/supabase";
 import { useTranslatedSpeech } from "./useTranslatedSpeech";
+import { PhraseAccumulator } from "@/lib/voice/PhraseAccumulator";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
@@ -95,6 +96,11 @@ export function useWebRTC(
   // Fix 6 — watchdog interval for connection health monitoring
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Phrase accumulator — consolidates is_final segments before translation
+  const accumulatorRef       = useRef<PhraseAccumulator | null>(null);
+  // True when server has TRANSLATE_SERVER_SIDE=true — onFlush skips subtitle emit to avoid duplication
+  const serverTranslateModeRef = useRef(false);
+
   // Guard: prevents endCall() re-entering when socket.disconnect() triggers a "disconnect" event
   const endingRef = useRef(false);
   const hasCreatedOfferRef = useRef(false);
@@ -152,6 +158,11 @@ export function useWebRTC(
 
     // Stop TTS if speaking
     cancelTTS();
+
+    // Destroy phrase accumulator
+    accumulatorRef.current?.destroy();
+    accumulatorRef.current     = null;
+    serverTranslateModeRef.current = false;
 
     // Stop Deepgram and audio processing
     socketRef.current?.emit("transcribe-stop");
@@ -299,6 +310,49 @@ export function useWebRTC(
       auth: { token: callSession?.access_token ?? "" },
     });
     socketRef.current = socket;
+
+    // Instantiate phrase accumulator for this call session.
+    // onFlush receives the consolidated text of one or more is_final segments
+    // and is the single point where translation and subtitle emission happen.
+    accumulatorRef.current?.destroy();
+    serverTranslateModeRef.current = false;
+    accumulatorRef.current = new PhraseAccumulator(async (consolidatedText) => {
+      const from = myLangRef.current;
+      const to   = targetLangRef.current;
+      let translated = consolidatedText;
+
+      if (to && from !== to) {
+        const _tStart = Date.now();
+        console.log("[ACM] translating flush | from:", from, "to:", to);
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const res = await fetch("/api/translate", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${session?.access_token ?? ""}`,
+            },
+            body: JSON.stringify({ text: consolidatedText, from, to }),
+          });
+          const data = await res.json();
+          translated = data.translation || consolidatedText;
+          console.log("[ACM] translation ok:", translated.substring(0, 45));
+        } catch { }
+        console.log(`[ACM] [TIMING] translate=${Date.now()-_tStart}ms`);
+      }
+
+      setCaptionsHistory(prev => [...prev, {
+        id: Date.now().toString(), speaker: "local", text: consolidatedText, original: consolidatedText,
+      }]);
+
+      // Skip subtitle emit when server already translated and forwarded to remote
+      // (TRANSLATE_SERVER_SIDE=true on server). Avoids duplicate subtitles on receiver.
+      if (!serverTranslateModeRef.current) {
+        socketRef.current?.emit("subtitle", {
+          roomId: conversationId, original: consolidatedText, translated, fromLang: from,
+        });
+      }
+    });
 
     const doCreateOffer = async () => {
       if (hasCreatedOfferRef.current) return;
@@ -504,31 +558,32 @@ export function useWebRTC(
       try { await pc.addIceCandidate(d.candidate); } catch {}
     });
 
-    // 5 — Local transcription → caption + emit subtitle to room
-    socket.on("transcript-result", async ({
+    // 5 — Local transcription → PhraseAccumulator → translation → subtitle
+    socket.on("transcript-result", ({
       text, isFinal, serverWillTranslate,
     }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
 
-      const original  = text?.trim();
-      const fallback  = lastPartialTranscriptRef.current?.trim();
+      const original      = text?.trim();
+      const fallback      = lastPartialTranscriptRef.current?.trim();
       const finalOriginal = original || (isFinal ? fallback : "");
 
-      // Always clear the partial caption when a final arrives, even if text is empty.
       if (isFinal) {
         setLocalCaption(null);
       }
 
+      // ── Parcial: actualiza caption visual, mantiene el timer abierto ────────
       if (!isFinal) {
         if (original) {
           lastPartialTranscriptRef.current = original;
           console.log("[STT CLIENT] partial stored:", original.substring(0, 45));
           setLocalCaption({ text: original, original, partial: true });
+          accumulatorRef.current?.activity();
         }
         return;
       }
 
-      // isFinal === true from here
+      // ── isFinal === true ─────────────────────────────────────────────────────
       if (!finalOriginal) {
         console.log("[STT CLIENT] final ignored no fallback");
         return;
@@ -542,46 +597,13 @@ export function useWebRTC(
 
       lastPartialTranscriptRef.current = "";
 
-      // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
-      if (serverWillTranslate) {
-        setCaptionsHistory(prev => [...prev, {
-          id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
-        }]);
-        return;
-      }
+      // Track server-translate mode so onFlush skips subtitle re-emission
+      if (serverWillTranslate) serverTranslateModeRef.current = true;
 
-      // ── Flujo actual (cliente traduce) ──────────────────────────────────────
-      const from = myLangRef.current;
-      const to   = targetLangRef.current;
-      let translated = finalOriginal;
-
-      if (to && from !== to) {
-        const _tStart = Date.now();
-        console.log("[STT CLIENT] translating final | from:", from, "to:", to);
-        try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const res = await fetch("/api/translate", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "Authorization": `Bearer ${session?.access_token ?? ""}`,
-            },
-            body: JSON.stringify({ text: finalOriginal, from, to }),
-          });
-          const data = await res.json();
-          translated = data.translation || finalOriginal;
-          console.log("[STT CLIENT] translation ok:", translated.substring(0, 45));
-        } catch { }
-        console.log(`[STT CLIENT] [TIMING] translate=${Date.now()-_tStart}ms`);
-      }
-
-      console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
-      setCaptionsHistory(prev => [...prev, {
-        id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
-      }]);
-
-      console.log("[STT CLIENT] subtitle emitted | original:", finalOriginal.substring(0, 30), "translated:", translated.substring(0, 30));
-      socket.emit("subtitle", { roomId: conversationId, original: finalOriginal, translated, fromLang: from });
+      // All is_final segments go through the accumulator regardless of serverWillTranslate.
+      // Translation and subtitle emission happen in onFlush once a phrase is consolidated.
+      console.log("[ACM] is_final → add:", finalOriginal.substring(0, 45));
+      accumulatorRef.current?.add(finalOriginal);
     });
 
     // 6 — Incoming subtitle from remote participant (already translated by the sender)
