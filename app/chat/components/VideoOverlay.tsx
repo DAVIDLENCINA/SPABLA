@@ -65,14 +65,14 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
 
   // Local pip is rendered outside the remote container so it participates
   // in the root stacking context at z-index 3, above .msg at z-index 2.
-  const localPip = (top: number | string, right: number) => (
+  const localPip = (
     <video
       ref={localVideoRef}
       autoPlay playsInline muted
       style={{
         position: "fixed",
-        top, right,
-        width: 80, height: 110,
+        bottom: 84, right: 12,
+        width: 70, height: 95,
         objectFit: "cover",
         borderRadius: 12,
         border: "1.5px solid rgba(0,212,255,.6)",
@@ -91,7 +91,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
           style={{ position: "fixed", inset: 0, zIndex: 1, background: "#000" }}
         >
           <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0, filter: "brightness(0.55)" }}
           />
           <div
             onClick={e => { e.stopPropagation(); onToggleExpand(); }}
@@ -100,13 +100,12 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
             <ContractIcon />
           </div>
         </div>
-        {localPip(12, 12)}
+        {localPip}
       </>
     );
   }
 
   // ── Modo por defecto: vídeo remoto como fondo del área de conversación ──
-  const pipTop = "calc(max(14px, env(safe-area-inset-top, 14px)) + 150px)";
   return (
     <>
       {bubbleElevation}
@@ -121,7 +120,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
         }}
       >
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0, filter: "brightness(0.55)" }}
         />
         <div
           onClick={e => { e.stopPropagation(); onToggleExpand(); }}
@@ -130,7 +129,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
           <ExpandIcon />
         </div>
       </div>
-      {localPip(pipTop, 10)}
+      {localPip}
     </>
   );
 }
