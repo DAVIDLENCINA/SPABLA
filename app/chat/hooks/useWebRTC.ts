@@ -237,8 +237,8 @@ export function useWebRTC(
       stream = await navigator.mediaDevices.getUserMedia({
         video: mode === 'video',
         audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
+          echoCancellation: true,
+          noiseSuppression: true,
           autoGainControl: false,
         },
       });
