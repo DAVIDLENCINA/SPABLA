@@ -77,7 +77,7 @@ export default function Chat() {
   const voiceActive    = isRinging || isInCall;
   const isIncomingVideo = isIncoming && signaling.incomingCall?.mode === 'video';
   // Show voice controls whenever WebRTC is active, even if signaling state lags behind
-  const showVoiceControls = (isInCall || webrtc.connected || webrtc.hasRemote) && !videoActive;
+  const showVoiceControls = isInCall || webrtc.connected || webrtc.hasRemote;
 
   // Auto-enable voice when a call becomes active — user should not need to tap Escuchar.
   // Auto-enable voice state when call becomes active.
