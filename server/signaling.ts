@@ -210,7 +210,7 @@ io.on("connection", (socket: Socket) => {
 
         // speech_final = complete utterance (silence confirmed). Use as the only trigger
         // for translation. is_final-only events become running partials in the client caption.
-        const isActualFinal = isFinal;
+        const isActualFinal = speechFinal;
 
         // On speech_final use the full accumulated text (covers multi-segment long phrases).
         const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
