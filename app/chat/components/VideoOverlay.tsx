@@ -104,19 +104,19 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
                       paddingLeft:  isLocal ? 0 : 4,
                     }}>VOZ</div>
                     <div style={{
-                      background:           isLocal ? "rgba(62,198,198,0.13)"  : "rgba(232,82,74,0.10)",
-                      border:               `1px solid ${isLocal ? "rgba(62,198,198,0.28)" : "rgba(232,82,74,0.22)"}`,
+                      background:           isLocal ? "rgba(62,198,198,0.10)"  : "rgba(232,82,74,0.07)",
+                      border:               `1px solid ${isLocal ? "rgba(62,198,198,0.22)" : "rgba(232,82,74,0.18)"}`,
                       borderRadius:         isLocal ? "20px 20px 5px 20px" : "5px 20px 20px 20px",
-                      padding:              "10px 14px",
-                      backdropFilter:       "blur(16px)",
-                      WebkitBackdropFilter: "blur(16px)",
+                      padding:              "11px 15px",
+                      backdropFilter:       "blur(12px)",
+                      WebkitBackdropFilter: "blur(12px)",
                     }}>
-                      <p style={{ color: "#fff", fontSize: 14, margin: 0, lineHeight: 1.5, fontWeight: 450 }}>
+                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>
                         {entry.text}
                       </p>
                       {showOrig && (
-                        <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
-                          <p style={{ color: "rgba(255,255,255,0.32)", fontSize: 11, margin: 0, lineHeight: 1.4, fontStyle: "italic" }}>
+                        <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
+                          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: 0, lineHeight: 1.45, fontStyle: "italic" }}>
                             {entry.original}
                           </p>
                         </div>
