@@ -57,14 +57,23 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     unlockedRef.current = true;
   }
 
-  // Three-layer stacking:
+  // Three-layer stacking (only while VideoOverlay is mounted = videoActive):
   //   z-index 1 — remote video container (background)
-  //   z-index 2 — .msg bubbles (readable on top of camera)
-  //   z-index 3 — local pip (always visible above everything)
-  const bubbleElevation = <style>{`.msg { position: relative; z-index: 2; }`}</style>;
+  //   z-index 2 — .msg bubbles (above camera)
+  //   z-index 3 — local pip (above everything)
+  //
+  // Extra bubble styles during video call:
+  //   .msg p              → font-size 13px (≈ −15 % from 15px)
+  //   .msg > div > div:last-child → padding 9px 13px, backdrop-filter blur(18px)
+  const bubbleElevation = (
+    <style>{`
+      .msg { position: relative; z-index: 2; }
+      .msg p { font-size: 13px !important; line-height: 1.45 !important; }
+      .msg > div > div:last-child { padding: 9px 13px !important; backdrop-filter: blur(18px) !important; -webkit-backdrop-filter: blur(18px) !important; }
+    `}</style>
+  );
 
-  // Local pip is rendered outside the remote container so it participates
-  // in the root stacking context at z-index 3, above .msg at z-index 2.
+  // Local pip — fixed in root stacking context at z-index 3, above .msg (z-index 2)
   const localPip = (
     <video
       ref={localVideoRef}
@@ -72,14 +81,23 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
       style={{
         position: "fixed",
         bottom: 84, right: 12,
-        width: 70, height: 95,
+        width: 60, height: 82,
         objectFit: "cover",
-        borderRadius: 12,
+        borderRadius: 10,
         border: "1.5px solid rgba(0,212,255,.6)",
         zIndex: 3,
       }}
     />
   );
+
+  // Remote video style: darkened + slight blur so text reads first
+  const remoteStyle: React.CSSProperties = {
+    position: "absolute", inset: 0,
+    width: "100%", height: "100%",
+    objectFit: "cover",
+    opacity: webrtc.hasRemote ? 1 : 0,
+    filter: "brightness(0.35) blur(2px)",
+  };
 
   if (expanded) {
     // ── Fullscreen: cubre toda la pantalla ──
@@ -88,11 +106,9 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
         {bubbleElevation}
         <div
           onClick={unlockRemote}
-          style={{ position: "fixed", inset: 0, zIndex: 1, background: "#000" }}
+          style={{ position: "fixed", inset: 0, zIndex: 1, background: "#000", overflow: "hidden" }}
         >
-          <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0, filter: "brightness(0.55)" }}
-          />
+          <video ref={remoteVideoRef} autoPlay playsInline muted={false} style={remoteStyle} />
           <div
             onClick={e => { e.stopPropagation(); onToggleExpand(); }}
             style={{ position: "absolute", top: 12, left: 12, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
@@ -117,11 +133,10 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
           bottom: 72, left: 0, right: 0,
           zIndex: 1,
           background: "#000",
+          overflow: "hidden",
         }}
       >
-        <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0, filter: "brightness(0.55)" }}
-        />
+        <video ref={remoteVideoRef} autoPlay playsInline muted={false} style={remoteStyle} />
         <div
           onClick={e => { e.stopPropagation(); onToggleExpand(); }}
           style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
