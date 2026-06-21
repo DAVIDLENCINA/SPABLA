@@ -57,11 +57,32 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     unlockedRef.current = true;
   }
 
-  // .msg elements elevated above the overlay so bubbles always read on top of camera
+  // Three-layer stacking:
+  //   z-index 1 — remote video container (background)
+  //   z-index 2 — .msg bubbles (readable on top of camera)
+  //   z-index 3 — local pip (always visible above everything)
   const bubbleElevation = <style>{`.msg { position: relative; z-index: 2; }`}</style>;
 
+  // Local pip is rendered outside the remote container so it participates
+  // in the root stacking context at z-index 3, above .msg at z-index 2.
+  const localPip = (top: number | string, right: number) => (
+    <video
+      ref={localVideoRef}
+      autoPlay playsInline muted
+      style={{
+        position: "fixed",
+        top, right,
+        width: 80, height: 110,
+        objectFit: "cover",
+        borderRadius: 12,
+        border: "1.5px solid rgba(0,212,255,.6)",
+        zIndex: 3,
+      }}
+    />
+  );
+
   if (expanded) {
-    // ── Fullscreen: cubre toda la pantalla (incluyendo cabecera) ──
+    // ── Fullscreen: cubre toda la pantalla ──
     return (
       <>
         {bubbleElevation}
@@ -72,9 +93,6 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
           <video ref={remoteVideoRef} autoPlay playsInline muted={false}
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
           />
-          <video ref={localVideoRef} autoPlay playsInline muted
-            style={{ position: "absolute", top: 12, right: 12, width: 80, height: 110, objectFit: "cover", borderRadius: 12, border: "1.5px solid rgba(0,212,255,.6)", zIndex: 10 }}
-          />
           <div
             onClick={e => { e.stopPropagation(); onToggleExpand(); }}
             style={{ position: "absolute", top: 12, left: 12, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
@@ -82,12 +100,13 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
             <ContractIcon />
           </div>
         </div>
+        {localPip(12, 12)}
       </>
     );
   }
 
   // ── Modo por defecto: vídeo remoto como fondo del área de conversación ──
-  // Ocupa toda el área entre cabecera e input. Las burbujas (.msg z-index:2) quedan encima.
+  const pipTop = "calc(max(14px, env(safe-area-inset-top, 14px)) + 150px)";
   return (
     <>
       {bubbleElevation}
@@ -104,11 +123,6 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
         />
-        {/* Cámara local — esquina superior derecha */}
-        <video ref={localVideoRef} autoPlay playsInline muted
-          style={{ position: "absolute", top: 10, right: 10, width: 80, height: 110, objectFit: "cover", borderRadius: 12, border: "1.5px solid rgba(0,212,255,.6)", zIndex: 10 }}
-        />
-        {/* Expandir a pantalla completa */}
         <div
           onClick={e => { e.stopPropagation(); onToggleExpand(); }}
           style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
@@ -116,6 +130,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
           <ExpandIcon />
         </div>
       </div>
+      {localPip(pipTop, 10)}
     </>
   );
 }
