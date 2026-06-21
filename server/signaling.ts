@@ -201,6 +201,7 @@ io.on("connection", (socket: Socket) => {
         if (isFinal && text.trim()) {
           accumulatedText = (accumulatedText + " " + text).trim();
         }
+        if (isFinal) console.log(`[R2-AUDIT] ACCUM acc_after="${accumulatedText.substring(0,80)}" isFinal=${isFinal} speech_final=${speechFinal}`); // [R2-AUDIT]
 
         // Diagnostic log — compare is_final vs speech_final in production
         if (isFinal || text.trim()) {
@@ -215,6 +216,7 @@ io.on("connection", (socket: Socket) => {
         const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
         if (isActualFinal) console.log(`[TRACE-1] DG speech_final | raw="${text.substring(0,60)}" accumulated="${accumulatedText.substring(0,60)}" finalText="${finalText.substring(0,60)}"`);
         if (isActualFinal) accumulatedText = "";
+        if (isActualFinal) console.log(`[R2-AUDIT] RESET acc_post="${accumulatedText}" finalText="${finalText.substring(0,80)}"`); // [R2-AUDIT]
         if (isActualFinal && finalText) console.log(`[STT SERVER ACCUMULATED] final="${finalText.substring(0, 60)}"`);
         console.log(`[R1-AUDIT] OUT isFinal=${isActualFinal} speech_final_was=${speechFinal} fragment=${isFinal && !speechFinal && !!finalText.trim()} text="${finalText.substring(0,70)}"`); // [R1-AUDIT]
 
@@ -256,6 +258,7 @@ io.on("connection", (socket: Socket) => {
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
           if (isActualFinal) console.log(`[TRACE-3] server→sender transcript-result text="${finalText.substring(0,60)}"`);
+          console.log(`[R2-AUDIT] TR_EMIT text="${finalText.substring(0,80)}" isFinal=${isActualFinal} speech_final_was=${speechFinal}`); // [R2-AUDIT]
           socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
       });

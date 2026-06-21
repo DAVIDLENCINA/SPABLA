@@ -531,6 +531,7 @@ export function useWebRTC(
         return;
       }
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
+      console.log(`[R2-AUDIT] CLIENT_RECV isFinal=${isFinal} text="${(text ?? "").substring(0,80)}"`); // [R2-AUDIT]
 
       const original = text?.trim();
 
@@ -557,6 +558,7 @@ export function useWebRTC(
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
         if (endingRef.current) return;
+        console.log(`[R2-AUDIT] BUBBLE_CREATE speaker=local path=server text="${finalOriginal.substring(0,80)}"`); // [R2-AUDIT]
         setCaptionsHistory(prev => [...prev, {
           id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
         }]);
@@ -601,6 +603,7 @@ export function useWebRTC(
       lastLocalEmitRef.current = { text: finalOriginal, ts: _nowLocal };
 
       console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
+      console.log(`[R2-AUDIT] BUBBLE_CREATE speaker=local path=client text="${finalOriginal.substring(0,80)}"`); // [R2-AUDIT]
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
       }]);
