@@ -263,11 +263,12 @@ export default function Chat() {
       }
     } else {
       ring.stop();
+      setVideoActive(false);
+      setVideoExpanded(false);
       // rejected / missed / cancelled / ended → tear down WebRTC if it was up
+      // idle means no call was active, skip endCall to avoid spurious teardown
       if (status !== 'idle') {
         webrtc.endCall();
-        setVideoActive(false);
-        setVideoExpanded(false);
       }
     }
   // ring/webrtc refs are stable — only re-run on callStatus change
