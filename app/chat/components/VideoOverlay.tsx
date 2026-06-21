@@ -96,7 +96,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     width: "100%", height: "100%",
     objectFit: "cover",
     opacity: webrtc.hasRemote ? 1 : 0,
-    filter: "brightness(0.35) blur(2px)",
+    filter: "brightness(0.80)",
   };
 
   if (expanded) {
