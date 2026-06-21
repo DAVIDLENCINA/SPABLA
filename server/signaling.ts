@@ -194,6 +194,7 @@ io.on("connection", (socket: Socket) => {
         const isFinal     = (dgData.is_final     as boolean) ?? false;
         const speechFinal = (dgData.speech_final as boolean) ?? false;
         const tReceived   = Date.now();
+        console.log(`[R1-AUDIT] IN  is_final=${isFinal} speech_final=${speechFinal} acc_before="${accumulatedText.substring(0,70)}" text="${text.substring(0,70)}"`); // [R1-AUDIT]
 
         // Accumulate is_final segments — speech_final often arrives with empty text
         // when Deepgram already delivered content via earlier is_final events.
@@ -215,6 +216,7 @@ io.on("connection", (socket: Socket) => {
         if (isActualFinal) console.log(`[TRACE-1] DG speech_final | raw="${text.substring(0,60)}" accumulated="${accumulatedText.substring(0,60)}" finalText="${finalText.substring(0,60)}"`);
         if (isActualFinal) accumulatedText = "";
         if (isActualFinal && finalText) console.log(`[STT SERVER ACCUMULATED] final="${finalText.substring(0, 60)}"`);
+        console.log(`[R1-AUDIT] OUT isFinal=${isActualFinal} speech_final_was=${speechFinal} fragment=${isFinal && !speechFinal && !!finalText.trim()} text="${finalText.substring(0,70)}"`); // [R1-AUDIT]
 
         const fromL   = socket.data.fromLang   as string | undefined;
         const toL     = socket.data.targetLang as string | undefined;
