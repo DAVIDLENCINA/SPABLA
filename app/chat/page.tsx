@@ -490,6 +490,18 @@ export default function Chat() {
   };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
+  const handleCameraButton = async () => {
+    if (isIncomingVideo && signaling.incomingCall) {
+      unlockAudio();
+      pendingCallModeRef.current = 'video';
+      await signaling.acceptCall(signaling.incomingCall.id);
+    } else if (videoActive) {
+      stopVideo();
+    } else {
+      await startVideo();
+    }
+  };
+
   // Combined timeline — messages from DB and live voice captions sorted by timestamp
   const combinedTimeline = useMemo(() => [
     ...messages
@@ -600,7 +612,7 @@ export default function Chat() {
               </button>
 
               {/* Videollamada */}
-              <button className="action-btn" onClick={videoActive ? stopVideo : startVideo} title={videoActive ? "Colgar vídeo" : isIncomingVideo ? "Aceptar videollamada" : "Videollamada"} style={{
+              <button className="action-btn" onClick={handleCameraButton} title={videoActive ? "Colgar vídeo" : isIncomingVideo ? "Aceptar videollamada" : "Videollamada"} style={{
                 width: 38, height: 38, borderRadius: "50%",
                 background: videoActive
                   ? "rgba(232,22,46,0.85)"
