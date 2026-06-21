@@ -57,67 +57,77 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     unlockedRef.current = true;
   }
 
+  // Elevation rule: bubbles (.msg) above the video overlay.
+  // The overlay sits at z-index 1; injecting position+z-index on .msg
+  // creates a stacking context that paints bubbles in front of the camera.
+  const bubbleElevation = <style>{`.msg { position: relative; z-index: 2; }`}</style>;
+
   if (expanded) {
-    // ── Modo expandido: bajo la cabecera y sobre el input, solo cámaras ──
+    // ── Modo expandido: área de mensajes como fondo de vídeo ──
     return (
+      <>
+        {bubbleElevation}
+        <div
+          onClick={unlockRemote}
+          style={{
+            position: "fixed",
+            top: "calc(max(14px, env(safe-area-inset-top, 14px)) + 140px)",
+            bottom: 72, left: 0, right: 0,
+            zIndex: 1,
+            background: "#000",
+          }}
+        >
+          <video ref={remoteVideoRef} autoPlay playsInline muted={false}
+            style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
+          />
+          <video ref={localVideoRef} autoPlay playsInline muted
+            style={{ position: "absolute", top: 10, right: 10, width: 80, height: 110, objectFit: "cover", borderRadius: 12, border: "1.5px solid rgba(0,212,255,.6)", zIndex: 10 }}
+          />
+          {/* Contraer */}
+          <div
+            onClick={e => { e.stopPropagation(); onToggleExpand(); }}
+            style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
+          >
+            <ContractIcon />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // ── Modo compacto: miniatura fija arriba-derecha, detrás de burbujas ──
+  return (
+    <>
+      {bubbleElevation}
       <div
         onClick={unlockRemote}
         style={{
           position: "fixed",
           top: "calc(max(14px, env(safe-area-inset-top, 14px)) + 140px)",
-          bottom: 72,
-          left: 0, right: 0,
-          zIndex: 100,
-          background: "#000",
+          right: 12,
+          width: 160,
+          zIndex: 1,
+          borderRadius: 16, overflow: "hidden",
+          boxShadow: "0 8px 40px rgba(0,0,0,.7)",
+          border: "1.5px solid rgba(255,255,255,.15)",
+          cursor: "pointer",
         }}
       >
-        <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
-        />
-        <video ref={localVideoRef} autoPlay playsInline muted
-          style={{ position: "absolute", top: 10, right: 10, width: 80, height: 110, objectFit: "cover", borderRadius: 12, border: "1.5px solid rgba(0,212,255,.6)", zIndex: 10 }}
-        />
-        {/* Contraer */}
-        <div
-          onClick={e => { e.stopPropagation(); onToggleExpand(); }}
-          style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
-        >
-          <ContractIcon />
+        <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111" }}>
+          <video ref={remoteVideoRef} autoPlay playsInline muted={false}
+            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
+          />
+          {/* Vídeo local (pip) */}
+          <video ref={localVideoRef} autoPlay playsInline muted
+            style={{ position: "absolute", bottom: 5, right: 5, width: 44, height: 60, objectFit: "cover", borderRadius: 7, border: "1px solid rgba(0,212,255,.5)", zIndex: 5 }}
+          />
+          {/* Botón expandir */}
+          <div style={{ position: "absolute", top: 7, left: 7, background: "rgba(0,0,0,.55)", borderRadius: 7, padding: 5, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex" }}>
+            <ExpandIcon />
+          </div>
         </div>
       </div>
-    );
-  }
-
-  // ── Modo compacto: miniatura fija arriba-derecha bajo la cabecera ──
-  return (
-    <div
-      onClick={unlockRemote}
-      style={{
-        position: "fixed",
-        top: "calc(max(14px, env(safe-area-inset-top, 14px)) + 140px)",
-        right: 12,
-        width: 160,
-        zIndex: 100,
-        borderRadius: 16, overflow: "hidden",
-        boxShadow: "0 8px 40px rgba(0,0,0,.7)",
-        border: "1.5px solid rgba(255,255,255,.15)",
-        cursor: "pointer",
-      }}
-    >
-      <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111" }}>
-        <video ref={remoteVideoRef} autoPlay playsInline muted={false}
-          style={{ width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
-        />
-        {/* Vídeo local (pip) */}
-        <video ref={localVideoRef} autoPlay playsInline muted
-          style={{ position: "absolute", bottom: 5, right: 5, width: 44, height: 60, objectFit: "cover", borderRadius: 7, border: "1px solid rgba(0,212,255,.5)", zIndex: 5 }}
-        />
-        {/* Botón expandir */}
-        <div style={{ position: "absolute", top: 7, left: 7, background: "rgba(0,0,0,.55)", borderRadius: 7, padding: 5, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex" }}>
-          <ExpandIcon />
-        </div>
-      </div>
-    </div>
+    </>
   );
 }
 
