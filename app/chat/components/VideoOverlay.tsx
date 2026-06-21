@@ -82,45 +82,60 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
           </div>
         )}
 
-        {/* Subtítulos — último mensaje protagonista + historial tenue encima */}
-        {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (() => {
-          const history      = webrtc.captionsHistory;
-          const currentEntry = history[history.length - 1] ?? null;
-          const prevEntries  = history.slice(-3, -1);   // hasta 2 frases anteriores
-          return (
-            <div style={{ position: "absolute", bottom: 130, left: 0, right: 0, zIndex: 15, padding: "0 28px", pointerEvents: "none" }}>
-              {/* Historial — pequeño, gris, encima del mensaje actual */}
-              {prevEntries.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8, opacity: 0.42 }}>
-                  {prevEntries.map(entry => (
-                    <p key={entry.id} style={{ color: "rgba(255,255,255,.8)", fontSize: "clamp(12px,2.5vw,16px)", margin: 0, lineHeight: 1.3, textShadow: "0 1px 6px rgba(0,0,0,.9)" }}>
-                      {entry.text}
-                    </p>
-                  ))}
+        {/* Burbujas de traducción — mismo estilo que el chat de voz */}
+        {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (
+          <div style={{
+            position: "absolute", bottom: 130, left: 0, right: 0, maxHeight: 260,
+            zIndex: 15, padding: "0 16px", overflowY: "auto",
+            display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 6,
+            pointerEvents: "none",
+          }}>
+            {webrtc.captionsHistory.slice(-5).map(entry => {
+              const isLocal  = entry.speaker === "local";
+              const showOrig = !!entry.original && entry.original !== entry.text;
+              return (
+                <div key={entry.id} style={{ display: "flex", justifyContent: isLocal ? "flex-end" : "flex-start" }}>
+                  <div style={{ maxWidth: "80%" }}>
+                    <div style={{
+                      fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 3,
+                      color:     isLocal ? "rgba(62,198,198,0.6)" : "rgba(232,82,74,0.6)",
+                      textAlign: isLocal ? "right" : "left",
+                      paddingRight: isLocal ? 4 : 0,
+                      paddingLeft:  isLocal ? 0 : 4,
+                    }}>VOZ</div>
+                    <div style={{
+                      background:           isLocal ? "rgba(62,198,198,0.13)"  : "rgba(232,82,74,0.10)",
+                      border:               `1px solid ${isLocal ? "rgba(62,198,198,0.28)" : "rgba(232,82,74,0.22)"}`,
+                      borderRadius:         isLocal ? "20px 20px 5px 20px" : "5px 20px 20px 20px",
+                      padding:              "10px 14px",
+                      backdropFilter:       "blur(16px)",
+                      WebkitBackdropFilter: "blur(16px)",
+                    }}>
+                      <p style={{ color: "#fff", fontSize: 14, margin: 0, lineHeight: 1.5, fontWeight: 450 }}>
+                        {entry.text}
+                      </p>
+                      {showOrig && (
+                        <div style={{ marginTop: 5, paddingTop: 5, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
+                          <p style={{ color: "rgba(255,255,255,0.32)", fontSize: 11, margin: 0, lineHeight: 1.4, fontStyle: "italic" }}>
+                            {entry.original}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              )}
-              {/* Frase actual — protagonista */}
-              {currentEntry && (
-                <div style={{ background: "rgba(0,0,0,.58)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", borderRadius: 14, padding: "12px 18px", marginBottom: webrtc.localCaption?.partial ? 8 : 0 }}>
-                  <p style={{ color: "#fff", fontSize: "clamp(20px,5vw,34px)", fontWeight: 700, lineHeight: 1.2, margin: 0, textShadow: "0 2px 16px rgba(0,0,0,.8)" }}>
-                    {currentEntry.text}
-                  </p>
-                  {currentEntry.original !== currentEntry.text && (
-                    <p style={{ color: "rgba(255,255,255,.42)", fontSize: "clamp(12px,2.5vw,16px)", margin: "4px 0 0", fontStyle: "italic" }}>
-                      {currentEntry.original}
-                    </p>
-                  )}
-                </div>
-              )}
-              {/* Live partial — mientras Deepgram transcribe */}
-              {webrtc.localCaption?.partial && (
-                <p style={{ color: "rgba(255,255,255,.38)", fontSize: "clamp(12px,2.5vw,15px)", fontStyle: "italic", margin: 0, paddingLeft: 4 }}>
+              );
+            })}
+            {/* Live partial */}
+            {webrtc.localCaption?.partial && (
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <p style={{ color: "rgba(255,255,255,0.38)", fontSize: 13, fontStyle: "italic", margin: 0 }}>
                   {webrtc.localCaption.text}…
                 </p>
-              )}
-            </div>
-          );
-        })()}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Controles */}
         <div style={{ position: "absolute", bottom: 40, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 20, zIndex: 20 }}>

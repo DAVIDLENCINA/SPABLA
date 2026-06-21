@@ -600,7 +600,7 @@ export default function Chat() {
               </button>
 
               {/* Videollamada */}
-              <button className="action-btn" onClick={startVideo} title="Videollamada" style={{
+              <button className="action-btn" onClick={videoActive ? stopVideo : startVideo} title={videoActive ? "Colgar vídeo" : "Videollamada"} style={{
                 width: 38, height: 38, borderRadius: "50%",
                 background: "rgba(62,198,198,0.12)", border: "1px solid rgba(62,198,198,0.22)",
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
