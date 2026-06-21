@@ -12,12 +12,11 @@ type Props = {
   onToggleVoice: () => void;
 };
 
-export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand, voiceEnabled, onToggleVoice }: Props) {
+export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props) {
   const localVideoRef  = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const unlockedRef    = useRef(false);
 
-  // Asignar streams cuando cambia el stream (primera conexión)
   useEffect(() => {
     if (localVideoRef.current && webrtc.localStream) {
       localVideoRef.current.srcObject = webrtc.localStream;
@@ -32,11 +31,10 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
     }
   }, [webrtc.remoteStream]);
 
-  // Fix I3 — reasignar streams al cambiar entre expanded y compacto.
-  // Los elementos <video> se recrean en cada cambio de modo, perdiendo su srcObject.
+  // Reasignar streams al cambiar modo (los elementos <video> se recrean)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    unlockedRef.current = false;   // nuevo elemento, necesita desbloquearse en iOS
+    unlockedRef.current = false;
     if (localVideoRef.current && webrtc.localStream) {
       localVideoRef.current.srcObject = webrtc.localStream;
       localVideoRef.current.play().catch(() => {});
@@ -60,172 +58,66 @@ export default function VideoOverlay({ webrtc, onClose, expanded, onToggleExpand
   }
 
   if (expanded) {
-    // ── Modo inmersivo: pantalla completa ──
+    // ── Modo expandido: bajo la cabecera y sobre el input, solo cámaras ──
     return (
       <div
         onClick={unlockRemote}
-        style={{ position: "fixed", inset: 0, zIndex: 200, background: "#000" }}
+        style={{
+          position: "fixed",
+          top: "calc(max(14px, env(safe-area-inset-top, 14px)) + 140px)",
+          bottom: 72,
+          left: 0, right: 0,
+          zIndex: 100,
+          background: "#000",
+        }}
       >
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
         />
         <video ref={localVideoRef} autoPlay playsInline muted
-          style={{ position: "absolute", top: 16, right: 16, width: 100, height: 140, objectFit: "cover", borderRadius: 16, border: "2px solid rgba(0,212,255,.75)", zIndex: 10 }}
+          style={{ position: "absolute", top: 10, right: 10, width: 80, height: 110, objectFit: "cover", borderRadius: 12, border: "1.5px solid rgba(0,212,255,.6)", zIndex: 10 }}
         />
-
-        {/* Gradient */}
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to bottom, rgba(0,0,0,.3) 0%, transparent 30%, rgba(0,0,0,.7) 80%)", pointerEvents: "none" }}/>
-
-        {!webrtc.hasRemote && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <p style={{ color: "#fff", fontSize: 22, fontWeight: 700 }}>Esperando participante…</p>
-          </div>
-        )}
-
-        {/* Burbujas de traducción — mismo estilo que el chat de voz */}
-        {(webrtc.captionsHistory.length > 0 || webrtc.localCaption?.partial) && (
-          <div style={{
-            position: "absolute", bottom: 130, left: 0, right: 0, maxHeight: 260,
-            zIndex: 15, padding: "0 16px", overflowY: "auto",
-            display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 6,
-            pointerEvents: "none",
-          }}>
-            {webrtc.captionsHistory.slice(-5).map(entry => {
-              const isLocal  = entry.speaker === "local";
-              const showOrig = !!entry.original && entry.original !== entry.text;
-              return (
-                <div key={entry.id} style={{ display: "flex", justifyContent: isLocal ? "flex-end" : "flex-start" }}>
-                  <div style={{ maxWidth: "80%" }}>
-                    <div style={{
-                      fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", marginBottom: 3,
-                      color:     isLocal ? "rgba(62,198,198,0.6)" : "rgba(232,82,74,0.6)",
-                      textAlign: isLocal ? "right" : "left",
-                      paddingRight: isLocal ? 4 : 0,
-                      paddingLeft:  isLocal ? 0 : 4,
-                    }}>VOZ</div>
-                    <div style={{
-                      background:           isLocal ? "rgba(62,198,198,0.10)"  : "rgba(232,82,74,0.07)",
-                      border:               `1px solid ${isLocal ? "rgba(62,198,198,0.22)" : "rgba(232,82,74,0.18)"}`,
-                      borderRadius:         isLocal ? "20px 20px 5px 20px" : "5px 20px 20px 20px",
-                      padding:              "11px 15px",
-                      backdropFilter:       "blur(12px)",
-                      WebkitBackdropFilter: "blur(12px)",
-                    }}>
-                      <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>
-                        {entry.text}
-                      </p>
-                      {showOrig && (
-                        <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid rgba(255,255,255,0.07)" }}>
-                          <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: 0, lineHeight: 1.45, fontStyle: "italic" }}>
-                            {entry.original}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-            {/* Live partial */}
-            {webrtc.localCaption?.partial && (
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                <p style={{ color: "rgba(255,255,255,0.38)", fontSize: 13, fontStyle: "italic", margin: 0 }}>
-                  {webrtc.localCaption.text}…
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Controles */}
-        <div style={{ position: "absolute", bottom: 40, left: "50%", transform: "translateX(-50%)", display: "flex", gap: 20, zIndex: 20 }}>
-          <CtrlBtn onClick={webrtc.toggleMic} danger={!webrtc.micOn}>
-            <MicIcon on={webrtc.micOn} />
-          </CtrlBtn>
-          <CtrlBtn onClick={webrtc.toggleCam} danger={!webrtc.camOn}>
-            <CamIcon on={webrtc.camOn} />
-          </CtrlBtn>
-          {/* Voz traducida ON/OFF */}
-          <CtrlBtn onClick={onToggleVoice} active={voiceEnabled}>
-            <VoiceIcon on={voiceEnabled} />
-          </CtrlBtn>
-          {/* Colgar */}
-          <button onClick={() => { webrtc.endCall(); onClose(); }} style={{ width: 68, height: 68, borderRadius: "50%", background: "radial-gradient(circle at 38% 35%, #ff5569, #e8162e)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <HangUpIcon />
-          </button>
-          {/* Contraer */}
-          <CtrlBtn onClick={onToggleExpand}>
-            <ContractIcon />
-          </CtrlBtn>
+        {/* Contraer */}
+        <div
+          onClick={e => { e.stopPropagation(); onToggleExpand(); }}
+          style={{ position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,.55)", borderRadius: 8, padding: 7, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex", cursor: "pointer", zIndex: 20 }}
+        >
+          <ContractIcon />
         </div>
       </div>
     );
   }
 
-  // ── Modo compacto: solo vídeo remoto + botón expandir ──
+  // ── Modo compacto: miniatura fija arriba-derecha bajo la cabecera ──
   return (
     <div
       onClick={unlockRemote}
-      style={{ position: "fixed", bottom: 96, right: 16, width: 160, zIndex: 100, borderRadius: 16, overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,.7)", border: "1.5px solid rgba(255,255,255,.15)", cursor: "pointer" }}
+      style={{
+        position: "fixed",
+        top: "calc(max(14px, env(safe-area-inset-top, 14px)) + 140px)",
+        right: 12,
+        width: 160,
+        zIndex: 100,
+        borderRadius: 16, overflow: "hidden",
+        boxShadow: "0 8px 40px rgba(0,0,0,.7)",
+        border: "1.5px solid rgba(255,255,255,.15)",
+        cursor: "pointer",
+      }}
     >
       <div onClick={onToggleExpand} style={{ position: "relative", width: "100%", aspectRatio: "4/3", background: "#111" }}>
         <video ref={remoteVideoRef} autoPlay playsInline muted={false}
           style={{ width: "100%", height: "100%", objectFit: "cover", opacity: webrtc.hasRemote ? 1 : 0 }}
         />
-        {!webrtc.hasRemote && (
-          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <p style={{ color: "rgba(255,255,255,.45)", fontSize: 12 }}>Esperando…</p>
-          </div>
-        )}
-        {/* Botón expandir — siempre visible */}
-        <div style={{ position: "absolute", top: 7, right: 7, background: "rgba(0,0,0,.55)", borderRadius: 7, padding: 5, backdropFilter: "blur(6px)", display: "flex" }}>
+        {/* Vídeo local (pip) */}
+        <video ref={localVideoRef} autoPlay playsInline muted
+          style={{ position: "absolute", bottom: 5, right: 5, width: 44, height: 60, objectFit: "cover", borderRadius: 7, border: "1px solid rgba(0,212,255,.5)", zIndex: 5 }}
+        />
+        {/* Botón expandir */}
+        <div style={{ position: "absolute", top: 7, left: 7, background: "rgba(0,0,0,.55)", borderRadius: 7, padding: 5, backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", display: "flex" }}>
           <ExpandIcon />
         </div>
       </div>
     </div>
-  );
-}
-
-// ── Botones ──────────────────────────────────────────────────────
-
-function CtrlBtn({ onClick, danger, active, children }: { onClick: () => void; danger?: boolean; active?: boolean; children: React.ReactNode }) {
-  const bg     = danger ? "rgba(255,50,70,.8)"  : active ? "rgba(62,198,198,.35)" : "rgba(255,255,255,.12)";
-  const border = danger ? "rgba(255,60,80,.5)"  : active ? "rgba(62,198,198,.7)"  : "rgba(255,255,255,.2)";
-  return (
-    <button onClick={onClick} style={{ width: 56, height: 56, borderRadius: "50%", background: bg, border: `1.5px solid ${border}`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-      {children}
-    </button>
-  );
-}
-
-
-// ── Iconos ───────────────────────────────────────────────────────
-
-function MicIcon({ on, size = 18 }: { on: boolean; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      {on
-        ? <><rect x="9" y="2" width="6" height="11" rx="3"/><path d="M5 10a7 7 0 0014 0M12 19v3M9 22h6"/></>
-        : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 10v-1m14 0v1a7 7 0 01-.11 1.23M12 19v3M9 22h6"/></>}
-    </svg>
-  );
-}
-
-function CamIcon({ on, size = 18 }: { on: boolean; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      {on
-        ? <><path d="M15 10l4.553-2.276A1 1 0 0121 8.723v6.554a1 1 0 01-1.447.894L15 14"/><rect x="2" y="7" width="13" height="10" rx="2"/></>
-        : <><line x1="1" y1="1" x2="23" y2="23"/><path d="M21 21H3a2 2 0 01-2-2V8m3-3h10l2 3h1a2 2 0 012 2v6.5"/></>}
-    </svg>
-  );
-}
-
-function HangUpIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M22 16.92v3a2 2 0 01-2.18 2A19.79 19.79 0 0111.82 19a19.5 19.5 0 01-6-6A19.79 19.79 0 013 4.18 2 2 0 015 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L9.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/>
-    </svg>
   );
 }
 
@@ -234,18 +126,6 @@ function ExpandIcon() {
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/>
       <line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>
-    </svg>
-  );
-}
-
-
-function VoiceIcon({ on }: { on: boolean }) {
-  return (
-    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={on ? "#3ec6c6" : "#fff"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      {on
-        ? <><path d="M19.07 4.93a10 10 0 010 14.14"/><path d="M15.54 8.46a5 5 0 010 7.07"/></>
-        : <line x1="23" y1="9" x2="17" y2="15"/>}
     </svg>
   );
 }
