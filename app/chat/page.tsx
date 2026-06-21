@@ -71,10 +71,11 @@ export default function Chat() {
   const ring = useRingTone();
 
   // Derived call state — single source of truth is signaling
-  const isRinging  = signaling.callStatus === 'ringing';
-  const isIncoming = signaling.callStatus === 'incoming';
-  const isInCall   = signaling.callStatus === 'accepted';
-  const voiceActive = isRinging || isInCall;
+  const isRinging      = signaling.callStatus === 'ringing';
+  const isIncoming     = signaling.callStatus === 'incoming';
+  const isInCall       = signaling.callStatus === 'accepted';
+  const voiceActive    = isRinging || isInCall;
+  const isIncomingVideo = isIncoming && signaling.incomingCall?.mode === 'video';
   // Show voice controls whenever WebRTC is active, even if signaling state lags behind
   const showVoiceControls = (isInCall || webrtc.connected || webrtc.hasRemote) && !videoActive;
 
@@ -259,7 +260,6 @@ export default function Chat() {
       webrtc.startCall(pendingCallModeRef.current);
       if (pendingCallModeRef.current === 'video') {
         setVideoActive(true);
-        setVideoExpanded(true);
       }
     } else {
       ring.stop();
@@ -568,16 +568,16 @@ export default function Chat() {
                   width: 38, height: 38, borderRadius: "50%",
                   background: voiceActive
                     ? "rgba(232,22,46,0.85)"
-                    : isIncoming
+                    : (isIncoming && !isIncomingVideo)
                     ? "rgba(65,255,157,0.18)"
                     : "rgba(62,198,198,0.12)",
                   border: `1px solid ${
                     voiceActive ? "rgba(232,22,46,0.6)"
-                    : isIncoming ? "rgba(65,255,157,0.5)"
+                    : (isIncoming && !isIncomingVideo) ? "rgba(65,255,157,0.5)"
                     : "rgba(62,198,198,0.22)"}`,
                   display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
                   transition: "background .2s, border .2s, transform .12s",
-                  animation: isIncoming ? "phonePulse 1s ease-in-out infinite" : undefined,
+                  animation: (isIncoming && !isIncomingVideo) ? "phonePulse 1s ease-in-out infinite" : undefined,
                 }}
               >
                 {voiceActive ? (
@@ -600,13 +600,22 @@ export default function Chat() {
               </button>
 
               {/* Videollamada */}
-              <button className="action-btn" onClick={videoActive ? stopVideo : startVideo} title={videoActive ? "Colgar vídeo" : "Videollamada"} style={{
+              <button className="action-btn" onClick={videoActive ? stopVideo : startVideo} title={videoActive ? "Colgar vídeo" : isIncomingVideo ? "Aceptar videollamada" : "Videollamada"} style={{
                 width: 38, height: 38, borderRadius: "50%",
-                background: "rgba(62,198,198,0.12)", border: "1px solid rgba(62,198,198,0.22)",
+                background: videoActive
+                  ? "rgba(232,22,46,0.85)"
+                  : isIncomingVideo
+                  ? "rgba(65,255,157,0.18)"
+                  : "rgba(62,198,198,0.12)",
+                border: `1px solid ${
+                  videoActive ? "rgba(232,22,46,0.6)"
+                  : isIncomingVideo ? "rgba(65,255,157,0.5)"
+                  : "rgba(62,198,198,0.22)"}`,
                 display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
-                transition: "transform .12s",
+                transition: "background .2s, border .2s, transform .12s",
+                animation: isIncomingVideo ? "phonePulse 1s ease-in-out infinite" : undefined,
               }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ec6c6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={videoActive || isIncomingVideo ? "#fff" : "#3ec6c6"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
                 </svg>
               </button>
