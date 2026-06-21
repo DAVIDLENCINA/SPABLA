@@ -119,7 +119,7 @@ export function useWebRTC(
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
   const [callEndedSignal, setCallEndedSignal] = useState(0);
 
-  const { speak, cancel: cancelTTS } = useTranslatedSpeech();
+  const { speak, cancel: cancelTTS, isSpeakingRef } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
 
   // Keep lang refs in sync when props change between renders
@@ -386,7 +386,7 @@ export function useWebRTC(
       let _lastAudioLog = 0;
       processor.onaudioprocess = (e) => {
         // Fix 2 — drop chunks while socket is offline or call is ending
-        if (!socket.connected || endingRef.current) return;
+        if (!socket.connected || endingRef.current || isSpeakingRef.current) return;
         const input = e.inputBuffer.getChannelData(0);
         const pcm = new Int16Array(input.length);
         for (let i = 0; i < input.length; i++) {

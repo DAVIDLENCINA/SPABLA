@@ -42,9 +42,17 @@ export function useTranslatedSpeech() {
   const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
   // Incremented on every cancel() — lets in-flight speak() calls detect stale requests.
   const generationRef = useRef(0);
+  // True while TTS audio is actually playing — used by useWebRTC to gate audio-chunk sends.
+  const isSpeakingRef = useRef(false);
+  // Failsafe: clears isSpeakingRef after 30 s in case onended never fires.
+  const speakingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const speak = useCallback(async (text: string, lang: string) => {
     if (typeof window === "undefined" || !text.trim()) return;
+
+    // Reset speaking state before starting a new utterance (clears previous if any).
+    isSpeakingRef.current = false;
+    if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
 
     const myGen = generationRef.current;
     console.log("[TRACE-TTS-3] speak() entered | lang:", lang, "| audioUnlocked:", audioUnlocked, "| audioCtx state:", audioCtx?.state ?? "null", "| text:", text.substring(0, 40));
@@ -106,9 +114,13 @@ export function useTranslatedSpeech() {
         source.onended = () => {
           console.log("[TTS] audio ended");
           if (currentSourceRef.current === source) currentSourceRef.current = null;
+          isSpeakingRef.current = false;
+          if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
         };
         currentSourceRef.current = source;
 
+        isSpeakingRef.current = true;
+        speakingTimeoutRef.current = setTimeout(() => { isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
         console.log("[TTS] calling source.start()");
         source.start();
         console.log("[TTS] source.start() called");
@@ -120,7 +132,11 @@ export function useTranslatedSpeech() {
         htmlAudio.onended = () => {
           console.log("[TTS] htmlAudio ended");
           URL.revokeObjectURL(url);
+          isSpeakingRef.current = false;
+          if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
         };
+        isSpeakingRef.current = true;
+        speakingTimeoutRef.current = setTimeout(() => { isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
         console.log("[TTS] calling htmlAudio.play()");
         await htmlAudio.play();
         console.log("[TTS] htmlAudio.play() resolved");
@@ -132,11 +148,13 @@ export function useTranslatedSpeech() {
 
   const cancel = useCallback(() => {
     generationRef.current += 1; // invalidates all in-flight speak() calls
+    isSpeakingRef.current = false;
+    if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
     if (currentSourceRef.current) {
       try { currentSourceRef.current.stop(); } catch {}
       currentSourceRef.current = null;
     }
   }, []);
 
-  return { speak, cancel, supported: true };
+  return { speak, cancel, isSpeakingRef, supported: true };
 }
