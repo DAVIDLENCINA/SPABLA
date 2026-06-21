@@ -825,6 +825,9 @@ export default function Chat() {
                             <p style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, margin: 0, lineHeight: 1.45, fontStyle: "italic" }}>{secondary}</p>
                           </div>
                         )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{fmtTime(msg.created_at)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -848,6 +851,9 @@ export default function Chat() {
                         boxShadow: "0 3px 16px rgba(62,198,198,0.18)",
                       }}>
                         <p style={{ color: "#fff", fontSize: 15, margin: 0, lineHeight: 1.55, fontWeight: 450 }}>{displayText}</p>
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{fmtTime(msg.created_at)}</span>
+                        </div>
                       </div>
                     ) : (
                       <div style={{
@@ -866,6 +872,9 @@ export default function Chat() {
                             </p>
                           </div>
                         )}
+                        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                          <span style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{fmtTime(msg.created_at)}</span>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -903,6 +912,9 @@ export default function Chat() {
                         </p>
                       </div>
                     )}
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.32)", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{fmtTime(Number(entry.id))}</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1067,4 +1079,11 @@ export default function Chat() {
       </div>
     </>
   );
+}
+
+function fmtTime(ts: string | number): string {
+  const d = new Date(ts);
+  const h = d.getHours();
+  const m = d.getMinutes();
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
