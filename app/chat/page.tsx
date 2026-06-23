@@ -285,6 +285,11 @@ export default function Chat() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [webrtc.callEndedSignal]);
 
+  useEffect(() => {
+    if (webrtc.videoUpgradeSignal === 0) return;
+    setVideoActive(true);
+  }, [webrtc.videoUpgradeSignal]);
+
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
     const rawId = params.get("id");
@@ -501,6 +506,10 @@ export default function Chat() {
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
       stopVideo();
+    } else if (isInCall) {
+      unlockAudio();
+      const result = await webrtc.upgradeToVideo();
+      if (result === 'ok') setVideoActive(true);
     } else {
       await startVideo();
     }
