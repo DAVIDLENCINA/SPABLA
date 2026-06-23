@@ -453,6 +453,7 @@ export default function Chat() {
     // before any await — iOS Safari requires this before getUserMedia activates
     // the audio session in record mode.
     unlockAudio();
+    ring.prepare();
     callHandlerInFlightRef.current = true;
     try {
       const status = signaling.callStatus;
@@ -486,6 +487,7 @@ export default function Chat() {
 
   const startVideo = async () => {
     unlockAudio();
+    ring.prepare();
     pendingCallModeRef.current = 'video';
     await signaling.initiateCall('video');
   };
@@ -494,6 +496,7 @@ export default function Chat() {
   const handleCameraButton = async () => {
     if (isIncomingVideo && signaling.incomingCall) {
       unlockAudio();
+      ring.prepare();
       pendingCallModeRef.current = 'video';
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {

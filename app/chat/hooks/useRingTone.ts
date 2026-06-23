@@ -90,7 +90,12 @@ export function useRingTone() {
     tick();
   }, [stop]);
 
+  const prepare = useCallback(() => {
+    if (typeof window === "undefined") return;
+    getCtx();
+  }, []);
+
   useEffect(() => () => stop(), [stop]);
 
-  return { startRingback, startRingtone, stop };
+  return { startRingback, startRingtone, stop, prepare };
 }
