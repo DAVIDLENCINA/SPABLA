@@ -6,6 +6,7 @@ import { useWebRTC, type CaptionEntry } from "./hooks/useWebRTC";
 import { unlockAudio } from "./hooks/useTranslatedSpeech";
 import { useCallSignaling } from "./hooks/useCallSignaling";
 import { useRingTone } from "./hooks/useRingTone";
+import { useMessageSound } from "./hooks/useMessageSound";
 import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
@@ -65,10 +66,12 @@ export default function Chat() {
   const pendingCallModeRef = useRef<'voice' | 'video'>('voice');
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const callHandlerInFlightRef = useRef(false);
+  const callOrVideoActiveRef   = useRef(false);
 
   const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang, voiceEnabled);
   const signaling = useCallSignaling(conversationId, user?.id ?? null);
   const ring = useRingTone();
+  const messageSound = useMessageSound();
 
   // Derived call state — single source of truth is signaling
   const isRinging      = signaling.callStatus === 'ringing';
@@ -88,6 +91,10 @@ export default function Chat() {
       setVoiceEnabled(true);
     }
   }, [showVoiceControls]);
+
+  useEffect(() => {
+    callOrVideoActiveRef.current = voiceActive || videoActive;
+  }, [voiceActive, videoActive]);
 
   const loadMessages = useCallback(async () => {
     const id = convIdRef.current;
@@ -321,7 +328,16 @@ export default function Chat() {
     }
     const channel = supabase.channel(`messages:${convId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
-        (payload) => setMessages(prev => [...prev, payload.new as Message]))
+        (payload) => {
+          if (
+            payload.new.sender_id !== u.id &&
+            (payload.new.source as string) === "text" &&
+            !callOrVideoActiveRef.current
+          ) {
+            messageSound.play();
+          }
+          setMessages(prev => [...prev, payload.new as Message]);
+        })
       .subscribe((status) => {
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") startPolling();
         if (status === "SUBSCRIBED") stopPolling();
@@ -368,6 +384,7 @@ export default function Chat() {
     const text = (textOverride ?? input).trim();
     if (!text || !user || !conversationId || loading) return;
     setLoading(true);
+    messageSound.prepare();
     if (!textOverride) setInput("");
     let translated = text;
     let translatedLanguage = user.language_primary;
@@ -454,6 +471,7 @@ export default function Chat() {
     // the audio session in record mode.
     unlockAudio();
     ring.prepare();
+    messageSound.prepare();
     callHandlerInFlightRef.current = true;
     try {
       const status = signaling.callStatus;
@@ -488,6 +506,7 @@ export default function Chat() {
   const startVideo = async () => {
     unlockAudio();
     ring.prepare();
+    messageSound.prepare();
     pendingCallModeRef.current = 'video';
     await signaling.initiateCall('video');
   };
@@ -497,6 +516,7 @@ export default function Chat() {
     if (isIncomingVideo && signaling.incomingCall) {
       unlockAudio();
       ring.prepare();
+      messageSound.prepare();
       pendingCallModeRef.current = 'video';
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
