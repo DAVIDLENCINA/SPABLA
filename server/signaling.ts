@@ -168,8 +168,6 @@ io.on("connection", (socket: Socket) => {
       const endpointing = ENDPOINTING_BY_LANG[fromLang] ?? 500;
       console.log(`[STT] opening session lang=${lang} fromLang=${fromLang} endpointing=${endpointing}ms`);
       let accumulatedText = "";
-      let _tLastContentMs = 0;  // [PAUSE-AUDIT] timestamp of last is_final with content
-      let _tSpeechFinalMs = 0;  // [PAUSE-AUDIT] timestamp of last speech_final
 
       const thisConn = deepgram.listen.live({
         language:        lang,
@@ -196,22 +194,12 @@ io.on("connection", (socket: Socket) => {
         const isFinal     = (dgData.is_final     as boolean) ?? false;
         const speechFinal = (dgData.speech_final as boolean) ?? false;
         const tReceived   = Date.now();
-        console.log(`[R1-AUDIT] IN  is_final=${isFinal} speech_final=${speechFinal} acc_before="${accumulatedText.substring(0,70)}" text="${text.substring(0,70)}"`); // [R1-AUDIT]
-        if (text.trim() && _tSpeechFinalMs > 0) {
-          const _gap   = tReceived - _tSpeechFinalMs;
-          const _total = _tLastContentMs > 0 ? tReceived - _tLastContentMs : _gap;
-          console.log(`[PAUSE-AUDIT] RESUME gap=${_gap}ms totalPause=${_total}ms`); // [PAUSE-AUDIT]
-          _tSpeechFinalMs = 0;
-        }
 
         // Accumulate is_final segments — speech_final often arrives with empty text
         // when Deepgram already delivered content via earlier is_final events.
         if (isFinal && text.trim()) {
           accumulatedText = (accumulatedText + " " + text).trim();
         }
-        if (isFinal) console.log(`[R2-AUDIT] ACCUM acc_after="${accumulatedText.substring(0,80)}" isFinal=${isFinal} speech_final=${speechFinal}`); // [R2-AUDIT]
-        if (isFinal && text.trim()) _tLastContentMs = tReceived; // [PAUSE-AUDIT]
-
         // Diagnostic log — compare is_final vs speech_final in production
         if (isFinal || text.trim()) {
           console.log(`[STT] lang=${socket.data.fromLang} is_final=${isFinal} speech_final=${speechFinal} "${text.substring(0, 45)}"`);
@@ -224,15 +212,9 @@ io.on("connection", (socket: Socket) => {
         // On speech_final use the full accumulated text (covers multi-segment long phrases).
         const finalText = isActualFinal ? (accumulatedText || text.trim()) : text;
         if (isActualFinal) console.log(`[TRACE-1] DG speech_final | raw="${text.substring(0,60)}" accumulated="${accumulatedText.substring(0,60)}" finalText="${finalText.substring(0,60)}"`);
-        if (isActualFinal && _tLastContentMs > 0) {
-          const _sil = tReceived - _tLastContentMs;
-          _tSpeechFinalMs = tReceived;
-          console.log(`[PAUSE-AUDIT] SPEECH_FINAL silenceMs=${_sil} finalText="${finalText.substring(0,60)}"`); // [PAUSE-AUDIT]
-        }
         if (isActualFinal) accumulatedText = "";
-        if (isActualFinal) console.log(`[R2-AUDIT] RESET acc_post="${accumulatedText}" finalText="${finalText.substring(0,80)}"`); // [R2-AUDIT]
         if (isActualFinal && finalText) console.log(`[STT SERVER ACCUMULATED] final="${finalText.substring(0, 60)}"`);
-        console.log(`[R1-AUDIT] OUT isFinal=${isActualFinal} speech_final_was=${speechFinal} fragment=${isFinal && !speechFinal && !!finalText.trim()} text="${finalText.substring(0,70)}"`); // [R1-AUDIT]
+
 
         const fromL   = socket.data.fromLang   as string | undefined;
         const toL     = socket.data.targetLang as string | undefined;
@@ -272,7 +254,6 @@ io.on("connection", (socket: Socket) => {
         } else {
           // ── Comportamiento actual: cliente traduce ──────────────────────
           if (isActualFinal) console.log(`[TRACE-3] server→sender transcript-result text="${finalText.substring(0,60)}"`);
-          console.log(`[R2-AUDIT] TR_EMIT text="${finalText.substring(0,80)}" isFinal=${isActualFinal} speech_final_was=${speechFinal}`); // [R2-AUDIT]
           socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
       });
