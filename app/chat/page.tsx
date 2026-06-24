@@ -286,9 +286,21 @@ export default function Chat() {
   }, [webrtc.callEndedSignal]);
 
   useEffect(() => {
+    console.log("[PAGE] videoUpgradeSignal changed:", webrtc.videoUpgradeSignal);
     if (webrtc.videoUpgradeSignal === 0) return;
+    console.log("[PAGE] setVideoActive true from upgrade");
     setVideoActive(true);
   }, [webrtc.videoUpgradeSignal]);
+
+  useEffect(() => {
+    console.log("[PAGE] videoActive changed:", videoActive);
+  }, [videoActive]);
+
+  useEffect(() => {
+    const vt = webrtc.remoteStream?.getVideoTracks().length ?? 0;
+    const at = webrtc.remoteStream?.getAudioTracks().length ?? 0;
+    console.log(`[PAGE] remoteStream changed; videoTracks: ${vt}; audioTracks: ${at}`);
+  }, [webrtc.remoteStream]);
 
   const initConversation = async (u: User) => {
     const params = new URLSearchParams(window.location.search);
