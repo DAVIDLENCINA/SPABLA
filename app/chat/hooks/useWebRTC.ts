@@ -352,6 +352,9 @@ export function useWebRTC(
       setHasRemote(true);
       console.log("[WEBRTC] remote stream videoTracks:", e.streams[0]?.getVideoTracks().length ?? 0);
       console.log("[WEBRTC] remote stream audioTracks:", e.streams[0]?.getAudioTracks().length ?? 0);
+      console.log("[WEBRTC] ontrack e.track.readyState:", e.track.readyState);
+      console.log("[WEBRTC] ontrack e.streams[0] videoTracks:", e.streams[0]?.getVideoTracks().length ?? 0);
+      console.log("[WEBRTC] ontrack e.streams[0] videoTracks[0]?.readyState:", e.streams[0]?.getVideoTracks()[0]?.readyState ?? "none");
       // Fix 5 — monitor remote track lifecycle to detect freeze source
       const ts = () => new Date().toISOString().slice(11, 23);
       e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); endCall(); };
