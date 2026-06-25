@@ -348,7 +348,7 @@ export function useWebRTC(
       const audioTracks = e.streams[0]?.getAudioTracks() ?? [];
       console.log(`[SPABLA][WEBRTC][TRACK] kind:${e.track.kind} streams:${e.streams.length} audio:${audioTracks.length}`);
       console.log("[WEBRTC] ontrack kind:", e.track.kind);
-      setRemoteStream(e.streams[0]);
+      setRemoteStream(e.streams[0] ? new MediaStream(e.streams[0].getTracks()) : null);
       setHasRemote(true);
       console.log("[WEBRTC] remote stream videoTracks:", e.streams[0]?.getVideoTracks().length ?? 0);
       console.log("[WEBRTC] remote stream audioTracks:", e.streams[0]?.getAudioTracks().length ?? 0);
