@@ -385,10 +385,6 @@ io.on("connection", (socket: Socket) => {
     socket.to(data.roomId).emit("subtitle", { from: socket.id, ...data });
   });
 
-  socket.on("video-upgrade-request", (data: { roomId: string }) => {
-    socket.to(data.roomId).emit("video-upgrade-request");
-  });
-
   // Actualiza el idioma destino sin reiniciar la sesión Deepgram
   socket.on("update-target-lang", (targetLang: string | null) => {
     socket.data.targetLang    = targetLang ?? null;

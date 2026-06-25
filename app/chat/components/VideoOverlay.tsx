@@ -25,30 +25,10 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
   }, [webrtc.localStream]);
 
   useEffect(() => {
-    const vid = remoteVideoRef.current;
-    const stream = webrtc.remoteStream;
-    if (!vid || !stream) return;
-    const vt = stream.getVideoTracks();
-    console.log("[VIDEOOVERLAY] remote srcObject assigned; videoTracks:", vt.length, "readyState:", vt[0]?.readyState ?? "none");
-    vid.srcObject = stream;
-    console.log("[VIDEOOVERLAY] after srcObject: readyState:", vid.readyState, "videoWidth:", vid.videoWidth, "videoHeight:", vid.videoHeight, "paused:", vid.paused);
-    const onLoadedMetadata = () => console.log("[VIDEO] loadedmetadata; videoWidth:", vid.videoWidth, "videoHeight:", vid.videoHeight);
-    const onLoadedData     = () => console.log("[VIDEO] loadeddata");
-    const onCanPlay        = () => console.log("[VIDEO] canplay");
-    const onPlaying        = () => console.log("[VIDEO] playing");
-    vid.addEventListener("loadedmetadata", onLoadedMetadata);
-    vid.addEventListener("loadeddata",     onLoadedData);
-    vid.addEventListener("canplay",        onCanPlay);
-    vid.addEventListener("playing",        onPlaying);
-    vid.play()
-      .then(() => console.log("[VIDEOOVERLAY] remote play() resolved"))
-      .catch(err => console.warn("[VIDEOOVERLAY] remote play() rejected:", err?.name, err?.message));
-    return () => {
-      vid.removeEventListener("loadedmetadata", onLoadedMetadata);
-      vid.removeEventListener("loadeddata",     onLoadedData);
-      vid.removeEventListener("canplay",        onCanPlay);
-      vid.removeEventListener("playing",        onPlaying);
-    };
+    if (remoteVideoRef.current && webrtc.remoteStream) {
+      remoteVideoRef.current.srcObject = webrtc.remoteStream;
+      remoteVideoRef.current.play().catch(() => {});
+    }
   }, [webrtc.remoteStream]);
 
   // Reasignar streams al cambiar modo (los elementos <video> se recrean)
@@ -61,10 +41,7 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     }
     if (remoteVideoRef.current && webrtc.remoteStream) {
       remoteVideoRef.current.srcObject = webrtc.remoteStream;
-      console.log("[VIDEOOVERLAY] expanded reassign; remote videoTracks:", webrtc.remoteStream.getVideoTracks().length);
-      remoteVideoRef.current.play()
-        .then(() => console.log("[VIDEOOVERLAY] expanded remote play() resolved"))
-        .catch(err => console.warn("[VIDEOOVERLAY] expanded remote play() rejected:", err?.name, err?.message));
+      remoteVideoRef.current.play().catch(() => {});
     }
   }, [expanded]);
 

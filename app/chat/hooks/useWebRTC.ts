@@ -59,12 +59,10 @@ export type WebRTCState = {
   remoteCaption:   Caption | null;
   captionsHistory: CaptionEntry[];
   callEndedSignal: number;
-  videoUpgradeSignal: number;
   startCall:       (mode?: 'voice' | 'video') => Promise<void>;
   endCall:       () => void;
   toggleMic:     () => void;
   toggleCam:     () => void;
-  upgradeToVideo: () => Promise<"ok" | "permission-denied" | "no-connection" | "failed">;
 };
 
 export function useWebRTC(
@@ -108,8 +106,6 @@ export function useWebRTC(
   const hasCreatedOfferRef = useRef(false);
   // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
   const startingRef = useRef(false);
-  // Guard: prevents concurrent upgradeToVideo() executions
-  const isUpgradingVideoRef = useRef(false);
 
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
@@ -122,7 +118,6 @@ export function useWebRTC(
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
   const [callEndedSignal, setCallEndedSignal] = useState(0);
-  const [videoUpgradeSignal, setVideoUpgradeSignal] = useState(0);
 
   const { speak, cancel: cancelTTS, isSpeakingRef } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -204,91 +199,10 @@ export function useWebRTC(
     setRemoteCaption(null);
     setCaptionsHistory([]);  // clear history only on hang-up, not on minimize
     setMicOn(true);          // reset so next call doesn't show stale "Muted"
-    isUpgradingVideoRef.current = false;
     startingRef.current = false;
     socketRef.current = null;
     pcRef.current = null;
   }, [cancelTTS]);
-
-  const upgradeToVideo = useCallback(async (): Promise<"ok" | "permission-denied" | "no-connection" | "failed"> => {
-    const pc     = pcRef.current;
-    const socket = socketRef.current;
-    const stream = localStreamRef.current;
-
-    console.log("[UPGRADE] start");
-    if (!pc || !stream || !conversationId) return "no-connection";
-    if (!socket?.connected)                return "no-connection";
-    if (isUpgradingVideoRef.current)       return "failed";
-    if (pc.signalingState !== "stable")    return "failed";
-    console.log("[UPGRADE] signalingState before:", pc.signalingState);
-
-    isUpgradingVideoRef.current = true;
-
-    // 1 — Acquire video-only track (existing audio track is kept)
-    let videoTrack: MediaStreamTrack;
-    try {
-      const vs = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      videoTrack = vs.getVideoTracks()[0];
-      console.log("[UPGRADE] got video track:", videoTrack.id, videoTrack.readyState);
-    } catch {
-      isUpgradingVideoRef.current = false;
-      return "permission-denied";
-    }
-
-    // 2 — Add to stream and PeerConnection; capture sender for rollback
-    let sender: RTCRtpSender | null = null;
-    try {
-      stream.addTrack(videoTrack);
-      sender = pc.addTrack(videoTrack, stream);
-      console.log("[UPGRADE] addTrack ok; senders:", pc.getSenders().map(s => s.track?.kind));
-    } catch (err) {
-      console.error("[UPGRADE] addTrack failed:", err);
-      try { stream.removeTrack(videoTrack); } catch {}
-      videoTrack.stop();
-      setLocalStream(new MediaStream(stream.getTracks()));
-      isUpgradingVideoRef.current = false;
-      return "failed";
-    }
-
-    // 3 — Renegotiate SDP
-    try {
-      const offer = await pc.createOffer();
-      console.log("[UPGRADE] offer created");
-      await pc.setLocalDescription(offer);
-      console.log("[UPGRADE] localDescription set; signalingState:", pc.signalingState);
-
-      if (!socket.connected) {
-        console.error("[UPGRADE] socket disconnected before emit — rolling back");
-        try { await (pc as any).setLocalDescription({ type: "rollback" }); } catch {}
-        try { if (sender) pc.removeTrack(sender); } catch {}
-        try { stream.removeTrack(videoTrack); } catch {}
-        videoTrack.stop();
-        setLocalStream(new MediaStream(stream.getTracks()));
-        isUpgradingVideoRef.current = false;
-        return "no-connection";
-      }
-
-      socket.emit("offer", { roomId: conversationId, offer });
-      console.log("[UPGRADE] offer emitted");
-      socket.emit("video-upgrade-request", { roomId: conversationId });
-      console.log("[UPGRADE] video-upgrade-request emitted");
-    } catch (err) {
-      console.error("[UPGRADE] SDP renegotiation failed:", err);
-      try { if (sender) pc.removeTrack(sender); } catch {}
-      try { stream.removeTrack(videoTrack); } catch {}
-      videoTrack.stop();
-      setLocalStream(new MediaStream(stream.getTracks()));
-      isUpgradingVideoRef.current = false;
-      return "failed";
-    }
-
-    // 4 — Commit local state
-    setCamOn(true);
-    setLocalStream(new MediaStream(stream.getTracks()));
-    isUpgradingVideoRef.current = false;
-    console.log("[UPGRADE] done");
-    return "ok";
-  }, [conversationId]);
 
   const startCall = useCallback(async (mode: 'voice' | 'video' = 'video') => {
     console.log("[SPABLA][STARTCALL]", {
@@ -347,14 +261,8 @@ export function useWebRTC(
     pc.ontrack = (e) => {
       const audioTracks = e.streams[0]?.getAudioTracks() ?? [];
       console.log(`[SPABLA][WEBRTC][TRACK] kind:${e.track.kind} streams:${e.streams.length} audio:${audioTracks.length}`);
-      console.log("[WEBRTC] ontrack kind:", e.track.kind);
-      setRemoteStream(e.streams[0] ? new MediaStream(e.streams[0].getTracks()) : null);
+      setRemoteStream(e.streams[0]);
       setHasRemote(true);
-      console.log("[WEBRTC] remote stream videoTracks:", e.streams[0]?.getVideoTracks().length ?? 0);
-      console.log("[WEBRTC] remote stream audioTracks:", e.streams[0]?.getAudioTracks().length ?? 0);
-      console.log("[WEBRTC] ontrack e.track.readyState:", e.track.readyState);
-      console.log("[WEBRTC] ontrack e.streams[0] videoTracks:", e.streams[0]?.getVideoTracks().length ?? 0);
-      console.log("[WEBRTC] ontrack e.streams[0] videoTracks[0]?.readyState:", e.streams[0]?.getVideoTracks()[0]?.readyState ?? "none");
       // Fix 5 — monitor remote track lifecycle to detect freeze source
       const ts = () => new Date().toISOString().slice(11, 23);
       e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); endCall(); };
@@ -586,31 +494,23 @@ export function useWebRTC(
     });
 
     socket.on("offer", async (d: { offer: RTCSessionDescriptionInit }) => {
-      console.log("[WEBRTC] offer received");
       console.log(`[SPABLA][NEG] offer recibido — SOY EL ANSWERER | signalingState:${pc.signalingState}`);
       try {
-        console.log("[WEBRTC] signalingState before remote offer:", pc.signalingState);
         await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
-        console.log("[WEBRTC] remoteDescription set; signalingState:", pc.signalingState);
         console.log(`[SPABLA][NEG] setRemoteDescription(offer) OK | signalingState:${pc.signalingState}`);
         const answer = await pc.createAnswer();
-        console.log("[WEBRTC] answer created");
         console.log("[SPABLA][NEG] createAnswer OK — enviando answer");
         await pc.setLocalDescription(answer);
         socket.emit("answer", { roomId: conversationId, answer });
-        console.log("[WEBRTC] answer emitted");
       } catch (err) {
         console.error("[SPABLA][NEG] offer handler ERROR:", err);
       }
     });
 
     socket.on("answer", async (d: { answer: RTCSessionDescriptionInit }) => {
-      console.log("[WEBRTC] answer received");
-      console.log("[WEBRTC] signalingState before answer:", pc.signalingState);
       console.log(`[SPABLA][WEBRTC][ANSWER_RECEIVED] signalingState:${pc.signalingState}`);
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
-        console.log("[WEBRTC] answer applied; signalingState:", pc.signalingState);
       } catch (err) {
         console.error("[SPABLA][NEG] answer handler ERROR:", err);
       }
@@ -761,12 +661,6 @@ export function useWebRTC(
       setRemoteCaption(null);
     });
 
-    socket.on("video-upgrade-request", () => {
-      console.log("[UPGRADE] video-upgrade-request received");
-      if (endingRef.current) return;
-      setVideoUpgradeSignal((n) => n + 1);
-    });
-
   }, [conversationId]);
 
   const toggleMic = useCallback(() => {
@@ -788,7 +682,6 @@ export function useWebRTC(
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
-    videoUpgradeSignal,
-    startCall, endCall, toggleMic, toggleCam, upgradeToVideo,
+    startCall, endCall, toggleMic, toggleCam,
   };
 }
