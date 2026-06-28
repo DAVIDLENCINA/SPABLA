@@ -113,6 +113,7 @@ export function useTranslatedSpeech() {
         source.connect(audioCtx.destination);
         source.onended = () => {
           console.log("[TTS] audio ended");
+          console.log(`[DIAG TTS] speak END ts=${Date.now()} reason=onended path=iOS`);
           if (currentSourceRef.current === source) currentSourceRef.current = null;
           isSpeakingRef.current = false;
           if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
@@ -120,7 +121,8 @@ export function useTranslatedSpeech() {
         currentSourceRef.current = source;
 
         isSpeakingRef.current = true;
-        speakingTimeoutRef.current = setTimeout(() => { isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
+        console.log(`[DIAG TTS] speak START ts=${Date.now()} path=iOS lang=${lang}`);
+        speakingTimeoutRef.current = setTimeout(() => { console.log(`[DIAG TTS] speak END ts=${Date.now()} reason=failsafe path=iOS`); isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
         console.log("[TTS] calling source.start()");
         source.start();
         console.log("[TTS] source.start() called");
@@ -131,12 +133,14 @@ export function useTranslatedSpeech() {
         const htmlAudio = new Audio(url);
         htmlAudio.onended = () => {
           console.log("[TTS] htmlAudio ended");
+          console.log(`[DIAG TTS] speak END ts=${Date.now()} reason=onended path=desktop`);
           URL.revokeObjectURL(url);
           isSpeakingRef.current = false;
           if (speakingTimeoutRef.current) { clearTimeout(speakingTimeoutRef.current); speakingTimeoutRef.current = null; }
         };
         isSpeakingRef.current = true;
-        speakingTimeoutRef.current = setTimeout(() => { isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
+        console.log(`[DIAG TTS] speak START ts=${Date.now()} path=desktop lang=${lang}`);
+        speakingTimeoutRef.current = setTimeout(() => { console.log(`[DIAG TTS] speak END ts=${Date.now()} reason=failsafe path=desktop`); isSpeakingRef.current = false; speakingTimeoutRef.current = null; }, 30000);
         console.log("[TTS] calling htmlAudio.play()");
         await htmlAudio.play();
         console.log("[TTS] htmlAudio.play() resolved");

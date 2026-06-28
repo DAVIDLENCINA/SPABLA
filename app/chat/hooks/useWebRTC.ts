@@ -228,7 +228,10 @@ export function useWebRTC(
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       audioCtxRef.current = new AudioCtx({ sampleRate: 48000 });
     }
+    console.log(`[DIAG MIC] capture ctx created state=${audioCtxRef.current.state} sampleRate=${audioCtxRef.current.sampleRate} ts=${Date.now()}`);
+    console.log(`[DIAG MIC] capture ctx pre-resume state=${audioCtxRef.current.state} ts=${Date.now()}`);
     audioCtxRef.current.resume().catch(() => {});
+    console.log(`[DIAG MIC] capture ctx post-resume-dispatch state=${audioCtxRef.current.state} ts=${Date.now()}`);
     console.log("[TRACE AUDIO CONTEXT] created in gesture | state=", audioCtxRef.current.state, "sampleRate=", audioCtxRef.current.sampleRate);
 
     // 1 — Acquire media
@@ -370,7 +373,9 @@ export function useWebRTC(
       const ctx = audioCtxRef.current;
       if (!ctx) { console.error("[TRACE AUDIO CONTEXT] null — AudioContext missing"); return; }
       console.log("[TRACE AUDIO CONTEXT] reused | state=", ctx.state, "sampleRate=", ctx.sampleRate);
+      console.log(`[DIAG MIC] capture ctx pre-resume(socket.on connect) state=${ctx.state} ts=${Date.now()}`);
       ctx.resume().catch(() => {});
+      console.log(`[DIAG MIC] capture ctx post-resume-dispatch(socket.on connect) state=${ctx.state} ts=${Date.now()}`);
 
       // Log mic track health before building the pipeline
       const _audioTracks = stream.getAudioTracks();
@@ -400,12 +405,14 @@ export function useWebRTC(
           let sumSq = 0, nonZero = 0;
           for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
           const rms = Math.sqrt(sumSq / input.length);
-          console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
+          console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}% | speaking=${isSpeakingRef.current} ctxState=${audioCtxRef.current?.state ?? "null"} connected=${socket.connected} ending=${endingRef.current}`);
         }
       };
       source.connect(processor);
       processor.connect(ctx.destination);
+      console.log(`[DIAG MIC] capture ctx pre-resume(post-pipeline) state=${ctx.state} ts=${Date.now()}`);
       ctx.resume().catch(() => {});
+      console.log(`[DIAG MIC] capture ctx post-resume-dispatch(post-pipeline) state=${ctx.state} ts=${Date.now()}`);
 
       // Fix 6 — watchdog: log connection health every 15s for post-mortem diagnosis
       if (watchdogRef.current) clearInterval(watchdogRef.current);
