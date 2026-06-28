@@ -486,22 +486,29 @@ export default function Chat() {
   };
 
   const startVideo = async () => {
+    console.log(`[DIAG VIDEO] startVideo() entered | callStatus=${signaling.callStatus} videoActive=${videoActive} conversationId=${conversationId ?? "null"} userId=${user?.id ?? "null"}`);
     unlockAudio();
     ring.prepare();
     pendingCallModeRef.current = 'video';
-    await signaling.initiateCall('video');
+    console.log(`[DIAG VIDEO] startVideo() about to call signaling.initiateCall('video')`);
+    const id = await signaling.initiateCall('video');
+    console.log(`[DIAG VIDEO] startVideo() initiateCall returned id=${id ?? "null"} | callStatus(after)=${signaling.callStatus}`);
   };
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   const handleCameraButton = async () => {
+    console.log(`[DIAG VIDEO] handleCameraButton entry | isIncomingVideo=${isIncomingVideo} videoActive=${videoActive} callStatus=${signaling.callStatus} incomingMode=${signaling.incomingCall?.mode ?? "null"}`);
     if (isIncomingVideo && signaling.incomingCall) {
+      console.log(`[DIAG VIDEO] handleCameraButton branch: accept incoming video`);
       unlockAudio();
       ring.prepare();
       pendingCallModeRef.current = 'video';
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
+      console.log(`[DIAG VIDEO] handleCameraButton branch: stopVideo (videoActive=true)`);
       stopVideo();
     } else {
+      console.log(`[DIAG VIDEO] handleCameraButton branch: startVideo (idle)`);
       await startVideo();
     }
   };

@@ -152,17 +152,27 @@ export function useCallSignaling(
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const initiateCall = useCallback(async (mode: "voice" | "video" = "voice"): Promise<string | null> => {
-    if (!conversationId || !userId) return null;
-    if (callStatusRef.current !== "idle") return null;
+    console.log(`[DIAG VIDEO] initiateCall(${mode}) entered | conversationId=${conversationId ?? "null"} userId=${userId ?? "null"} callStatusRef=${callStatusRef.current}`);
+    if (!conversationId || !userId) {
+      console.warn(`[DIAG VIDEO] initiateCall(${mode}) ABORTED — missing conversationId or userId`);
+      return null;
+    }
+    if (callStatusRef.current !== "idle") {
+      console.warn(`[DIAG VIDEO] initiateCall(${mode}) ABORTED — callStatusRef.current=${callStatusRef.current} (not idle)`);
+      return null;
+    }
 
+    console.log(`[DIAG VIDEO] initiateCall(${mode}) about to INSERT call_signals with call_mode='${mode}'`);
     const { data, error } = await supabase
       .from("call_signals")
       .insert({ conversation_id: conversationId, caller_id: userId, status: "ringing", call_mode: mode })
       .select("id")
       .single();
+    console.log(`[DIAG VIDEO] initiateCall(${mode}) INSERT returned | data=${JSON.stringify(data)} error=${JSON.stringify(error)}`);
 
     if (error || !data?.id) {
       console.error("[CALL] initiateCall failed:", error);
+      console.error(`[DIAG VIDEO] initiateCall(${mode}) FAILED — name=${(error as any)?.name} message=${error?.message} code=${(error as any)?.code} details=${(error as any)?.details} hint=${(error as any)?.hint}`);
       return null;
     }
 
