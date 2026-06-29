@@ -344,9 +344,25 @@ io.on("connection", (socket: Socket) => {
   }
   // ── End openDeepgram ────────────────────────────────────────────────────────
 
-  function closeRT(): null {
+  function closeRT(reason: string = "internal"): null {
     if (rtConn) {
-      try { rtConn.close(); } catch { /* noop */ }
+      const ws = rtConn;
+      console.log(`[SPABLA][RT] closing session ${rtFromLang ?? "?"}→${rtTargetLang ?? "?"} (${reason}) — readyState=${ws.readyState}`);
+      // Polite stop: ask OpenAI to cancel any in-flight response and drop the input buffer
+      // BEFORE the close handshake, so it stops generating audio immediately instead of
+      // continuing to emit deltas during the ~100-300ms close window.
+      if (ws.readyState === ws.OPEN) {
+        try { ws.send(JSON.stringify({ type: "response.cancel" })); } catch { /* noop */ }
+        try { ws.send(JSON.stringify({ type: "input_audio_buffer.clear" })); } catch { /* noop */ }
+      }
+      // Clean close with explicit code 1000. ws.close() with no args defaults to NO status,
+      // which the OpenAI side reports as code 1005 ("no status received") — looks like a
+      // dirty disconnect in logs. Code 1000 = "normal closure".
+      try { ws.close(1000, "client-done"); } catch { /* noop */ }
+    } else if (rtFromLang) {
+      // Deferred state: openRealtime was called but targetLang was missing, so no upstream
+      // ws was ever created. Just clear the remembered pair.
+      console.log(`[SPABLA][RT] clearing deferred pair ${rtFromLang}→${rtTargetLang ?? "null"} (${reason})`);
     }
     rtConn = null;
     rtReady = false;
@@ -365,7 +381,7 @@ io.on("connection", (socket: Socket) => {
       console.log(`[SPABLA][RT] already open/opening for ${fromLang}→${targetLang}, skipping reopen`);
       return;
     }
-    closeRT();
+    closeRT("reopen-different-pair");
     if (!process.env.OPENAI_API_KEY) {
       console.error("[SPABLA][RT] OPENAI_API_KEY no configurada");
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
@@ -404,6 +420,11 @@ io.on("connection", (socket: Socket) => {
     });
 
     ws.on("message", (raw: Buffer) => {
+      // Stale-ws guard: if closeRT() ran (rtConn null) or a new openRealtime() replaced this
+      // upstream (rtConn points elsewhere), suppress all further event processing — no logs,
+      // no forwarding, no emits. Without this, OpenAI's in-flight deltas during the close
+      // handshake keep firing this handler after the user already hung up.
+      if (rtConn !== ws) return;
       let m: any;
       try { m = JSON.parse(raw.toString("utf8")); } catch { return; }
       const tp = m?.type as string | undefined;
@@ -656,14 +677,14 @@ io.on("connection", (socket: Socket) => {
   socket.on("transcribe-stop", () => {
     socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
-    if (rtConn) { closeRT(); console.log(`[SPABLA][RT] sesión cerrada por ${socket.id}`); }
+    if (rtConn || rtFromLang) closeRT("transcribe-stop");
     console.log(`[SPABLA][DG] Transcripción detenida por ${socket.id}`);
   });
 
   socket.on("disconnect", () => {
     socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
-    if (rtConn) closeRT();
+    if (rtConn || rtFromLang) closeRT("disconnect");
     console.log("[SPABLA] Usuario desconectado:", socket.id);
   });
 });
