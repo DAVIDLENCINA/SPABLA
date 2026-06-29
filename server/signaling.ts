@@ -173,6 +173,10 @@ io.on("connection", (socket: Socket) => {
   let rtReady = false;
   const rtPendingChunks: string[] = []; // base64 strings queued before session.updated
   let lastInputTranscript = "";          // captured from input_audio_transcription, used as 'original' in subtitle
+  // Pair currently open/opening (or last attempted while deferred). Used for idempotency
+  // when update-target-lang triggers re-attempts so we don't churn upstream sessions.
+  let rtFromLang:   string | null = null;
+  let rtTargetLang: string | null = null;
 
   // ── Opens (or reopens) a Deepgram live session with the given params ────────
   function openDeepgram(lang: string, fromLang: string, targetLang: string | null) {
@@ -347,11 +351,20 @@ io.on("connection", (socket: Socket) => {
     rtConn = null;
     rtReady = false;
     rtPendingChunks.length = 0;
+    rtFromLang = null;
+    rtTargetLang = null;
     return null;
   }
 
   // ── B1: open OpenAI Realtime upstream — only invoked when USE_REALTIME_SPEECH is on ──
+  // Idempotent: if rtConn already open/opening for the same (fromLang, targetLang) pair, no-op.
+  // If targetLang is missing or equal to fromLang, defer (don't open) — will retry when
+  // update-target-lang arrives with a valid value (handler below).
   function openRealtime(fromLang: string, targetLang: string | null) {
+    if (rtConn && rtFromLang === fromLang && rtTargetLang === targetLang) {
+      console.log(`[SPABLA][RT] already open/opening for ${fromLang}→${targetLang}, skipping reopen`);
+      return;
+    }
     closeRT();
     if (!process.env.OPENAI_API_KEY) {
       console.error("[SPABLA][RT] OPENAI_API_KEY no configurada");
@@ -359,7 +372,10 @@ io.on("connection", (socket: Socket) => {
       return;
     }
     if (!targetLang || targetLang === fromLang) {
-      console.warn(`[SPABLA][RT] skipping open: targetLang missing or equals fromLang (from=${fromLang} target=${targetLang})`);
+      console.warn(`[SPABLA][RT] deferring open: targetLang missing or equals fromLang (from=${fromLang} target=${targetLang}). Will retry when update-target-lang arrives.`);
+      // Remember the from-lang we wanted; targetLang stays null so the retry path detects a real change.
+      rtFromLang = fromLang;
+      rtTargetLang = null;
       return;
     }
     const srcName = LANG_NAMES[fromLang]   ?? fromLang;
@@ -370,6 +386,8 @@ io.on("connection", (socket: Socket) => {
     });
     rtConn = ws;
     rtReady = false;
+    rtFromLang = fromLang;
+    rtTargetLang = targetLang;
     lastInputTranscript = "";
 
     ws.on("open", () => {
@@ -382,7 +400,7 @@ io.on("connection", (socket: Socket) => {
 
     ws.on("close", (code: number, reason: Buffer) => {
       console.log(`[SPABLA][RT] upstream closed code=${code} reason=${reason?.toString() || ""}`);
-      if (rtConn === ws) { rtConn = null; rtReady = false; rtPendingChunks.length = 0; }
+      if (rtConn === ws) { rtConn = null; rtReady = false; rtPendingChunks.length = 0; rtFromLang = null; rtTargetLang = null; }
     });
 
     ws.on("message", (raw: Buffer) => {
@@ -565,6 +583,24 @@ io.on("connection", (socket: Socket) => {
     socket.data.targetLang    = targetLang ?? null;
     socket.data.dgTargetLang  = targetLang ?? null;
     console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
+
+    // B1: gatillo de retry. Si la transcripción ya está activa y entramos en modo realtime,
+    // (re)abrimos la sesión upstream con el target ahora resuelto. openRealtime es idempotente:
+    // si rtConn ya está abierto para el mismo par (fromLang, targetLang), no hace nada.
+    if (USE_REALTIME_SPEECH && socket.data.dgTranscribing && socket.data.dgFromLang) {
+      const fromLang = socket.data.dgFromLang as string;
+      const tgt      = targetLang ?? null;
+      if (rtConn && rtFromLang === fromLang && rtTargetLang === tgt) {
+        // Same pair already open — no-op handled inside openRealtime, log for visibility.
+        console.log(`[SPABLA][RT] update-target-lang: pair ${fromLang}→${tgt} already open, skipping`);
+      } else if (!tgt || tgt === fromLang) {
+        // Still no valid target — leave deferred state as-is, don't churn.
+        console.log(`[SPABLA][RT] update-target-lang: target still missing/equal (from=${fromLang} target=${tgt}), staying deferred`);
+      } else {
+        console.log(`[SPABLA][RT] update-target-lang: ${rtConn ? "re-opening" : "opening (was deferred)"} ${fromLang}→${tgt}`);
+        openRealtime(fromLang, tgt);
+      }
+    }
   });
 
   socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
