@@ -63,6 +63,9 @@ export type WebRTCState = {
   endCall:       () => void;
   toggleMic:     () => void;
   toggleCam:     () => void;
+  // Phase 1 of voice→video hot upgrade: emits upgrade-request on the active socket.
+  // No-op if no active call. Renegotiation is Phase 2.
+  requestUpgrade: () => void;
 };
 
 export function useWebRTC(
@@ -676,6 +679,34 @@ export function useWebRTC(
       playTranslatedPcmChunk(payload.audio);
     });
 
+    // 8 — Voice→video hot upgrade · Phase 1: signaling only.
+    // Both handlers log and do NOTHING else for now — Phase 2 will add the
+    // getUserMedia(video) + addTrack + renegotiation. Registering them now
+    // proves the wire is live before we add any pc-touching code.
+    socket.on("upgrade-request", (payload: { fromSocketId?: string; to?: string }) => {
+      console.log(`[SPABLA][UPGRADE] request received from peer (fromSocketId=${payload?.fromSocketId ?? "?"} to=${payload?.to ?? "?"}) — Phase 1: log only, not acting yet`);
+    });
+
+    socket.on("upgrade-accept", (payload: { fromSocketId?: string }) => {
+      console.log(`[SPABLA][UPGRADE] accept received from peer (fromSocketId=${payload?.fromSocketId ?? "?"}) — Phase 1: log only, not acting yet`);
+    });
+
+  }, [conversationId]);
+
+  // Phase 1 of voice→video hot upgrade. Emits upgrade-request on the active socket.
+  // No-op if no active socket / no conversationId. Does NOT touch the PeerConnection.
+  const requestUpgrade = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket?.connected) {
+      console.warn("[SPABLA][UPGRADE] requestUpgrade aborted — socket not connected");
+      return;
+    }
+    if (!conversationId) {
+      console.warn("[SPABLA][UPGRADE] requestUpgrade aborted — no conversationId");
+      return;
+    }
+    console.log(`[SPABLA][UPGRADE] emitting upgrade-request to=video roomId=${conversationId}`);
+    socket.emit("upgrade-request", { roomId: conversationId, to: "video" });
   }, [conversationId]);
 
   const toggleMic = useCallback(() => {
@@ -698,5 +729,6 @@ export function useWebRTC(
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
     startCall, endCall, toggleMic, toggleCam,
+    requestUpgrade,
   };
 }

@@ -11,6 +11,9 @@ import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
 import VoiceCaptionsOverlay from "./components/VoiceCaptionsOverlay";
 
+// Voice→video hot upgrade · Phase 1 (signaling-only). Default OFF preserves current behaviour.
+const ENABLE_VOICE_TO_VIDEO_UPGRADE = process.env.NEXT_PUBLIC_ENABLE_VOICE_TO_VIDEO_UPGRADE === "true";
+
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
   es: { flag: "🇪🇸", name: "Español" },
   en: { flag: "🇬🇧", name: "English" },
@@ -501,6 +504,12 @@ export default function Chat() {
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
       stopVideo();
+    } else if (ENABLE_VOICE_TO_VIDEO_UPGRADE && signaling.callStatus === 'accepted') {
+      // Phase 1 of voice→video hot upgrade: emits the signal only.
+      // Phase 2 will add getUserMedia(video) + addTrack + renegotiation.
+      // With the flag OFF this branch is dead — falls through to startVideo() as today.
+      console.log("[SPABLA][UPGRADE] hot upgrade requested via camera button (flag ON, callStatus=accepted)");
+      webrtc.requestUpgrade();
     } else {
       await startVideo();
     }

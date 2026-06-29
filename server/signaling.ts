@@ -156,6 +156,13 @@ io.use(async (socket, next) => {
   }
 });
 
+// ── Voice→video hot upgrade · Phase 1 (signaling only) ──────────────────────
+// Track in-flight upgrade requests per room. A second request for the same room
+// while one is pending is dropped (logged). Auto-expires so a stuck request
+// does not block forever if the accept never arrives.
+const upgradeInFlight = new Map<string, number>();
+const UPGRADE_INFLIGHT_TTL_MS = 10_000;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 io.on("connection", (socket: Socket) => {
@@ -590,6 +597,39 @@ io.on("connection", (socket: Socket) => {
 
   socket.on("ice-candidate", (data: { roomId: string; candidate: RTCIceCandidateInit }) => {
     socket.to(data.roomId).emit("ice-candidate", { from: socket.id, candidate: data.candidate });
+  });
+
+  // ── Voice→video hot upgrade · Phase 1 ─────────────────────────────────────
+  // Pure relay: forward upgrade-request / upgrade-accept between peers in the room.
+  // No renegotiation here — that's Phase 2. This phase only validates the wire.
+  socket.on("upgrade-request", (data: { roomId?: string; to?: "video" } = {}) => {
+    const roomId = data.roomId ?? (socket.data.roomId as string | undefined);
+    if (!roomId) {
+      console.warn(`[SPABLA][UPGRADE] request from socket=${socket.id} ignored — no roomId`);
+      return;
+    }
+    // Drop stale in-flight entries opportunistically.
+    const now = Date.now();
+    for (const [r, ts] of upgradeInFlight) if (now - ts > UPGRADE_INFLIGHT_TTL_MS) upgradeInFlight.delete(r);
+
+    if (upgradeInFlight.has(roomId)) {
+      console.warn(`[SPABLA][UPGRADE] request from socket=${socket.id} room=${roomId} dropped — upgrade already in progress`);
+      return;
+    }
+    upgradeInFlight.set(roomId, now);
+    console.log(`[SPABLA][UPGRADE] request from socket=${socket.id} room=${roomId} to=${data.to ?? "video"} → forwarding to peer`);
+    socket.to(roomId).emit("upgrade-request", { fromSocketId: socket.id, to: data.to ?? "video" });
+  });
+
+  socket.on("upgrade-accept", (data: { roomId?: string } = {}) => {
+    const roomId = data.roomId ?? (socket.data.roomId as string | undefined);
+    if (!roomId) {
+      console.warn(`[SPABLA][UPGRADE] accept from socket=${socket.id} ignored — no roomId`);
+      return;
+    }
+    console.log(`[SPABLA][UPGRADE] accept from socket=${socket.id} room=${roomId} → forwarding to peer + clearing in-flight`);
+    socket.to(roomId).emit("upgrade-accept", { fromSocketId: socket.id });
+    upgradeInFlight.delete(roomId);
   });
 
   socket.on("subtitle", (data: {
