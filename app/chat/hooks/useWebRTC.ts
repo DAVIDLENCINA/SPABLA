@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { supabase } from "@/lib/supabase";
-import { useTranslatedSpeech } from "./useTranslatedSpeech";
+import { useTranslatedSpeech, playTranslatedPcmChunk } from "./useTranslatedSpeech";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
@@ -616,6 +616,9 @@ export function useWebRTC(
     socket.on("subtitle", (payload: {
       original?: string; translated?: string;
       _timings?: { translateMs: number; serverEmitMs: number };
+      // B1: when true, the server is streaming translated audio via translated-audio-chunk,
+      // so the local TTS speak() must NOT fire (avoids dual playback / overlap).
+      serverWillStreamAudio?: boolean;
     }) => {
       if (endingRef.current) return;
       // Timing del experimento server-side
@@ -645,12 +648,12 @@ export function useWebRTC(
 
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
       console.log("[TTS] subtitle received | text:", text.substring(0, 40));
-      console.log("[TTS] voiceEnabled:", voiceEnabledRef.current);
-      if (voiceEnabledRef.current) {
+      console.log("[TTS] voiceEnabled:", voiceEnabledRef.current, "serverWillStreamAudio:", !!payload.serverWillStreamAudio);
+      if (voiceEnabledRef.current && !payload.serverWillStreamAudio) {
         console.log("[TTS] speak() invoked | text:", text.substring(0, 40));
         speak(text, myLangRef.current);
       } else {
-        console.log("[TTS] speak() skipped — voiceEnabled=false");
+        console.log("[TTS] speak() skipped — voiceEnabled=false or serverWillStreamAudio=true");
       }
 
       // Append to conversation history — remote speaker, text is already in our language
@@ -662,6 +665,15 @@ export function useWebRTC(
         original: rawSpoken,
       }]);
       setRemoteCaption(null);
+    });
+
+    // 7 — B1: streaming translated audio (only emitted by server when USE_REALTIME_SPEECH=true).
+    // With the flag off, this handler is registered but never fires — zero behavioural change.
+    socket.on("translated-audio-chunk", (payload: { audio?: string }) => {
+      if (endingRef.current) return;
+      if (!voiceEnabledRef.current) return;
+      if (!payload?.audio) return;
+      playTranslatedPcmChunk(payload.audio);
     });
 
   }, [conversationId]);

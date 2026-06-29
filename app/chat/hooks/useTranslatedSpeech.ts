@@ -4,6 +4,47 @@ import { supabase } from "@/lib/supabase";
 let audioUnlocked = false;
 let audioCtx: AudioContext | null = null;
 
+// B1: scheduling head for streaming translated audio chunks (gpt-realtime-mini PCM @ 24kHz).
+// Shared module-level so consecutive chunks queue back-to-back without gaps.
+let translatedPlayHead = 0;
+const TRANSLATED_RATE = 24000;
+
+function base64ToInt16(b64: string): Int16Array {
+  const binary = atob(b64);
+  const bytes  = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  // Copy into a fresh ArrayBuffer to guarantee 2-byte alignment for Int16Array.
+  const aligned = new Uint8Array(bytes.byteLength);
+  aligned.set(bytes);
+  return new Int16Array(aligned.buffer);
+}
+
+// B1: schedule a base64-encoded PCM16 chunk @ 24kHz mono for immediate playback.
+// Uses the same module-level AudioContext as speak() — must have been unlocked via
+// unlockAudio() inside a user gesture before this is called (iOS Safari requirement).
+export function playTranslatedPcmChunk(base64: string): void {
+  if (typeof window === "undefined" || !base64) return;
+  if (!audioCtx) {
+    const AudioCtx = window.AudioContext ?? (window as any).webkitAudioContext;
+    if (!AudioCtx) return;
+    audioCtx = new AudioCtx();
+  }
+  audioCtx.resume().catch(() => {});
+  const int16 = base64ToInt16(base64);
+  if (int16.length === 0) return;
+  const float = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) float[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+  const buffer = audioCtx.createBuffer(1, float.length, TRANSLATED_RATE);
+  buffer.getChannelData(0).set(float);
+  const src = audioCtx.createBufferSource();
+  src.buffer = buffer;
+  src.connect(audioCtx.destination);
+  const now = audioCtx.currentTime;
+  if (translatedPlayHead < now + 0.02) translatedPlayHead = now + 0.02;
+  src.start(translatedPlayHead);
+  translatedPlayHead += buffer.duration;
+}
+
 export function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;

@@ -2,6 +2,7 @@ import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { WebSocket as UpstreamWS } from "ws";
 
 const deepgram = createClient(process.env.DEEPGRAM_API_KEY ?? "");
 
@@ -10,6 +11,19 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY ?? "";
 
 // Feature flag: "true" activa traducción server-side. Default: "false" (cliente traduce).
 const TRANSLATE_SERVER_SIDE = process.env.TRANSLATE_SERVER_SIDE === "true";
+
+// Feature flag B1: "true" → STT+MT+TTS via OpenAI Realtime (gpt-realtime-mini).
+// Default: false → comportamiento clásico (Deepgram + /api/translate + /api/tts) intacto.
+const USE_REALTIME_SPEECH = process.env.USE_REALTIME_SPEECH === "true";
+const OPENAI_REALTIME_MODEL = "gpt-realtime-mini";
+const REALTIME_VOICE = "marin";
+// gpt-realtime-mini rechaza rates > 24000 (probado empíricamente). El cliente captura a 48k,
+// así que decimamos 2:1 con promedio (low-pass simple) antes de enviar.
+function downsample48to24(int16: Int16Array): Int16Array {
+  const out = new Int16Array(int16.length >> 1);
+  for (let i = 0, j = 0; j < out.length; i += 2, j++) out[j] = (int16[i] + int16[i + 1]) >> 1;
+  return out;
+}
 
 // Singleton para getClaims() — JWKS cacheado en el proceso
 const supabaseAuth = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -153,6 +167,12 @@ io.on("connection", (socket: Socket) => {
 
   // Timestamps of recent Deepgram auto-reopens — for rate limiting.
   const dgReopenTimes: number[] = [];
+
+  // ── Realtime (B1) per-socket state — used only when USE_REALTIME_SPEECH is on ──
+  let rtConn: UpstreamWS | null = null;
+  let rtReady = false;
+  const rtPendingChunks: string[] = []; // base64 strings queued before session.updated
+  let lastInputTranscript = "";          // captured from input_audio_transcription, used as 'original' in subtitle
 
   // ── Opens (or reopens) a Deepgram live session with the given params ────────
   function openDeepgram(lang: string, fromLang: string, targetLang: string | null) {
@@ -320,6 +340,142 @@ io.on("connection", (socket: Socket) => {
   }
   // ── End openDeepgram ────────────────────────────────────────────────────────
 
+  function closeRT(): null {
+    if (rtConn) {
+      try { rtConn.close(); } catch { /* noop */ }
+    }
+    rtConn = null;
+    rtReady = false;
+    rtPendingChunks.length = 0;
+    return null;
+  }
+
+  // ── B1: open OpenAI Realtime upstream — only invoked when USE_REALTIME_SPEECH is on ──
+  function openRealtime(fromLang: string, targetLang: string | null) {
+    closeRT();
+    if (!process.env.OPENAI_API_KEY) {
+      console.error("[SPABLA][RT] OPENAI_API_KEY no configurada");
+      socket.emit("transcript-result", { text: "", isFinal: false, error: true });
+      return;
+    }
+    if (!targetLang || targetLang === fromLang) {
+      console.warn(`[SPABLA][RT] skipping open: targetLang missing or equals fromLang (from=${fromLang} target=${targetLang})`);
+      return;
+    }
+    const srcName = LANG_NAMES[fromLang]   ?? fromLang;
+    const tgtName = LANG_NAMES[targetLang] ?? targetLang;
+    console.log(`[SPABLA][RT] opening session ${fromLang}→${targetLang} (${srcName}→${tgtName})`);
+    const ws = new UpstreamWS(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_REALTIME_MODEL)}`, {
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    });
+    rtConn = ws;
+    rtReady = false;
+    lastInputTranscript = "";
+
+    ws.on("open", () => {
+      console.log(`[SPABLA][RT] upstream open: socket=${socket.id}`);
+    });
+
+    ws.on("error", (err: Error) => {
+      console.error(`[SPABLA][RT] upstream error: ${err.message}`);
+    });
+
+    ws.on("close", (code: number, reason: Buffer) => {
+      console.log(`[SPABLA][RT] upstream closed code=${code} reason=${reason?.toString() || ""}`);
+      if (rtConn === ws) { rtConn = null; rtReady = false; rtPendingChunks.length = 0; }
+    });
+
+    ws.on("message", (raw: Buffer) => {
+      let m: any;
+      try { m = JSON.parse(raw.toString("utf8")); } catch { return; }
+      const tp = m?.type as string | undefined;
+      if (!tp) return;
+
+      if (tp === "error") {
+        console.error("[SPABLA][RT] error event:", JSON.stringify(m.error));
+        return;
+      }
+
+      if (tp === "session.created") {
+        const cfg = {
+          type: "session.update",
+          session: {
+            type: "realtime",
+            output_modalities: ["audio"],
+            audio: {
+              input: {
+                format: { type: "audio/pcm", rate: 24000 },
+                transcription: { model: "whisper-1" },
+                turn_detection: {
+                  type: "server_vad",
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 500,
+                  create_response: true,
+                  interrupt_response: true,
+                },
+              },
+              output: { format: { type: "audio/pcm", rate: 24000 }, voice: REALTIME_VOICE },
+            },
+            instructions:
+              `You are a simultaneous interpreter. The user speaks ${srcName}. ` +
+              `Translate everything they say into ${tgtName} in real time, with natural intonation. ` +
+              `Output ONLY the ${tgtName} translation. Do not respond, do not converse, do not summarise. ` +
+              `Just translate verbatim, sentence by sentence, as soon as possible.`,
+          },
+        };
+        try { ws.send(JSON.stringify(cfg)); } catch (err) { console.error("[SPABLA][RT] session.update send failed:", err); }
+        return;
+      }
+
+      if (tp === "session.updated") {
+        rtReady = true;
+        // Flush any audio chunks that arrived before the session was ready.
+        while (rtPendingChunks.length > 0) {
+          const audio = rtPendingChunks.shift()!;
+          try { ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] flush send failed:", err); break; }
+        }
+        return;
+      }
+
+      if (tp === "conversation.item.input_audio_transcription.delta" && m.delta) {
+        socket.emit("transcript-result", { text: m.delta as string, isFinal: false });
+        return;
+      }
+
+      if (tp === "conversation.item.input_audio_transcription.completed" && m.transcript) {
+        lastInputTranscript = m.transcript as string;
+        // Sender path: serverWillTranslate=true makes the existing client handler
+        // create the local caption WITHOUT calling /api/translate or emitting subtitle.
+        socket.emit("transcript-result", { text: lastInputTranscript, isFinal: true, serverWillTranslate: true });
+        return;
+      }
+
+      if (tp === "response.output_audio.delta" && m.delta) {
+        const roomId = socket.data.roomId as string | undefined;
+        if (roomId) socket.to(roomId).emit("translated-audio-chunk", { audio: m.delta as string });
+        return;
+      }
+
+      if (tp === "response.output_audio_transcript.done" && m.transcript) {
+        const roomId = socket.data.roomId as string | undefined;
+        const fromL  = socket.data.fromLang as string | undefined;
+        if (roomId) {
+          socket.to(roomId).emit("subtitle", {
+            original:   lastInputTranscript,
+            translated: m.transcript as string,
+            fromLang:   fromL,
+            // serverWillStreamAudio tells the peer NOT to call speak() — translated audio
+            // already arrived via translated-audio-chunk events.
+            serverWillStreamAudio: true,
+          });
+        }
+        return;
+      }
+    });
+  }
+  // ── End openRealtime ────────────────────────────────────────────────────────
+
   socket.on("join-room", async (roomId: string) => {
     if (!UUID_REGEX.test(roomId)) {
       socket.emit("join-error", { message: "Invalid room ID" });
@@ -424,7 +580,11 @@ io.on("connection", (socket: Socket) => {
     socket.data.fromLang   = fromLang   ?? lang;
     socket.data.targetLang = targetLang ?? null;
 
-    openDeepgram(lang, socket.data.dgFromLang as string, socket.data.dgTargetLang as string | null);
+    if (USE_REALTIME_SPEECH) {
+      openRealtime(socket.data.dgFromLang as string, socket.data.dgTargetLang as string | null);
+    } else {
+      openDeepgram(lang, socket.data.dgFromLang as string, socket.data.dgTargetLang as string | null);
+    }
   });
 
   socket.on("audio-chunk", (chunk: ArrayBuffer) => {
@@ -437,6 +597,21 @@ io.on("connection", (socket: Socket) => {
       console.log(`[TRACE DEEPGRAM FEED] bytesSent=${Math.round(_dgBytes / s)}/s`);
       _audioChunks = 0; _audioBytes = 0; _dgBytes = 0; _audioLogT = _now;
     }
+    if (USE_REALTIME_SPEECH) {
+      // B1: decimate 48k → 24k mono pcm16, base64-encode, send as input_audio_buffer.append.
+      // Queue while session.updated has not yet arrived.
+      if (!rtConn) return;
+      const int16     = new Int16Array(chunk);
+      const decimated = downsample48to24(int16);
+      const audio     = Buffer.from(decimated.buffer, decimated.byteOffset, decimated.byteLength).toString("base64");
+      if (rtReady) {
+        try { rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
+      } else {
+        // Cap pending buffer to ~10s of audio so a slow handshake can't grow without bound.
+        if (rtPendingChunks.length < 120) rtPendingChunks.push(audio);
+      }
+      return;
+    }
     if (!dgConn) return;
     _dgBytes += chunk.byteLength;
     try { dgConn.send(chunk); } catch { }
@@ -445,12 +620,14 @@ io.on("connection", (socket: Socket) => {
   socket.on("transcribe-stop", () => {
     socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
+    if (rtConn) { closeRT(); console.log(`[SPABLA][RT] sesión cerrada por ${socket.id}`); }
     console.log(`[SPABLA][DG] Transcripción detenida por ${socket.id}`);
   });
 
   socket.on("disconnect", () => {
     socket.data.dgTranscribing = false;
     dgConn = closeDG(dgConn);
+    if (rtConn) closeRT();
     console.log("[SPABLA] Usuario desconectado:", socket.id);
   });
 });
@@ -459,4 +636,5 @@ const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
   console.log("[SPABLA] Servidor de señalización en puerto", PORT);
   console.log("[SPABLA] TRANSLATE_SERVER_SIDE:", TRANSLATE_SERVER_SIDE);
+  console.log("[SPABLA] USE_REALTIME_SPEECH:", USE_REALTIME_SPEECH);
 });
