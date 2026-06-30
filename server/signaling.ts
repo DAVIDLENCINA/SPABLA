@@ -1,3 +1,5 @@
+// SPABLA signaling server — branch release/v1-stable
+// Voice (B1, gpt-realtime-mini), chat, and idle-initiated video validated baseline.
 import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";
