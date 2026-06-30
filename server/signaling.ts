@@ -170,7 +170,7 @@ io.on("connection", (socket: Socket) => {
     `(user=${(socket.data.userId as string).substring(0, 8)}...)`);
 
   let dgConn: DGConnection | null = null;
-  let _audioChunks = 0, _audioBytes = 0, _dgBytes = 0, _audioLogT = Date.now();
+  let _audioChunks = 0, _audioBytes = 0, _dgBytes = 0, _rtBytes = 0, _audioLogT = Date.now();
 
   // Timestamps of recent Deepgram auto-reopens — for rate limiting.
   const dgReopenTimes: number[] = [];
@@ -692,7 +692,11 @@ io.on("connection", (socket: Socket) => {
       const s = (_now - _audioLogT) / 1000;
       console.log(`[TRACE AUDIO SERVER] chunks=${Math.round(_audioChunks / s)}/s bytes=${Math.round(_audioBytes / s)}/s`);
       console.log(`[TRACE DEEPGRAM FEED] bytesSent=${Math.round(_dgBytes / s)}/s`);
-      _audioChunks = 0; _audioBytes = 0; _dgBytes = 0; _audioLogT = _now;
+      // B1 observability: how many bytes (decimated 24k pcm16) we actually pushed upstream
+      // to OpenAI Realtime this second, plus the connection state. Settles whether the audio
+      // is reaching the engine or being dropped by the `if (!rtConn) return` guard.
+      console.log(`[TRACE RT FEED] bytesSent=${Math.round(_rtBytes / s)}/s rtConn=${rtConn ? "open" : "null"} rtReady=${rtReady} pendingQueue=${rtPendingChunks.length} from=${rtFromLang ?? "?"} to=${rtTargetLang ?? "?"}`);
+      _audioChunks = 0; _audioBytes = 0; _dgBytes = 0; _rtBytes = 0; _audioLogT = _now;
     }
     if (USE_REALTIME_SPEECH) {
       // B1: decimate 48k → 24k mono pcm16, base64-encode, send as input_audio_buffer.append.
@@ -702,7 +706,7 @@ io.on("connection", (socket: Socket) => {
       const decimated = downsample48to24(int16);
       const audio     = Buffer.from(decimated.buffer, decimated.byteOffset, decimated.byteLength).toString("base64");
       if (rtReady) {
-        try { rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
+        try { rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); _rtBytes += decimated.byteLength; } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
       } else {
         // Cap pending buffer to ~10s of audio so a slow handshake can't grow without bound.
         if (rtPendingChunks.length < 120) rtPendingChunks.push(audio);
