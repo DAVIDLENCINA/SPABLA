@@ -571,11 +571,10 @@ export default function Chat() {
     })),
   ].sort((a, b) => a.ts - b.ts), [messages, voiceChatEntries, isInCall, callStartTime]);
 
-  if (!user) return null;
-  const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
-  const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
-
   // ── Debug export UI (only when URL has ?debug=1) ────────────────────────
+  // Declared ABOVE the `if (!user)` gate so the "Export logs" button can render
+  // even before auth resolves (or when auth redirects). No coupling with user
+  // or call state — reads only window.location.search + module-level helpers.
   const debugMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1";
   const handleExportLogs = async () => {
     const text = exportSpablaTraceBuffer("manual/button");
@@ -621,6 +620,39 @@ export default function Chat() {
       void dumpSpablaTraceBuffer("manual/button+failed-local-export");
     }
   };
+  // Shared button element — used both when auth is still pending (null return
+  // path below) and inside the main JSX. debugMode false → null → nothing renders.
+  const debugButton = debugMode ? (
+    <button
+      onClick={handleExportLogs}
+      title="Copy or share the SPABLA trace buffer"
+      style={{
+        position: "fixed",
+        bottom: 12, left: 12,
+        zIndex: 9999,
+        background: "rgba(0,0,0,0.65)",
+        color: "#41ff9d",
+        border: "1px solid rgba(65,255,157,0.4)",
+        borderRadius: 8,
+        padding: "6px 10px",
+        fontSize: 11,
+        fontWeight: 600,
+        fontFamily: "monospace",
+        cursor: "pointer",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
+      Export logs
+    </button>
+  ) : null;
+
+  // Return the debug button even while auth is unresolved so log export
+  // remains available regardless of session state. If debugMode is off,
+  // this is equivalent to the previous behaviour (returns null).
+  if (!user) return debugButton;
+  const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
+  const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
 
   return (
     <>
@@ -1166,30 +1198,7 @@ export default function Chat() {
           />
         )}
       </div>
-      {debugMode && (
-        <button
-          onClick={handleExportLogs}
-          title="Copy or share the SPABLA trace buffer"
-          style={{
-            position: "fixed",
-            bottom: 12, left: 12,
-            zIndex: 9999,
-            background: "rgba(0,0,0,0.65)",
-            color: "#41ff9d",
-            border: "1px solid rgba(65,255,157,0.4)",
-            borderRadius: 8,
-            padding: "6px 10px",
-            fontSize: 11,
-            fontWeight: 600,
-            fontFamily: "monospace",
-            cursor: "pointer",
-            backdropFilter: "blur(6px)",
-            WebkitBackdropFilter: "blur(6px)",
-          }}
-        >
-          Export logs
-        </button>
-      )}
+      {debugButton}
     </>
   );
 }
