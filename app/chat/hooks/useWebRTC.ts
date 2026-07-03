@@ -83,6 +83,7 @@ export function useWebRTC(
   myLang: string,
   targetLang: string | null,
   voiceEnabled: boolean = false,
+  callAccepted: boolean = false,
 ): WebRTCState {
   // Core WebRTC refs
   const socketRef      = useRef<Socket | null>(null);
@@ -122,6 +123,11 @@ export function useWebRTC(
 
   // Guard: prevents endCall() re-entering when socket.disconnect() triggers a "disconnect" event
   const endingRef = useRef(false);
+  // Guard: mirrors signaling.callStatus === 'accepted'. When false (any non-accepted state,
+  // including 'idle' after the caller's synchronous reset()), late server-side events
+  // (transcript-result / subtitle / translated-audio-chunk) must be dropped even if
+  // webrtc.endCall() never fired and the socket is still open.
+  const callAcceptedRef = useRef(callAccepted);
   const hasCreatedOfferRef = useRef(false);
   // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
   const startingRef = useRef(false);
@@ -147,6 +153,7 @@ export function useWebRTC(
 
   // Keep lang refs in sync when props change between renders
   useEffect(() => { myLangRef.current = myLang; },             [myLang]);
+  useEffect(() => { callAcceptedRef.current = callAccepted; }, [callAccepted]);
   useEffect(() => {
     const wasEnabled = voiceEnabledRef.current;
     voiceEnabledRef.current = voiceEnabled;
@@ -746,6 +753,7 @@ export function useWebRTC(
       text, isFinal, serverWillTranslate,
     }: { text: string; isFinal?: boolean; serverWillTranslate?: boolean }) => {
       if (endingRef.current) return;
+      if (!callAcceptedRef.current) return;
       if (Date.now() < sttWarmupUntilRef.current) {
         console.log("[STT] warmup — ignoring result isFinal:", isFinal, "text:", (text ?? "").substring(0, 45));
         return;
@@ -786,6 +794,7 @@ export function useWebRTC(
       // ── Experimento server-side: servidor ya traducirá y emitirá subtitle ──
       if (serverWillTranslate) {
         if (endingRef.current) return;
+        if (!callAcceptedRef.current) return;
         console.log(`[R2-AUDIT] BUBBLE_CREATE speaker=local path=server text="${finalOriginal.substring(0,80)}"`); // [R2-AUDIT]
         spablaTrace("TR_BUBBLE_TEXT", {
           speaker: "local",
@@ -826,8 +835,10 @@ export function useWebRTC(
         console.log(`[STT CLIENT] [TIMING] translate=${Date.now()-_tStart}ms`);
       }
 
-      // Guard 3 — re-check after awaits: endCall() may have run during translate fetch
+      // Guard 3 — re-check after awaits: endCall() may have run during translate fetch,
+      // or the call may have transitioned away from 'accepted' (caller hangup → idle)
       if (endingRef.current) return;
+      if (!callAcceptedRef.current) return;
 
       // Dedup — skip if this exact text was emitted locally within the last 4 s
       const _nowLocal = Date.now();
@@ -875,6 +886,7 @@ export function useWebRTC(
       serverWillStreamAudio?: boolean;
     }) => {
       if (endingRef.current) return;
+      if (!callAcceptedRef.current) return;
       spablaTrace("SUBTITLE_RECEIVED", {
         hasOriginal: !!payload.original,
         hasTranslated: !!payload.translated,
@@ -912,9 +924,11 @@ export function useWebRTC(
 
       console.log(`[TRACE-4] remote received subtitle text="${text.substring(0,60)}"`);
       console.log("[STT CLIENT] subtitle received | text:", text.substring(0, 40));
-      // Guard before TTS + bubble — subtitle handler entry already checks endingRef,
-      // but re-check here in case any async microtask ran between entry and this point.
+      // Guard before TTS + bubble — subtitle handler entry already checks endingRef /
+      // callAcceptedRef, but re-check here in case any async microtask ran between entry
+      // and this point (or the call transitioned to non-accepted during that window).
       if (endingRef.current) return;
+      if (!callAcceptedRef.current) return;
 
       // TTS — sólo si está activado y hay texto traducido final (nunca parcial)
       console.log("[TTS] subtitle received | text:", text.substring(0, 40));
@@ -955,6 +969,7 @@ export function useWebRTC(
     let _tacLastTrace = 0;
     socket.on("translated-audio-chunk", (payload: { audio?: string }) => {
       if (endingRef.current) return;
+      if (!callAcceptedRef.current) return;
       if (!voiceEnabledRef.current) return;
       if (!payload?.audio) return;
       _tacCount++;
