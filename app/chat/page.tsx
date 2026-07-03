@@ -453,6 +453,10 @@ export default function Chat() {
     // before any await — iOS Safari requires this before getUserMedia activates
     // the audio session in record mode.
     unlockAudio();
+    // iOS Safari: also unlock the CAPTURE AudioContext (separate from TTS ctx) inside
+    // the same gesture, so the ScriptProcessor pipeline built later in startCall reads
+    // real samples (rms>0) instead of all-zero buffers.
+    webrtc.unlockCapture();
     ring.prepare();
     callHandlerInFlightRef.current = true;
     try {
@@ -487,6 +491,7 @@ export default function Chat() {
 
   const startVideo = async () => {
     unlockAudio();
+    webrtc.unlockCapture();
     ring.prepare();
     pendingCallModeRef.current = 'video';
     await signaling.initiateCall('video');
@@ -496,6 +501,7 @@ export default function Chat() {
   const handleCameraButton = async () => {
     if (isIncomingVideo && signaling.incomingCall) {
       unlockAudio();
+      webrtc.unlockCapture();
       ring.prepare();
       pendingCallModeRef.current = 'video';
       await signaling.acceptCall(signaling.incomingCall.id);

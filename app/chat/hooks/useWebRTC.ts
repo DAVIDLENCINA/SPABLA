@@ -63,6 +63,11 @@ export type WebRTCState = {
   endCall:       () => void;
   toggleMic:     () => void;
   toggleCam:     () => void;
+  // iOS Safari: create/resume the capture AudioContext inside a synchronous user gesture
+  // (button click handler). Without this, the ctx is created later in startCall from a
+  // useEffect callback (async, no gesture) and stays state=suspended → ScriptProcessor
+  // reads all-zero buffers → translation gets silence.
+  unlockCapture: () => void;
 };
 
 export function useWebRTC(
@@ -678,6 +683,52 @@ export function useWebRTC(
 
   }, [conversationId]);
 
+  // iOS Safari: this MUST run synchronously inside a user gesture (button click) or the
+  // AudioContext will be created but stay state=suspended, silencing ScriptProcessor
+  // buffers. Call this from handlePhoneButton / handleCameraButton alongside unlockAudio().
+  // On desktop it is a cheap no-op equivalent.
+  const unlockCapture = useCallback(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioCtx) return;
+        audioCtxRef.current = new AudioCtx({ sampleRate: 48000 });
+      }
+      audioCtxRef.current.resume().catch(() => {});
+      // iOS unlock trick: schedule a 1-sample silent buffer inside this same gesture.
+      // Without this, iOS keeps the ctx nominally "running" but the graph does not fire.
+      const ctx = audioCtxRef.current;
+      const buf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+      console.log("[TRACE AUDIO CONTEXT] unlockCapture (in-gesture) | state=", ctx.state, "sampleRate=", ctx.sampleRate);
+    } catch (err: any) {
+      console.warn("[TRACE AUDIO CONTEXT] unlockCapture failed:", err?.message ?? err);
+    }
+  }, []);
+
+  // iOS Safari: AudioContext suspends when the tab backgrounds (home button / lock).
+  // On return, resume() from an event handler works because visibilitychange counts
+  // as a user-attention event on iOS 16+. Without this, the mic goes permanently silent
+  // for the rest of the call after any background/foreground cycle.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handler = () => {
+      if (document.visibilityState !== "visible") return;
+      const ctx = audioCtxRef.current;
+      if (!ctx || ctx.state === "closed") return;
+      ctx.resume().then(
+        () => console.log("[SPABLA][iOS] visibilitychange → ctx resumed | state=", ctx.state),
+        (err) => console.warn("[SPABLA][iOS] visibilitychange resume failed:", err?.message ?? err),
+      );
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
@@ -697,6 +748,6 @@ export function useWebRTC(
     localStream, remoteStream, connected, hasRemote, micOn, camOn, error,
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
-    startCall, endCall, toggleMic, toggleCam,
+    startCall, endCall, toggleMic, toggleCam, unlockCapture,
   };
 }

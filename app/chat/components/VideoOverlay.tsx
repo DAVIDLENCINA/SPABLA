@@ -74,10 +74,21 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
   );
 
   // Local pip — fixed in root stacking context at z-index 3, above .msg (z-index 2)
+  // iOS Safari: play() called from a useEffect can silently fail; onCanPlay + onLoadedMetadata
+  // retries defensively. Tapping the pip is a last-resort user-gesture fallback.
+  const retryLocalPlay = () => {
+    const v = localVideoRef.current;
+    if (!v || !webrtc.localStream) return;
+    if (v.srcObject !== webrtc.localStream) v.srcObject = webrtc.localStream;
+    v.play().catch(() => {});
+  };
   const localPip = (
     <video
       ref={localVideoRef}
       autoPlay playsInline muted
+      onCanPlay={retryLocalPlay}
+      onLoadedMetadata={retryLocalPlay}
+      onClick={retryLocalPlay}
       style={{
         position: "fixed",
         bottom: 84, right: 12,
