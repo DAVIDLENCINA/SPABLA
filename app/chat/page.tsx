@@ -67,14 +67,8 @@ export default function Chat() {
   const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const callHandlerInFlightRef = useRef(false);
 
+  const webrtc = useWebRTC(conversationId, user?.language_primary ?? "es", otherLang, voiceEnabled);
   const signaling = useCallSignaling(conversationId, user?.id ?? null);
-  const webrtc = useWebRTC(
-    conversationId,
-    user?.language_primary ?? "es",
-    otherLang,
-    voiceEnabled,
-    signaling.callStatus === 'accepted',
-  );
   const ring = useRingTone();
 
   // Derived call state — single source of truth is signaling
