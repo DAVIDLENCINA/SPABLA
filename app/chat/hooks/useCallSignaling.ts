@@ -111,15 +111,17 @@ export function useCallSignaling(
           return;
         }
 
-        // Update on an incoming call we are tracking (accepted = call in progress)
+        // Update on an incoming call we are tracking (accepted = call in progress).
+        // 'ended' MUST route through setCallStatus(next) BEFORE reset() so the
+        // callStatus effect in page.tsx (which observes accepted → non-idle → non-accepted)
+        // fires webrtc.endCall(). Skipping directly to reset() → 'idle' bypasses that
+        // effect and leaves PC / socket / Realtime session alive on the callee.
         if (row.caller_id !== userId &&
             (callStatusRef.current === "incoming" || callStatusRef.current === "accepted")) {
-          if (next === "cancelled" || next === "missed") {
+          if (next === "cancelled" || next === "missed" || next === "ended") {
             setCallStatus(next);
             setIncomingCall(null);
             setTimeout(reset, 0);
-          } else if (next === "ended") {
-            reset();
           }
         }
       }

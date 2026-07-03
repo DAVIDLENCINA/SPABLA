@@ -244,6 +244,10 @@ export function useWebRTC(
     setLocalStream(null);
     setRemoteStream(null);
     setHasRemote(false);
+    // Without this, the useEffect in page.tsx that watches remoteHasVideo would
+    // re-flip videoActive=true right after the callStatus reset, leaving
+    // VideoOverlay mounted on top of the chat with camera-off placeholders.
+    setRemoteHasVideo(false);
     setConnected(false);
     setLocalCaption(null);
     setRemoteCaption(null);
