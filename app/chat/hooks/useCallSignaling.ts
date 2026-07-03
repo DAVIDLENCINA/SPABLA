@@ -93,7 +93,16 @@ export function useCallSignaling(
       if (payload.eventType === "UPDATE") {
         const next = row.status as CallStatus;
 
-        // Update on our own outgoing call
+        // Update on our own outgoing call.
+        // Same batching hazard as the callee branch below: setCallStatus(next)
+        // and reset() (which contains its own setCallStatus("idle")) are both
+        // synchronous state updates inside a Supabase Realtime callback → React
+        // 18/19 auto-batching collapses them into a single re-render with the
+        // final value "idle". The callStatus effect in page.tsx then observes
+        // "accepted → idle" directly and skips webrtc.endCall() (its else branch
+        // is guarded by `if (status !== 'idle')`). Deferring reset via
+        // setTimeout(reset, 0) makes React commit "ended"/"cancelled"/"missed"
+        // first so the effect can tear down webrtc, then commit "idle".
         if (
           row.caller_id === userId &&
           (
@@ -106,7 +115,7 @@ export function useCallSignaling(
           if (next === "rejected") {
             setTimeout(reset, 2000); // brief window to show "rejected" state
           } else if (next !== "accepted") {
-            reset(); // cancelled / missed / ended → back to idle immediately
+            setTimeout(reset, 0);   // ← cancelled / missed / ended → visible transition first
           }
           return;
         }

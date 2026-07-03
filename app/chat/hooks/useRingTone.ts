@@ -6,6 +6,14 @@ export function useRingTone() {
   const ctxRef       = useRef<AudioContext | null>(null);
   const schedulerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeRef    = useRef(false);
+  // Track every oscillator and gain node produced by playBurst so stop() can
+  // silence them IMMEDIATELY. ctxRef.current.close() is async and, on iOS
+  // Safari, does not synchronously terminate already-scheduled oscillators
+  // (osc.stop(t) was queued for t = now + duration). Without explicit
+  // osc.stop(0) here, the second ringtone burst (scheduled at +1.0 s with 0.7 s
+  // duration) keeps playing up to ~1.7 s after the user accepted the call.
+  const activeOscsRef  = useRef<Set<OscillatorNode>>(new Set());
+  const activeGainsRef = useRef<Set<GainNode>>(new Set());
 
   const getCtx = (): AudioContext => {
     if (!ctxRef.current || ctxRef.current.state === "closed") {
@@ -31,6 +39,7 @@ export function useRingTone() {
     gain.gain.setValueAtTime(volume, now + Math.max(0, duration - 0.05));
     gain.gain.linearRampToValueAtTime(0, now + duration);
     gain.connect(ctx.destination);
+    activeGainsRef.current.add(gain);
 
     frequencies.forEach((freq) => {
       const osc = ctx.createOscillator();
@@ -39,6 +48,8 @@ export function useRingTone() {
       osc.connect(gain);
       osc.start(now);
       osc.stop(now + duration);
+      activeOscsRef.current.add(osc);
+      osc.onended = () => { activeOscsRef.current.delete(osc); };
     });
   };
 
@@ -48,6 +59,18 @@ export function useRingTone() {
       clearTimeout(schedulerRef.current);
       schedulerRef.current = null;
     }
+    // Immediately terminate every scheduled/playing oscillator. Without this
+    // the AudioContext close() is async and iOS Safari lets the queued
+    // osc.stop(t) events fire at their originally scheduled times.
+    activeOscsRef.current.forEach((osc) => {
+      try { osc.stop(0); } catch { /* already stopped */ }
+      try { osc.disconnect(); } catch { /* noop */ }
+    });
+    activeOscsRef.current.clear();
+    activeGainsRef.current.forEach((gain) => {
+      try { gain.disconnect(); } catch { /* noop */ }
+    });
+    activeGainsRef.current.clear();
     if (ctxRef.current && ctxRef.current.state !== "closed") {
       ctxRef.current.close().catch(() => {});
     }
