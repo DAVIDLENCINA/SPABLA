@@ -10,7 +10,7 @@ import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
 import VoiceCaptionsOverlay from "./components/VoiceCaptionsOverlay";
-import { spablaTrace, setTraceContext } from "./debug/spablaTrace";
+import { spablaTrace, setTraceContext, exportSpablaTraceBuffer, dumpSpablaTraceBuffer, getSpablaSessionId } from "./debug/spablaTrace";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
   es: { flag: "🇪🇸", name: "Español" },
@@ -575,6 +575,53 @@ export default function Chat() {
   const myLang   = LANGUAGES[user.language_primary] ?? { flag: "🌐", name: user.language_primary };
   const theirLang = otherLang ? (LANGUAGES[otherLang] ?? { flag: "🌐", name: otherLang }) : null;
 
+  // ── Debug export UI (only when URL has ?debug=1) ────────────────────────
+  const debugMode = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "1";
+  const handleExportLogs = async () => {
+    const text = exportSpablaTraceBuffer("manual/button");
+    const filename = `spabla-trace-${getSpablaSessionId()}-${Date.now()}.jsonl`;
+    // 1. Try Web Share (best UX on iPhone Safari — opens native share sheet)
+    const shareData: any = { title: "SPABLA trace", text };
+    try {
+      // navigator.share prefers files if the platform accepts them; fall back to text otherwise.
+      if (typeof (navigator as any).canShare === "function" && typeof File !== "undefined") {
+        const file = new File([text], filename, { type: "application/x-ndjson" });
+        if ((navigator as any).canShare({ files: [file] })) {
+          await (navigator as any).share({ title: "SPABLA trace", files: [file] });
+          void dumpSpablaTraceBuffer("manual/button+share");
+          return;
+        }
+      }
+      if (typeof (navigator as any).share === "function") {
+        await (navigator as any).share(shareData);
+        void dumpSpablaTraceBuffer("manual/button+share");
+        return;
+      }
+    } catch { /* user cancelled or unsupported — fall through */ }
+    // 2. Try clipboard (works on modern desktop + iOS 13.4+)
+    try {
+      await navigator.clipboard?.writeText(text);
+      // Also POST to server so it lands in Vercel logs regardless.
+      void dumpSpablaTraceBuffer("manual/button+clipboard");
+      alert("Traces copied to clipboard and dispatched to server logs.");
+      return;
+    } catch { /* clipboard blocked — fall through */ }
+    // 3. Fall back to download
+    try {
+      const blob = new Blob([text], { type: "application/x-ndjson" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      void dumpSpablaTraceBuffer("manual/button+download");
+    } catch { /* last resort — dispatch to server only */
+      void dumpSpablaTraceBuffer("manual/button+failed-local-export");
+    }
+  };
+
   return (
     <>
       <style>{`
@@ -1119,6 +1166,30 @@ export default function Chat() {
           />
         )}
       </div>
+      {debugMode && (
+        <button
+          onClick={handleExportLogs}
+          title="Copy or share the SPABLA trace buffer"
+          style={{
+            position: "fixed",
+            bottom: 12, left: 12,
+            zIndex: 9999,
+            background: "rgba(0,0,0,0.65)",
+            color: "#41ff9d",
+            border: "1px solid rgba(65,255,157,0.4)",
+            borderRadius: 8,
+            padding: "6px 10px",
+            fontSize: 11,
+            fontWeight: 600,
+            fontFamily: "monospace",
+            cursor: "pointer",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+          }}
+        >
+          Export logs
+        </button>
+      )}
     </>
   );
 }
