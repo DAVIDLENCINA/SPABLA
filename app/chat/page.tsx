@@ -10,6 +10,7 @@ import { useVoiceTranscription } from "./hooks/useVoiceTranscription";
 import { useDictation } from "./hooks/useDictation";
 import VideoOverlay from "./components/VideoOverlay";
 import VoiceCaptionsOverlay from "./components/VoiceCaptionsOverlay";
+import { spablaTrace, setTraceContext } from "./debug/spablaTrace";
 
 const LANGUAGES: Record<string, { flag: string; name: string }> = {
   es: { flag: "🇪🇸", name: "Español" },
@@ -156,6 +157,8 @@ export default function Chat() {
       }
 
       if (cancelled) return;
+      setTraceContext({ userId: u.id });
+      spablaTrace("USER_LOADED", { userId: u.id, lang: u.language_primary });
       setUser(u);
       initConversation(u);
     });
@@ -300,6 +303,8 @@ export default function Chat() {
       if (!existing?.length) await supabase.from("conversation_participants").insert({ conversation_id: convId, user_id: u.id });
     }
     convIdRef.current = convId;
+    setTraceContext({ roomId: convId });
+    spablaTrace("CONVERSATION_READY", { conversationId: convId });
     setConversationId(convId);
     setVoiceChatEntries([]);
     setOtherUserId(null);
@@ -448,6 +453,14 @@ export default function Chat() {
   // ── Call handlers ─────────────────────────────────────────────────────────
 
   const handlePhoneButton = async () => {
+    spablaTrace("PHONE_BUTTON_CLICK", {
+      callStatus: signaling.callStatus,
+      isIncoming: isIncoming,
+      incomingCallMode: signaling.incomingCall?.mode ?? null,
+      isIncomingVideo,
+      videoActive,
+      inFlight: callHandlerInFlightRef.current,
+    });
     if (callHandlerInFlightRef.current) return;
     // Unlock TTS audio context synchronously inside the user gesture,
     // before any await — iOS Safari requires this before getUserMedia activates
@@ -484,12 +497,17 @@ export default function Chat() {
   };
 
   const handleDeclineButton = async () => {
+    spablaTrace("DECLINE_BUTTON_CLICK", {
+      callStatus: signaling.callStatus,
+      hasIncoming: !!signaling.incomingCall,
+    });
     if (signaling.callStatus === 'incoming' && signaling.incomingCall) {
       await signaling.rejectCall(signaling.incomingCall.id);
     }
   };
 
   const startVideo = async () => {
+    spablaTrace("START_VIDEO_REQUEST", { from: "startVideo", callStatus: signaling.callStatus });
     unlockAudio();
     webrtc.unlockCapture();
     ring.prepare();
@@ -499,6 +517,12 @@ export default function Chat() {
   const stopVideo  = () => { webrtc.endCall(); setVideoActive(false); setVideoExpanded(false); };
 
   const handleCameraButton = async () => {
+    spablaTrace("CAMERA_BUTTON_CLICK", {
+      callStatus: signaling.callStatus,
+      isIncomingVideo,
+      videoActive,
+      incomingCallMode: signaling.incomingCall?.mode ?? null,
+    });
     if (isIncomingVideo && signaling.incomingCall) {
       unlockAudio();
       webrtc.unlockCapture();
@@ -508,6 +532,15 @@ export default function Chat() {
     } else if (videoActive) {
       stopVideo();
     } else {
+      // The historic path here is initiateCall('video') from idle. When the current
+      // callStatus is 'accepted' (a live voice call), initiateCall will abort at the
+      // !=='idle' guard — that is the historic "hot upgrade never worked" fingerprint.
+      if (signaling.callStatus === 'accepted') {
+        spablaTrace("UPGRADE_ATTEMPT", {
+          callStatus: signaling.callStatus,
+          expected: "guard-in-initiateCall-aborts-and-returns-null",
+        });
+      }
       await startVideo();
     }
   };

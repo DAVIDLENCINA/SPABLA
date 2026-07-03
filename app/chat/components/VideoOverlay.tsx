@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { WebRTCState } from "../hooks/useWebRTC";
+import { spablaTrace, traceVideoElement } from "../debug/spablaTrace";
 
 type Props = {
   webrtc: WebRTCState;
@@ -20,14 +21,24 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
   useEffect(() => {
     if (localVideoRef.current && webrtc.localStream) {
       localVideoRef.current.srcObject = webrtc.localStream;
-      localVideoRef.current.play().catch(() => {});
+      spablaTrace("VIDEO_LOCAL_SRC_SET", { streamId: webrtc.localStream.id, videoAttrs: traceVideoElement(localVideoRef.current) });
+      spablaTrace("VIDEO_LOCAL_PLAY_REQUEST", { from: "useEffect-localStream" });
+      localVideoRef.current.play().then(
+        () => spablaTrace("VIDEO_LOCAL_PLAY_SUCCESS", { videoAttrs: traceVideoElement(localVideoRef.current) }),
+        (err: any) => spablaTrace("VIDEO_LOCAL_PLAY_ERROR", { errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) }),
+      ).catch(() => {});
     }
   }, [webrtc.localStream]);
 
   useEffect(() => {
     if (remoteVideoRef.current && webrtc.remoteStream) {
       remoteVideoRef.current.srcObject = webrtc.remoteStream;
-      remoteVideoRef.current.play().catch(() => {});
+      spablaTrace("VIDEO_REMOTE_SRC_SET", { streamId: webrtc.remoteStream.id, videoAttrs: traceVideoElement(remoteVideoRef.current) });
+      spablaTrace("VIDEO_REMOTE_PLAY_REQUEST", { from: "useEffect-remoteStream" });
+      remoteVideoRef.current.play().then(
+        () => spablaTrace("VIDEO_REMOTE_PLAY_SUCCESS", { videoAttrs: traceVideoElement(remoteVideoRef.current) }),
+        (err: any) => spablaTrace("VIDEO_REMOTE_PLAY_ERROR", { errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) }),
+      ).catch(() => {});
     }
   }, [webrtc.remoteStream]);
 
@@ -49,11 +60,17 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
   function unlockRemote() {
     if (unlockedRef.current || !remoteVideoRef.current) return;
     const v = remoteVideoRef.current;
+    spablaTrace("VIDEO_REMOTE_UNLOCK_ATTEMPT", { videoAttrsBefore: traceVideoElement(v), hasRemoteStream: !!webrtc.remoteStream });
     const empty = new MediaStream();
     v.srcObject = empty;
     v.play().catch(() => {});
     v.srcObject = webrtc.remoteStream;
-    if (webrtc.remoteStream) v.play().catch(() => {});
+    if (webrtc.remoteStream) {
+      v.play().then(
+        () => spablaTrace("VIDEO_REMOTE_PLAY_SUCCESS", { from: "unlockRemote", videoAttrs: traceVideoElement(v) }),
+        (err: any) => spablaTrace("VIDEO_REMOTE_PLAY_ERROR", { from: "unlockRemote", errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) }),
+      ).catch(() => {});
+    }
     unlockedRef.current = true;
   }
 
@@ -80,7 +97,11 @@ export default function VideoOverlay({ webrtc, expanded, onToggleExpand }: Props
     const v = localVideoRef.current;
     if (!v || !webrtc.localStream) return;
     if (v.srcObject !== webrtc.localStream) v.srcObject = webrtc.localStream;
-    v.play().catch(() => {});
+    spablaTrace("VIDEO_LOCAL_PLAY_REQUEST", { from: "retryLocalPlay", videoAttrs: traceVideoElement(v) });
+    v.play().then(
+      () => spablaTrace("VIDEO_LOCAL_PLAY_SUCCESS", { from: "retryLocalPlay", videoAttrs: traceVideoElement(v) }),
+      (err: any) => spablaTrace("VIDEO_LOCAL_PLAY_ERROR", { from: "retryLocalPlay", errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) }),
+    ).catch(() => {});
   };
   const localPip = (
     <video

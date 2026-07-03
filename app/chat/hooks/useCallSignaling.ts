@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
+import { spablaTrace, setTraceContext } from "@/app/chat/debug/spablaTrace";
 
 export type CallStatus =
   | "idle"
@@ -42,7 +43,10 @@ export function useCallSignaling(
   const outgoingCallIdRef = useRef<string | null>(null);
   const ringTimeoutRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { callStatusRef.current = callStatus; }, [callStatus]);
+  useEffect(() => {
+    callStatusRef.current = callStatus;
+    spablaTrace("CALL_STATUS_CHANGE", { status: callStatus });
+  }, [callStatus]);
 
   const clearRingTimeout = useCallback(() => {
     if (ringTimeoutRef.current) {
@@ -78,6 +82,8 @@ export function useCallSignaling(
         });
         if (row.caller_id !== userId && callStatusRef.current === "idle") {
           console.log("[CALL] INCOMING_CALL_DETECTED", row);
+          spablaTrace("INCOMING_CALL", { callSignalId: row.id, callerId: row.caller_id, mode: row.call_mode ?? "voice" });
+          setTraceContext({ callId: row.id });
           setIncomingCall({ id: row.id, callerId: row.caller_id, mode: (row.call_mode ?? "voice") as "voice" | "video" });
           setCallStatus("incoming");
         }
@@ -152,8 +158,19 @@ export function useCallSignaling(
   // ── Actions ───────────────────────────────────────────────────────────────
 
   const initiateCall = useCallback(async (mode: "voice" | "video" = "voice"): Promise<string | null> => {
-    if (!conversationId || !userId) return null;
-    if (callStatusRef.current !== "idle") return null;
+    spablaTrace(mode === "video" ? "START_VIDEO_REQUEST" : "START_VOICE_REQUEST", {
+      hasConversationId: !!conversationId,
+      hasUserId: !!userId,
+      currentCallStatus: callStatusRef.current,
+    });
+    if (!conversationId || !userId) {
+      spablaTrace(mode === "video" ? "START_VIDEO_REQUEST" : "START_VOICE_REQUEST", { aborted: "missing-conversation-or-user" });
+      return null;
+    }
+    if (callStatusRef.current !== "idle") {
+      spablaTrace(mode === "video" ? "START_VIDEO_REQUEST" : "START_VOICE_REQUEST", { aborted: "not-idle", callStatus: callStatusRef.current });
+      return null;
+    }
 
     const { data, error } = await supabase
       .from("call_signals")
@@ -163,12 +180,20 @@ export function useCallSignaling(
 
     if (error || !data?.id) {
       console.error("[CALL] initiateCall failed:", error);
+      spablaTrace(mode === "video" ? "START_VIDEO_REQUEST" : "START_VOICE_REQUEST", {
+        aborted: "insert-failed",
+        errorName: (error as any)?.name ?? null,
+        errorMessage: error?.message ?? null,
+        errorCode: (error as any)?.code ?? null,
+      });
       return null;
     }
 
     const id = data.id as string;
     outgoingCallIdRef.current = id;
     setOutgoingCallId(id);
+    setTraceContext({ callId: id });
+    spablaTrace(mode === "video" ? "START_VIDEO_REQUEST" : "START_VOICE_REQUEST", { inserted: true, callSignalId: id });
     setCallStatus("ringing");
 
     // Auto-miss after 30 s if receiver does not answer
@@ -185,6 +210,7 @@ export function useCallSignaling(
 
   const acceptCall = useCallback(async (signalId: string): Promise<void> => {
     console.log("[CALL][ACCEPT] signalId:", signalId);
+    spablaTrace("CALL_ACCEPTED", { signalId, from: "self" });
     const { data: { session } } = await supabase.auth.getSession();
     console.log("[CALL][ACCEPT] session:", {
       hasSession:  !!session,
@@ -205,6 +231,7 @@ export function useCallSignaling(
         details: error.details          ?? null,
         hint:    error.hint             ?? null,
       });
+      spablaTrace("CALL_ACCEPTED", { signalId, updateFailed: true, errorMessage: error.message ?? null });
       return;
     }
     clearRingTimeout();
@@ -212,11 +239,12 @@ export function useCallSignaling(
   }, [clearRingTimeout]);
 
   const rejectCall = useCallback(async (signalId: string): Promise<void> => {
+    spablaTrace("CALL_REJECTED", { signalId, from: "self" });
     const { error } = await supabase
       .from("call_signals")
       .update({ status: "rejected" })
       .eq("id", signalId);
-    if (error) { console.error("[CALL] rejectCall failed:", error); return; }
+    if (error) { console.error("[CALL] rejectCall failed:", error); spablaTrace("CALL_REJECTED", { signalId, updateFailed: true }); return; }
     setIncomingCall(null);
     setCallStatus("rejected");
     setTimeout(reset, 2000);
@@ -233,11 +261,12 @@ export function useCallSignaling(
   }, [clearRingTimeout, reset]);
 
   const endCall = useCallback(async (signalId: string): Promise<void> => {
+    spablaTrace("CALL_ENDED", { signalId, from: "self" });
     const { error } = await supabase
       .from("call_signals")
       .update({ status: "ended" })
       .eq("id", signalId);
-    if (error) console.error("[CALL] endCall failed:", error);
+    if (error) { console.error("[CALL] endCall failed:", error); spablaTrace("CALL_ENDED", { signalId, updateFailed: true }); }
     reset();
   }, [reset]);
 

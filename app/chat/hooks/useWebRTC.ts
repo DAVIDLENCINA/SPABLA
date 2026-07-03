@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 import { supabase } from "@/lib/supabase";
 import { useTranslatedSpeech, playTranslatedPcmChunk } from "./useTranslatedSpeech";
+import { spablaTrace, traceStream, traceTrack } from "@/app/chat/debug/spablaTrace";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL || "https://spabla-server.onrender.com";
 
@@ -166,9 +167,17 @@ export function useWebRTC(
   const endCall = useCallback(() => {
     if (endingRef.current) return;
     endingRef.current = true;
+    spablaTrace("END_CALL_START", {
+      hasSocket: !!socketRef.current,
+      hasPc: !!pcRef.current,
+      hasLocalStream: !!localStreamRef.current,
+      hasCaptureStream: !!captureStreamRef.current,
+      audioCtxState: audioCtxRef.current?.state ?? null,
+    });
 
     // Stop TTS immediately — must be first so no audio plays during teardown
     cancelTTS();
+    spablaTrace("TTS_CANCEL", {});
 
     console.trace("[SPABLA][ENDCALL] called from:");
     setCallEndedSignal(prev => prev + 1);
@@ -181,8 +190,12 @@ export function useWebRTC(
     try {
       processorRef.current?.disconnect();
       sourceRef.current?.disconnect();
+      spablaTrace("PROCESSOR_DISCONNECT", {});
       audioCtxRef.current?.close();
-    } catch {}
+      spablaTrace("AUDIO_CONTEXT_CLOSE", {});
+    } catch (err: any) {
+      spablaTrace("AUDIO_CONTEXT_CLOSE", { threw: true, errorMessage: err?.message ?? String(err) });
+    }
     processorRef.current = null;
     sourceRef.current    = null;
     audioCtxRef.current  = null;
@@ -194,14 +207,21 @@ export function useWebRTC(
     // Remove ALL socket listeners before disconnect so in-flight events
     // (transcript-result / subtitle buffered in the event queue) have no handler to fire.
     socketRef.current?.removeAllListeners();
+    spablaTrace("SOCKET_REMOVE_LISTENERS", {});
 
     // Stop tracks, socket, peer connection
+    const localTracksSummary = localStreamRef.current?.getTracks().map(t => ({ kind: t.kind, id: t.id, readyState: t.readyState })) ?? [];
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    spablaTrace("LOCAL_TRACK_STOP", { count: localTracksSummary.length, tracks: localTracksSummary });
     // Also stop the dedicated capture stream so the mic indicator turns off on iOS
     // and no phantom capture stays alive across calls.
+    const captureTracksSummary = captureStreamRef.current?.getTracks().map(t => ({ kind: t.kind, id: t.id, readyState: t.readyState })) ?? [];
     captureStreamRef.current?.getTracks().forEach((t) => t.stop());
+    spablaTrace("CAPTURE_TRACK_STOP", { count: captureTracksSummary.length, tracks: captureTracksSummary });
     socketRef.current?.disconnect();
+    spablaTrace("SOCKET_DISCONNECT", { from: "endCall" });
     pcRef.current?.close();
+    spablaTrace("PC_CLOSE", {});
 
     // Reset all state
     localStreamRef.current = null;
@@ -217,6 +237,7 @@ export function useWebRTC(
     startingRef.current = false;
     socketRef.current = null;
     pcRef.current = null;
+    spablaTrace("END_CALL_DONE", {});
   }, [cancelTTS]);
 
   const startCall = useCallback(async (mode: 'voice' | 'video' = 'video') => {
@@ -242,24 +263,33 @@ export function useWebRTC(
     if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       audioCtxRef.current = new AudioCtx({ sampleRate: 48000 });
+      spablaTrace("AUDIO_CONTEXT_CREATE", { from: "startCall", sampleRate: audioCtxRef.current.sampleRate, state: audioCtxRef.current.state });
+      try { (audioCtxRef.current as AudioContext).onstatechange = () => spablaTrace("AUDIO_CONTEXT_STATE_CHANGE", { state: audioCtxRef.current?.state ?? null }); } catch { /* noop */ }
     }
-    audioCtxRef.current.resume().catch(() => {});
+    {
+      const _ctx = audioCtxRef.current;
+      spablaTrace("AUDIO_CONTEXT_RESUME_REQUEST", { from: "startCall", stateBefore: _ctx.state });
+      _ctx.resume().then(
+        () => spablaTrace("AUDIO_CONTEXT_RESUME_SUCCESS", { from: "startCall", stateAfter: _ctx.state }),
+        (err: any) => spablaTrace("AUDIO_CONTEXT_RESUME_ERROR", { from: "startCall", errorMessage: err?.message ?? String(err) }),
+      ).catch(() => {});
+    }
     console.log("[TRACE AUDIO CONTEXT] created in gesture | state=", audioCtxRef.current.state, "sampleRate=", audioCtxRef.current.sampleRate);
 
     // 1 — Acquire media
     let stream: MediaStream;
+    const mainConstraints = {
+      video: mode === 'video',
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    };
+    spablaTrace("GUM_MAIN_REQUEST", { constraints: mainConstraints, mode });
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: mode === 'video',
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      stream = await navigator.mediaDevices.getUserMedia(mainConstraints as MediaStreamConstraints);
+      spablaTrace("GUM_MAIN_SUCCESS", { stream: traceStream(stream) });
     } catch (err: any) {
       startingRef.current = false;
       setError(`Sin acceso a cámara/micrófono: ${err?.name} — ${err?.message}`);
+      spablaTrace("GUM_MAIN_ERROR", { errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) });
       return;
     }
     localStreamRef.current = stream;
@@ -275,24 +305,31 @@ export function useWebRTC(
     // Enable echoCancellation + noiseSuppression + autoGainControl on this branch: the peer
     // still gets the "raw" main-stream audio via WebRTC, and STT quality improves noticeably.
     let captureStream: MediaStream | null = null;
+    const captureConstraints = {
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      video: false,
+    };
+    spablaTrace("GUM_CAPTURE_REQUEST", { constraints: captureConstraints });
     try {
-      captureStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false,
-      });
+      captureStream = await navigator.mediaDevices.getUserMedia(captureConstraints as MediaStreamConstraints);
       console.log("[TRACE CAPTURE STREAM] dedicated getUserMedia OK — using independent stream");
+      spablaTrace("GUM_CAPTURE_SUCCESS", { stream: traceStream(captureStream), sameAsMain: captureStream === stream });
     } catch (err: any) {
       console.warn("[TRACE CAPTURE STREAM] dedicated getUserMedia failed:", err?.name, err?.message, "→ falling back to track.clone()");
+      spablaTrace("GUM_CAPTURE_ERROR", { errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) });
       const micTrack = stream.getAudioTracks()[0];
       if (micTrack) {
         try {
           captureStream = new MediaStream([micTrack.clone()]);
           console.log("[TRACE CAPTURE STREAM] track.clone() OK — using cloned mic track");
+          spablaTrace("GUM_CLONE_FALLBACK", { stream: traceStream(captureStream), clonedFromTrack: traceTrack(micTrack) });
         } catch (cloneErr: any) {
           console.warn("[TRACE CAPTURE STREAM] track.clone() failed:", cloneErr?.message, "→ reusing shared stream (may give rms=0 on iOS)");
+          spablaTrace("GUM_SHARED_FALLBACK", { reason: "clone-failed", errorMessage: cloneErr?.message ?? String(cloneErr) });
           captureStream = stream;
         }
       } else {
+        spablaTrace("GUM_SHARED_FALLBACK", { reason: "no-mic-track-to-clone" });
         captureStream = stream;
       }
     }
@@ -302,16 +339,21 @@ export function useWebRTC(
     const iceServers = await fetchIceServers();
     const pc = new RTCPeerConnection({ iceServers });
     pcRef.current = pc;
-    stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+    spablaTrace("PC_CREATE", { iceServersCount: Array.isArray(iceServers) ? iceServers.length : null });
+    stream.getTracks().forEach((t) => {
+      pc.addTrack(t, stream);
+      spablaTrace("PC_ADD_TRACK", { track: traceTrack(t), streamId: stream.id });
+    });
 
     pc.ontrack = (e) => {
       const audioTracks = e.streams[0]?.getAudioTracks() ?? [];
       console.log(`[SPABLA][WEBRTC][TRACK] kind:${e.track.kind} streams:${e.streams.length} audio:${audioTracks.length}`);
+      spablaTrace("PC_ON_TRACK", { track: traceTrack(e.track), streamsCount: e.streams.length, audioTracksInStream: audioTracks.length });
       setRemoteStream(e.streams[0]);
       setHasRemote(true);
       // Fix 5 — monitor remote track lifecycle to detect freeze source
       const ts = () => new Date().toISOString().slice(11, 23);
-      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);   setHasRemote(false); endCall(); };
+      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind); spablaTrace("PC_TRACK_ENDED", { kind: e.track.kind, id: e.track.id, side: "remote" });  setHasRemote(false); endCall(); };
       e.track.onmute   = () =>   console.warn(`[SPABLA][TRACK] ${ts()} muted:`,   e.track.kind);
       e.track.onunmute = () =>   console.log( `[SPABLA][TRACK] ${ts()} unmuted:`, e.track.kind);
     };
@@ -319,6 +361,7 @@ export function useWebRTC(
     // ICE diagnostics — visible in browser console during calls
     pc.oniceconnectionstatechange = () => {
       console.log("[SPABLA][ICE] iceConnectionState →", pc.iceConnectionState);
+      spablaTrace("PC_ICE_CONNECTION_STATE", { state: pc.iceConnectionState });
       if (pc.iceConnectionState === "failed") {
         console.error("[SPABLA][ICE] connection failed — likely missing TURN server for cross-network calls");
         endCall();
@@ -326,6 +369,10 @@ export function useWebRTC(
     };
     pc.onconnectionstatechange = () => {
       console.log("[SPABLA][ICE] connectionState →", pc.connectionState);
+      spablaTrace("PC_CONNECTION_STATE", { state: pc.connectionState });
+    };
+    pc.onsignalingstatechange = () => {
+      spablaTrace("PC_SIGNALING_STATE", { state: pc.signalingState });
     };
     pc.onicecandidateerror = (e: RTCPeerConnectionIceErrorEvent) => {
       // 701 = TURN allocation failed (wrong credentials or server unreachable)
@@ -354,6 +401,7 @@ export function useWebRTC(
 
     // 3 — Signaling socket — token en el handshake para que el middleware lo valide
     const { data: { session: callSession } } = await supabase.auth.getSession();
+    spablaTrace("SOCKET_CONNECT_START", { serverUrl: SERVER_URL, hasToken: !!callSession?.access_token });
     const socket = io(SERVER_URL, {
       transports: ["websocket", "polling"],
       reconnection: true,
@@ -367,20 +415,30 @@ export function useWebRTC(
       if (hasCreatedOfferRef.current) return;
       hasCreatedOfferRef.current = true;
       console.log(`[SPABLA][WEBRTC][CREATE_OFFER] signalingState:${pc.signalingState}`);
+      spablaTrace("PC_CREATE_OFFER", { signalingState: pc.signalingState });
       try {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
+        spablaTrace("PC_SET_LOCAL_OFFER", { signalingState: pc.signalingState, hasSdp: !!offer.sdp });
         socket.emit("offer", { roomId: conversationId, offer });
         console.log("[SPABLA][WEBRTC][OFFER_SENT]");
-      } catch (err) {
+      } catch (err: any) {
         console.error("[SPABLA][WEBRTC][CREATE_OFFER_ERROR]:", err);
+        spablaTrace("PC_CREATE_OFFER", { error: true, errorMessage: err?.message ?? String(err) });
         hasCreatedOfferRef.current = false;
       }
     };
 
+    // Throttle ICE candidate spam
+    let _iceSentThrottle = 0;
     pc.onicecandidate = (e) => {
       if (e.candidate) {
         console.log("[SPABLA][WEBRTC][ICE_SENT]", e.candidate.type);
+        const now = performance.now();
+        if (now - _iceSentThrottle >= 2000) {
+          spablaTrace("PC_ICE_CANDIDATE", { direction: "outgoing", type: e.candidate.type, protocol: e.candidate.protocol, throttled: true });
+          _iceSentThrottle = now;
+        }
         socket.emit("ice-candidate", { roomId: conversationId, candidate: e.candidate });
       }
     };
@@ -388,8 +446,10 @@ export function useWebRTC(
     socket.on("connect", () => {
       const connTs = new Date().toISOString().slice(11, 23);
       console.log(`[SPABLA][SOCK] ${connTs} socket connected`);
+      spablaTrace("SOCKET_CONNECTED", { id: socket.id ?? null });
       setConnected(true);
       console.log("[SPABLA][ROOM] emitting join-room", conversationId);
+      spablaTrace("ROOM_JOIN", { conversationId });
       socket.emit("join-room", conversationId, (ack: { ok: boolean; error?: string }) => {
         console.log("[SPABLA][ROOM] join-room ack:", ack);
       });
@@ -427,28 +487,81 @@ export function useWebRTC(
         console.log(`[TRACE MIC TRACK] (capture) enabled=${_captureAudio.enabled} muted=${_captureAudio.muted} readyState=${_captureAudio.readyState} sharedWithPc=${captureSrc === stream}`);
       }
 
+      spablaTrace("AUDIO_SOURCE_CREATE", { ctxState: ctx.state, sampleRate: ctx.sampleRate, captureStreamId: captureSrc.id, captureTrackId: _captureAudio?.id ?? null, sharedWithPc: captureSrc === stream });
       const source = ctx.createMediaStreamSource(captureSrc);
       sourceRef.current = source;
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
+      spablaTrace("SCRIPT_PROCESSOR_CREATE", { bufferSize: 4096, channelsIn: 1, channelsOut: 1 });
       let _lastAudioLog = 0;
+      let _lastTraceMs = 0;
+      let _procFired = false;
+      let _sentCount = 0;
+      let _skipBySocket = 0;
+      let _skipByEnding = 0;
+      let _skipBySpeaking = 0;
+      let _skipTotal = 0;
+      let _rmsZeroSent = 0;
       processor.onaudioprocess = (e) => {
-        // Fix 2 — drop chunks while socket is offline or call is ending
-        if (!socket.connected || endingRef.current || isSpeakingRef.current) return;
-        const input = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-          const s = Math.max(-1, Math.min(1, input[i]));
-          pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+        if (!_procFired) {
+          _procFired = true;
+          spablaTrace("AUDIO_PROCESS_START", { ctxState: ctx.state, bufferLength: e.inputBuffer.length });
         }
-        socket.emit("audio-chunk", pcm.buffer);
+        // Fix 2 — drop chunks while socket is offline or call is ending
+        const socketConnected = socket.connected;
+        const isEnding = endingRef.current;
+        const isSpeaking = isSpeakingRef.current;
+        const skipped = !socketConnected || isEnding || isSpeaking;
+        if (skipped) {
+          _skipTotal++;
+          if (!socketConnected) _skipBySocket++;
+          if (isEnding) _skipByEnding++;
+          if (isSpeaking) _skipBySpeaking++;
+        }
+        // Compute a lightweight rms even when skipping so we know if the mic was actually feeding.
+        const input = e.inputBuffer.getChannelData(0);
+        let sumSq = 0, nonZero = 0, mn = 0, mx = 0;
+        for (let i = 0; i < input.length; i++) { const v = input[i]; sumSq += v * v; if (v !== 0) nonZero++; if (v < mn) mn = v; if (v > mx) mx = v; }
+        const rms = Math.sqrt(sumSq / input.length);
+        if (!skipped) {
+          const pcm = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          socket.emit("audio-chunk", pcm.buffer);
+          _sentCount++;
+          if (rms === 0) _rmsZeroSent++;
+        }
         const _now = Date.now();
         if (_now - _lastAudioLog >= 2000) {
           _lastAudioLog = _now;
-          let sumSq = 0, nonZero = 0;
-          for (let i = 0; i < input.length; i++) { sumSq += input[i] * input[i]; if (input[i] !== 0) nonZero++; }
-          const rms = Math.sqrt(sumSq / input.length);
           console.log(`[TRACE AUDIO CLIENT] sampleRate=${ctx.sampleRate} samples=${input.length} rms=${rms.toFixed(4)} nonZero=${Math.round(nonZero / input.length * 100)}%`);
+        }
+        // AUDIO_RMS_SAMPLE + AUDIO_CHUNK_SEND + AUDIO_CHUNK_SKIPPED: 1 log every 1 s.
+        if (_now - _lastTraceMs >= 1000) {
+          _lastTraceMs = _now;
+          spablaTrace("AUDIO_RMS_SAMPLE", {
+            rms: Number(rms.toFixed(4)),
+            nonZeroPct: Math.round((nonZero / input.length) * 100),
+            min: Number(mn.toFixed(4)),
+            max: Number(mx.toFixed(4)),
+            contextState: ctx.state,
+            captureStreamId: captureSrc.id,
+            captureTrackId: _captureAudio?.id ?? null,
+            sharedWithPc: captureSrc === stream,
+          });
+          spablaTrace("AUDIO_CHUNK_SEND", { sentPerSec: _sentCount, rmsZeroSent: _rmsZeroSent });
+          if (_skipTotal > 0) {
+            spablaTrace("AUDIO_CHUNK_SKIPPED", {
+              totalSkipped: _skipTotal,
+              bySocketDisconnected: _skipBySocket,
+              byEnding: _skipByEnding,
+              byIsSpeaking: _skipBySpeaking,
+              contextStateAtSample: ctx.state,
+            });
+          }
+          _sentCount = 0; _skipBySocket = 0; _skipByEnding = 0; _skipBySpeaking = 0; _skipTotal = 0; _rmsZeroSent = 0;
         }
       };
       source.connect(processor);
@@ -482,6 +595,7 @@ export function useWebRTC(
 
     socket.on("disconnect", (reason: string) => {
       console.warn("[SPABLA][SOCK] disconnected:", reason);
+      spablaTrace("SOCKET_DISCONNECTED", { reason });
       setConnected(false);
       if (reason === "io server disconnect" || reason === "io client disconnect") {
         // Intentional close — tear down the call.
@@ -529,6 +643,7 @@ export function useWebRTC(
 
     socket.on("room-users", async (otherSocketIds: string[]) => {
       console.log(`[SPABLA][ROOM_USERS] recibido | others: ${JSON.stringify(otherSocketIds)}`);
+      spablaTrace("ROOM_USERS", { count: otherSocketIds.length, othersIds: otherSocketIds });
       if (otherSocketIds.length > 0) {
         await doCreateOffer();
       }
@@ -543,29 +658,41 @@ export function useWebRTC(
 
     socket.on("offer", async (d: { offer: RTCSessionDescriptionInit }) => {
       console.log(`[SPABLA][NEG] offer recibido — SOY EL ANSWERER | signalingState:${pc.signalingState}`);
+      spablaTrace("PC_RECEIVE_OFFER", { signalingState: pc.signalingState });
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(d.offer));
         console.log(`[SPABLA][NEG] setRemoteDescription(offer) OK | signalingState:${pc.signalingState}`);
+        spablaTrace("PC_CREATE_ANSWER", { signalingState: pc.signalingState });
         const answer = await pc.createAnswer();
         console.log("[SPABLA][NEG] createAnswer OK — enviando answer");
         await pc.setLocalDescription(answer);
+        spablaTrace("PC_SET_LOCAL_ANSWER", { signalingState: pc.signalingState });
         socket.emit("answer", { roomId: conversationId, answer });
-      } catch (err) {
+      } catch (err: any) {
         console.error("[SPABLA][NEG] offer handler ERROR:", err);
+        spablaTrace("PC_RECEIVE_OFFER", { error: true, errorMessage: err?.message ?? String(err) });
       }
     });
 
     socket.on("answer", async (d: { answer: RTCSessionDescriptionInit }) => {
       console.log(`[SPABLA][WEBRTC][ANSWER_RECEIVED] signalingState:${pc.signalingState}`);
+      spablaTrace("PC_RECEIVE_ANSWER", { signalingState: pc.signalingState });
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(d.answer));
-      } catch (err) {
+      } catch (err: any) {
         console.error("[SPABLA][NEG] answer handler ERROR:", err);
+        spablaTrace("PC_RECEIVE_ANSWER", { error: true, errorMessage: err?.message ?? String(err) });
       }
     });
 
+    let _iceRecvThrottle = 0;
     socket.on("ice-candidate", async (d: { candidate: RTCIceCandidateInit }) => {
       console.log("[SPABLA][WEBRTC][ICE_RECEIVED]");
+      const now = performance.now();
+      if (now - _iceRecvThrottle >= 2000) {
+        spablaTrace("PC_ICE_CANDIDATE", { direction: "incoming", throttled: true });
+        _iceRecvThrottle = now;
+      }
       try { await pc.addIceCandidate(d.candidate); } catch {}
     });
 
@@ -578,6 +705,7 @@ export function useWebRTC(
         console.log("[STT] warmup — ignoring result isFinal:", isFinal, "text:", (text ?? "").substring(0, 45));
         return;
       }
+      spablaTrace("TRANSCRIPT_RESULT", { isFinal: !!isFinal, serverWillTranslate: !!serverWillTranslate, textLength: (text ?? "").length });
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
       console.log(`[R2-AUDIT] CLIENT_RECV isFinal=${isFinal} text="${(text ?? "").substring(0,80)}"`); // [R2-AUDIT]
 
@@ -669,6 +797,12 @@ export function useWebRTC(
       serverWillStreamAudio?: boolean;
     }) => {
       if (endingRef.current) return;
+      spablaTrace("SUBTITLE_RECEIVED", {
+        hasOriginal: !!payload.original,
+        hasTranslated: !!payload.translated,
+        translatedLength: (payload.translated ?? "").length,
+        serverWillStreamAudio: !!payload.serverWillStreamAudio,
+      });
       // Timing del experimento server-side
       if (payload._timings) {
         const networkMs = Date.now() - payload._timings.serverEmitMs;
@@ -717,10 +851,20 @@ export function useWebRTC(
 
     // 7 — B1: streaming translated audio (only emitted by server when USE_REALTIME_SPEECH=true).
     // With the flag off, this handler is registered but never fires — zero behavioural change.
+    let _tacCount = 0;
+    let _tacBytes = 0;
+    let _tacLastTrace = 0;
     socket.on("translated-audio-chunk", (payload: { audio?: string }) => {
       if (endingRef.current) return;
       if (!voiceEnabledRef.current) return;
       if (!payload?.audio) return;
+      _tacCount++;
+      _tacBytes += payload.audio.length;
+      const now = performance.now();
+      if (now - _tacLastTrace >= 1000) {
+        spablaTrace("TRANSLATED_AUDIO_CHUNK_RECEIVED", { chunksPerSec: _tacCount, bytesPerSec: _tacBytes, throttled: true });
+        _tacCount = 0; _tacBytes = 0; _tacLastTrace = now;
+      }
       playTranslatedPcmChunk(payload.audio);
     });
 
@@ -733,15 +877,23 @@ export function useWebRTC(
   const unlockCapture = useCallback(() => {
     if (typeof window === "undefined") return;
     try {
+      let created = false;
       if (!audioCtxRef.current || audioCtxRef.current.state === "closed") {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (!AudioCtx) return;
         audioCtxRef.current = new AudioCtx({ sampleRate: 48000 });
+        created = true;
+        spablaTrace("AUDIO_CONTEXT_CREATE", { from: "unlockCapture", sampleRate: audioCtxRef.current.sampleRate, state: audioCtxRef.current.state });
+        try { (audioCtxRef.current as AudioContext).onstatechange = () => spablaTrace("AUDIO_CONTEXT_STATE_CHANGE", { state: audioCtxRef.current?.state ?? null }); } catch { /* noop */ }
       }
-      audioCtxRef.current.resume().catch(() => {});
+      const ctx = audioCtxRef.current;
+      spablaTrace("AUDIO_CONTEXT_RESUME_REQUEST", { from: "unlockCapture", stateBefore: ctx.state, created });
+      ctx.resume().then(
+        () => spablaTrace("AUDIO_CONTEXT_RESUME_SUCCESS", { from: "unlockCapture", stateAfter: ctx.state }),
+        (err: any) => spablaTrace("AUDIO_CONTEXT_RESUME_ERROR", { from: "unlockCapture", errorMessage: err?.message ?? String(err) }),
+      ).catch(() => {});
       // iOS unlock trick: schedule a 1-sample silent buffer inside this same gesture.
       // Without this, iOS keeps the ctx nominally "running" but the graph does not fire.
-      const ctx = audioCtxRef.current;
       const buf = ctx.createBuffer(1, 1, 22050);
       const src = ctx.createBufferSource();
       src.buffer = buf;
@@ -750,6 +902,7 @@ export function useWebRTC(
       console.log("[TRACE AUDIO CONTEXT] unlockCapture (in-gesture) | state=", ctx.state, "sampleRate=", ctx.sampleRate);
     } catch (err: any) {
       console.warn("[TRACE AUDIO CONTEXT] unlockCapture failed:", err?.message ?? err);
+      spablaTrace("AUDIO_CONTEXT_RESUME_ERROR", { from: "unlockCapture", threw: true, errorMessage: err?.message ?? String(err) });
     }
   }, []);
 
@@ -763,9 +916,10 @@ export function useWebRTC(
       if (document.visibilityState !== "visible") return;
       const ctx = audioCtxRef.current;
       if (!ctx || ctx.state === "closed") return;
+      spablaTrace("AUDIO_CONTEXT_RESUME_REQUEST", { from: "visibilitychange", stateBefore: ctx.state });
       ctx.resume().then(
-        () => console.log("[SPABLA][iOS] visibilitychange → ctx resumed | state=", ctx.state),
-        (err) => console.warn("[SPABLA][iOS] visibilitychange resume failed:", err?.message ?? err),
+        () => { console.log("[SPABLA][iOS] visibilitychange → ctx resumed | state=", ctx.state); spablaTrace("AUDIO_CONTEXT_RESUME_SUCCESS", { from: "visibilitychange", stateAfter: ctx.state }); },
+        (err) => { console.warn("[SPABLA][iOS] visibilitychange resume failed:", err?.message ?? err); spablaTrace("AUDIO_CONTEXT_RESUME_ERROR", { from: "visibilitychange", errorMessage: err?.message ?? String(err) }); },
       );
     };
     document.addEventListener("visibilitychange", handler);
