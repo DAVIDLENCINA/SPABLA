@@ -157,8 +157,9 @@ export default function Chat() {
       }
 
       if (cancelled) return;
-      setTraceContext({ userId: u.id });
+      setTraceContext({ userId: u.id, myLang: u.language_primary });
       spablaTrace("USER_LOADED", { userId: u.id, lang: u.language_primary });
+      spablaTrace("LANG_CONTEXT", { source: "user-loaded", myLang: u.language_primary, targetLang: null });
       setUser(u);
       initConversation(u);
     });
@@ -320,6 +321,8 @@ export default function Chat() {
         .in("id", participants.map((p: { user_id: string }) => p.user_id))
         .neq("language_primary", u.language_primary).limit(1);
       if (otherUsers?.[0]) {
+        setTraceContext({ targetLang: otherUsers[0].language_primary });
+        spablaTrace("LANG_CONTEXT", { source: "init-conversation", myLang: u.language_primary, targetLang: otherUsers[0].language_primary, otherUserId: otherUsers[0].id });
         setOtherLang(otherUsers[0].language_primary);
         setOtherUserId(otherUsers[0].id);
       }
@@ -393,6 +396,8 @@ export default function Chat() {
           console.log("[SM] before translate:", { text, from: user.language_primary, to: otherUser.language_primary });
           translated = await translate(text, user.language_primary, otherUser.language_primary);
           console.log("[SM] after translate:", translated);
+          setTraceContext({ targetLang: otherUser.language_primary });
+          spablaTrace("LANG_CONTEXT", { source: "sendMessage-otherUser-lookup", myLang: user.language_primary, targetLang: otherUser.language_primary });
           setOtherLang(otherUser.language_primary);
           if (otherUser.id && !otherUserId) setOtherUserId(otherUser.id);
         }

@@ -160,7 +160,10 @@ export function useWebRTC(
     targetLangRef.current = targetLang;
     // Notificar al servidor cuando cambia el idioma destino (experimento server-side)
     if (socketRef.current?.connected) {
+      spablaTrace("TARGET_LANG_UPDATE_EMIT", { targetLang, socketConnected: true });
       socketRef.current.emit("update-target-lang", targetLang);
+    } else {
+      spablaTrace("TARGET_LANG_UPDATE_EMIT", { targetLang, socketConnected: false, skipped: true });
     }
   }, [targetLang]);
 
@@ -170,6 +173,7 @@ export function useWebRTC(
   useEffect(() => {
     const socket = socketRef.current;
     if (!socket?.connected) return; // no active call — nothing to restart
+    spablaTrace("REALTIME_START_REQUEST", { from: "myLang-change-useEffect", myLang, targetLang: targetLangRef.current });
     socket.emit("transcribe-stop");
     socket.emit("transcribe-start", { lang: DEEPGRAM_LANG[myLang] ?? myLang });
     console.log("[SPABLA][DG] language changed →", myLang, "— Deepgram session restarted");
@@ -480,6 +484,7 @@ export function useWebRTC(
       });
 
       // Start Deepgram transcription — incluir idiomas para experimento server-side
+      spablaTrace("REALTIME_START_REQUEST", { from: "socket-connect", myLang: myLangRef.current, targetLang: targetLangRef.current });
       socket.emit("transcribe-start", {
         lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
         fromLang:   myLangRef.current,
@@ -640,8 +645,10 @@ export function useWebRTC(
 
     socket.on("reconnect", (attempt: number) => {
       console.log(`[SPABLA][SOCK] reconnected after ${attempt} attempt(s) — re-joining room`);
+      spablaTrace("SOCKET_RECONNECTED", { attempt });
       if (conversationId) socket.emit("join-room", conversationId);
       if (localStreamRef.current) {
+        spablaTrace("REALTIME_START_REQUEST", { from: "socket-reconnect", myLang: myLangRef.current, targetLang: targetLangRef.current });
         socket.emit("transcribe-start", {
           lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
           fromLang:   myLangRef.current,

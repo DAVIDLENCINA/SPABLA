@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import { supabase } from "@/lib/supabase";
+import { spablaTrace } from "@/app/chat/debug/spablaTrace";
 
 let audioUnlocked = false;
 let audioCtx: AudioContext | null = null;
@@ -19,17 +20,30 @@ function base64ToInt16(b64: string): Int16Array {
   return new Int16Array(aligned.buffer);
 }
 
+// Diagnostic counters — 1/s aggregated trace so the export summary can decide
+// whether translated audio actually reached playback on this device.
+let _ptFirstEmitted = false;
+let _ptChunks = 0;
+let _ptBytes = 0;
+let _ptEndedCount = 0;
+let _ptLastTrace = 0;
+
 // B1: schedule a base64-encoded PCM16 chunk @ 24kHz mono for immediate playback.
 // Uses the same module-level AudioContext as speak() — must have been unlocked via
 // unlockAudio() inside a user gesture before this is called (iOS Safari requirement).
 export function playTranslatedPcmChunk(base64: string): void {
   if (typeof window === "undefined" || !base64) return;
+  const created = !audioCtx;
   if (!audioCtx) {
     const AudioCtx = window.AudioContext ?? (window as any).webkitAudioContext;
-    if (!AudioCtx) return;
+    if (!AudioCtx) { spablaTrace("PLAY_TRANSLATED_START", { aborted: "no-AudioContext-api" }); return; }
     audioCtx = new AudioCtx();
   }
   audioCtx.resume().catch(() => {});
+  if (!_ptFirstEmitted) {
+    _ptFirstEmitted = true;
+    spablaTrace("PLAY_TRANSLATED_START", { ctxState: audioCtx.state, sampleRate: audioCtx.sampleRate, ctxCreatedHere: created, audioUnlocked });
+  }
   const int16 = base64ToInt16(base64);
   if (int16.length === 0) return;
   const float = new Float32Array(int16.length);
@@ -43,6 +57,21 @@ export function playTranslatedPcmChunk(base64: string): void {
   if (translatedPlayHead < now + 0.02) translatedPlayHead = now + 0.02;
   src.start(translatedPlayHead);
   translatedPlayHead += buffer.duration;
+  src.onended = () => { _ptEndedCount++; };
+  _ptChunks++;
+  _ptBytes += int16.length * 2;
+  const t = performance.now();
+  if (t - _ptLastTrace >= 1000) {
+    _ptLastTrace = t;
+    spablaTrace("PLAY_TRANSLATED_SAMPLE", {
+      chunksPerSec: _ptChunks,
+      bytesPerSec: _ptBytes,
+      endedPerSec: _ptEndedCount,
+      ctxState: audioCtx.state,
+      playHeadOffsetSec: Number((translatedPlayHead - now).toFixed(3)),
+    });
+    _ptChunks = 0; _ptBytes = 0; _ptEndedCount = 0;
+  }
 }
 
 export function unlockAudio() {
