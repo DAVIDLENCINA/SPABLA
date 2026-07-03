@@ -69,6 +69,13 @@ export type WebRTCState = {
   // useEffect callback (async, no gesture) and stays state=suspended → ScriptProcessor
   // reads all-zero buffers → translation gets silence.
   unlockCapture: () => void;
+  // In-call video upgrade: add a camera track to the existing RTCPeerConnection
+  // without tearing down the audio path. Returns true if the renegotiation started
+  // cleanly, false on permission denial / missing state / signalingState churn.
+  enableVideo: () => Promise<boolean>;
+  // Peer emitted video-enabled → the other side should mount its VideoOverlay
+  // so the incoming video track that will arrive via renegotiation becomes visible.
+  remoteHasVideo: boolean;
 };
 
 export function useWebRTC(
@@ -130,6 +137,10 @@ export function useWebRTC(
   const [remoteCaption,   setRemoteCaption]   = useState<Caption | null>(null);
   const [captionsHistory, setCaptionsHistory] = useState<CaptionEntry[]>([]);
   const [callEndedSignal, setCallEndedSignal] = useState(0);
+  // In-call video upgrade signal from the peer. Flips true when peer emits
+  // "video-enabled" via the signaling socket. Consumers use it to setVideoActive(true)
+  // so their <VideoOverlay> mounts to display the incoming video track.
+  const [remoteHasVideo, setRemoteHasVideo] = useState(false);
 
   const { speak, cancel: cancelTTS, isSpeakingRef } = useTranslatedSpeech();
   const voiceEnabledRef = useRef(voiceEnabled);
@@ -349,11 +360,25 @@ export function useWebRTC(
       const audioTracks = e.streams[0]?.getAudioTracks() ?? [];
       console.log(`[SPABLA][WEBRTC][TRACK] kind:${e.track.kind} streams:${e.streams.length} audio:${audioTracks.length}`);
       spablaTrace("PC_ON_TRACK", { track: traceTrack(e.track), streamsCount: e.streams.length, audioTracksInStream: audioTracks.length });
-      setRemoteStream(e.streams[0]);
+      // Wrap in a new MediaStream so React re-renders when a video track is added
+      // to an already-established connection via renegotiation. Same track refs
+      // internally — no leaks, no duplicated streams.
+      const stream = e.streams[0];
+      if (stream) setRemoteStream(new MediaStream(stream.getTracks()));
       setHasRemote(true);
       // Fix 5 — monitor remote track lifecycle to detect freeze source
       const ts = () => new Date().toISOString().slice(11, 23);
-      e.track.onended  = () => { console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind); spablaTrace("PC_TRACK_ENDED", { kind: e.track.kind, id: e.track.id, side: "remote" });  setHasRemote(false); endCall(); };
+      e.track.onended  = () => {
+        console.warn(`[SPABLA][TRACK] ${ts()} ended:`, e.track.kind);
+        spablaTrace("PC_TRACK_ENDED", { kind: e.track.kind, id: e.track.id, side: "remote" });
+        if (e.track.kind === "video") {
+          // Peer stopped video mid-call. Do NOT tear down — keep audio+call alive.
+          setRemoteHasVideo(false);
+          return;
+        }
+        setHasRemote(false);
+        endCall();
+      };
       e.track.onmute   = () =>   console.warn(`[SPABLA][TRACK] ${ts()} muted:`,   e.track.kind);
       e.track.onunmute = () =>   console.log( `[SPABLA][TRACK] ${ts()} unmuted:`, e.track.kind);
     };
@@ -868,6 +893,15 @@ export function useWebRTC(
       playTranslatedPcmChunk(payload.audio);
     });
 
+    // In-call video upgrade signal: peer added a video track and renegotiated.
+    // We flip remoteHasVideo so page.tsx can setVideoActive(true) and mount the
+    // <VideoOverlay>. The actual video track arrives via pc.ontrack from the
+    // offer/answer exchange that the peer initiated in parallel.
+    socket.on("video-enabled", () => {
+      spablaTrace("VIDEO_ENABLED_FROM_PEER", {});
+      setRemoteHasVideo(true);
+    });
+
   }, [conversationId]);
 
   // iOS Safari: this MUST run synchronously inside a user gesture (button click) or the
@@ -946,6 +980,77 @@ export function useWebRTC(
     stream.getVideoTracks().forEach((t) => { t.enabled = !t.enabled; setCamOn(t.enabled); });
   }, []);
 
+  // In-call video upgrade. Adds a video track to the EXISTING PeerConnection
+  // without touching the audio path (B1 mic capture + translated audio remain
+  // untouched — they live on a separate Socket.IO channel, not on the PC).
+  //
+  // Flow:
+  //   1. getUserMedia({ video: true, audio: false }) — camera only.
+  //   2. Add the video track to the shared localStream and to the PC via
+  //      pc.addTrack (creates a new sender for the video m-section).
+  //   3. Emit a NEW offer via socket — the peer's existing socket.on("offer")
+  //      handler will setRemoteDescription + createAnswer + emit answer.
+  //   4. Emit "video-enabled" so the peer flips remoteHasVideo → mounts
+  //      <VideoOverlay> to display the incoming video track.
+  //
+  // Returns false and logs if: no active PC / socket, or the pc.signalingState
+  // is not "stable" (glare guard — caller can try again shortly).
+  const enableVideo = useCallback(async (): Promise<boolean> => {
+    const pc = pcRef.current;
+    const socket = socketRef.current;
+    const existingStream = localStreamRef.current;
+    if (!pc || !socket?.connected || !existingStream) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "no-active-call", hasPc: !!pc, socketConnected: !!socket?.connected, hasStream: !!existingStream });
+      return false;
+    }
+    if (existingStream.getVideoTracks().length > 0) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "already-has-video" });
+      return true;
+    }
+    if (pc.signalingState !== "stable") {
+      spablaTrace("ENABLE_VIDEO", { aborted: "signaling-not-stable", state: pc.signalingState });
+      return false;
+    }
+    spablaTrace("ENABLE_VIDEO", { step: "gum-request" });
+    let camStream: MediaStream;
+    try {
+      camStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (err: any) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "gum-error", errorName: err?.name ?? null, errorMessage: err?.message ?? String(err) });
+      setError(`Sin acceso a cámara: ${err?.name} — ${err?.message}`);
+      return false;
+    }
+    const videoTrack = camStream.getVideoTracks()[0];
+    if (!videoTrack) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "no-video-track-in-gum" });
+      return false;
+    }
+    spablaTrace("ENABLE_VIDEO", { step: "add-track", track: traceTrack(videoTrack) });
+    existingStream.addTrack(videoTrack);
+    try {
+      pc.addTrack(videoTrack, existingStream);
+    } catch (err: any) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "addTrack-error", errorMessage: err?.message ?? String(err) });
+      return false;
+    }
+    // Force a React re-render of consumers watching localStream so <video srcObject>
+    // rebinds and shows the new video track in the local pip.
+    setLocalStream(new MediaStream(existingStream.getTracks()));
+    setCamOn(true);
+    spablaTrace("ENABLE_VIDEO", { step: "renegotiate", signalingState: pc.signalingState });
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.emit("offer", { roomId: conversationId, offer });
+    } catch (err: any) {
+      spablaTrace("ENABLE_VIDEO", { aborted: "renegotiate-error", errorMessage: err?.message ?? String(err) });
+      return false;
+    }
+    socket.emit("video-enabled", { roomId: conversationId });
+    spablaTrace("ENABLE_VIDEO", { step: "done" });
+    return true;
+  }, [conversationId]);
+
   // Cleanup on unmount
   useEffect(() => () => endCall(), [endCall]);
 
@@ -954,5 +1059,6 @@ export function useWebRTC(
     localCaption, remoteCaption, captionsHistory,
     callEndedSignal,
     startCall, endCall, toggleMic, toggleCam, unlockCapture,
+    enableVideo, remoteHasVideo,
   };
 }

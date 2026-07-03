@@ -531,19 +531,27 @@ export default function Chat() {
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
       stopVideo();
+    } else if (signaling.callStatus === 'accepted') {
+      // In-call upgrade: add camera to the already-negotiated PeerConnection
+      // without touching the audio pipeline. Voice/translation/subtitles keep
+      // flowing on the Socket.IO channel they already use.
+      spablaTrace("UPGRADE_ATTEMPT", { callStatus: signaling.callStatus, path: "webrtc.enableVideo" });
+      unlockAudio();
+      webrtc.unlockCapture();
+      const ok = await webrtc.enableVideo();
+      if (ok) setVideoActive(true);
     } else {
-      // The historic path here is initiateCall('video') from idle. When the current
-      // callStatus is 'accepted' (a live voice call), initiateCall will abort at the
-      // !=='idle' guard — that is the historic "hot upgrade never worked" fingerprint.
-      if (signaling.callStatus === 'accepted') {
-        spablaTrace("UPGRADE_ATTEMPT", {
-          callStatus: signaling.callStatus,
-          expected: "guard-in-initiateCall-aborts-and-returns-null",
-        });
-      }
       await startVideo();
     }
   };
+
+  // Peer added video mid-call → mount our <VideoOverlay> so the incoming
+  // video track becomes visible. We do NOT open our own camera here — only
+  // display what the peer sent. Local camera is opened only when the local
+  // user explicitly presses the camera button.
+  useEffect(() => {
+    if (webrtc.remoteHasVideo && !videoActive) setVideoActive(true);
+  }, [webrtc.remoteHasVideo, videoActive]);
 
   // Combined timeline — messages from DB and live voice captions sorted by timestamp
   const combinedTimeline = useMemo(() => [

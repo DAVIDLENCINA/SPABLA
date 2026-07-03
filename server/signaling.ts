@@ -594,6 +594,15 @@ io.on("connection", (socket: Socket) => {
     socket.to(data.roomId).emit("ice-candidate", { from: socket.id, candidate: data.candidate });
   });
 
+  // In-call video upgrade — pure notification relay so peers can mount their
+  // <VideoOverlay> when the other side adds a video track via renegotiation.
+  // The actual media negotiation flows through the existing offer/answer/ice
+  // handlers above.
+  socket.on("video-enabled", (data: { roomId: string }) => {
+    if (!data?.roomId) return;
+    socket.to(data.roomId).emit("video-enabled");
+  });
+
   socket.on("subtitle", (data: {
     roomId: string; originalText: string; translatedText: string;
     fromLang: string; toLang: string; ts: number;
