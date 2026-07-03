@@ -399,6 +399,15 @@ io.on("connection", (socket: Socket) => {
     const srcName = LANG_NAMES[fromLang]   ?? fromLang;
     const tgtName = LANG_NAMES[targetLang] ?? targetLang;
     console.log(`[SPABLA][RT] opening session ${fromLang}→${targetLang} (${srcName}→${tgtName})`);
+    console.log("[DIAG:TR] TR_SHOULD_TRANSLATE", {
+      site: "openRealtime",
+      socketId: socket.id,
+      fromLang,
+      targetLang,
+      srcName,
+      tgtName,
+      decision: true,
+    });
     const ws = new UpstreamWS(`wss://api.openai.com/v1/realtime?model=${encodeURIComponent(OPENAI_REALTIME_MODEL)}`, {
       headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
     });
@@ -484,6 +493,21 @@ io.on("connection", (socket: Socket) => {
 
       if (tp === "conversation.item.input_audio_transcription.completed" && m.transcript) {
         lastInputTranscript = m.transcript as string;
+        console.log("[DIAG:TR] TR_TEXT_IN", {
+          site: "input_audio_transcription.completed",
+          socketId: socket.id,
+          fromLang: rtFromLang,
+          targetLang: rtTargetLang,
+          textLength: lastInputTranscript.length,
+          textPreview: lastInputTranscript.substring(0, 80),
+        });
+        console.log("[DIAG:TR] TR_SERVER_WILL_TRANSLATE", {
+          site: "transcript-result-emit",
+          socketId: socket.id,
+          serverWillTranslate: true,
+          isFinal: true,
+          textLength: lastInputTranscript.length,
+        });
         // Sender path: serverWillTranslate=true makes the existing client handler
         // create the local caption WITHOUT calling /api/translate or emitting subtitle.
         socket.emit("transcript-result", { text: lastInputTranscript, isFinal: true, serverWillTranslate: true });
@@ -499,10 +523,24 @@ io.on("connection", (socket: Socket) => {
       if (tp === "response.output_audio_transcript.done" && m.transcript) {
         const roomId = socket.data.roomId as string | undefined;
         const fromL  = socket.data.fromLang as string | undefined;
+        const translated = m.transcript as string;
+        const echo = !!lastInputTranscript && lastInputTranscript.trim() === translated.trim();
+        console.log("[DIAG:TR] TR_TEXT_OUT", {
+          site: "response.output_audio_transcript.done",
+          socketId: socket.id,
+          fromLang: rtFromLang,
+          targetLang: rtTargetLang,
+          originalLength: lastInputTranscript.length,
+          originalPreview: lastInputTranscript.substring(0, 80),
+          translatedLength: translated.length,
+          translatedPreview: translated.substring(0, 80),
+          looksLikeEcho: echo,
+          willEmit: !!roomId,
+        });
         if (roomId) {
           socket.to(roomId).emit("subtitle", {
             original:   lastInputTranscript,
-            translated: m.transcript as string,
+            translated: translated,
             fromLang:   fromL,
             // serverWillStreamAudio tells the peer NOT to call speak() — translated audio
             // already arrived via translated-audio-chunk events.
@@ -645,6 +683,18 @@ io.on("connection", (socket: Socket) => {
     // Also keep legacy fields used by transcript handler
     socket.data.fromLang   = fromLang   ?? lang;
     socket.data.targetLang = targetLang ?? null;
+
+    const _resolvedFrom = socket.data.dgFromLang as string;
+    const _resolvedTgt  = socket.data.dgTargetLang as string | null;
+    console.log("[DIAG:TR] TR_SOURCE_LANGUAGE", { socketId: socket.id, fromLang: _resolvedFrom, rawLang: lang });
+    console.log("[DIAG:TR] TR_TARGET_LANGUAGE", { socketId: socket.id, targetLang: _resolvedTgt });
+    console.log("[DIAG:TR] TR_SHOULD_TRANSLATE", {
+      socketId: socket.id,
+      fromLang: _resolvedFrom,
+      targetLang: _resolvedTgt,
+      decision: !!_resolvedTgt && _resolvedTgt !== _resolvedFrom,
+      engine: USE_REALTIME_SPEECH ? "realtime" : "deepgram",
+    });
 
     if (USE_REALTIME_SPEECH) {
       openRealtime(socket.data.dgFromLang as string, socket.data.dgTargetLang as string | null);

@@ -174,6 +174,9 @@ export function useWebRTC(
     const socket = socketRef.current;
     if (!socket?.connected) return; // no active call — nothing to restart
     spablaTrace("REALTIME_START_REQUEST", { from: "myLang-change-useEffect", myLang, targetLang: targetLangRef.current });
+    spablaTrace("TR_SOURCE_LANGUAGE", { from: "myLang-change", value: myLang });
+    spablaTrace("TR_TARGET_LANGUAGE", { from: "myLang-change", value: targetLangRef.current });
+    spablaTrace("TR_SHOULD_TRANSLATE", { from: "myLang-change", myLang, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLang });
     socket.emit("transcribe-stop");
     socket.emit("transcribe-start", { lang: DEEPGRAM_LANG[myLang] ?? myLang });
     console.log("[SPABLA][DG] language changed →", myLang, "— Deepgram session restarted");
@@ -489,6 +492,9 @@ export function useWebRTC(
 
       // Start Deepgram transcription — incluir idiomas para experimento server-side
       spablaTrace("REALTIME_START_REQUEST", { from: "socket-connect", myLang: myLangRef.current, targetLang: targetLangRef.current });
+      spablaTrace("TR_SOURCE_LANGUAGE", { from: "socket-connect", value: myLangRef.current });
+      spablaTrace("TR_TARGET_LANGUAGE", { from: "socket-connect", value: targetLangRef.current });
+      spablaTrace("TR_SHOULD_TRANSLATE", { from: "socket-connect", myLang: myLangRef.current, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLangRef.current });
       socket.emit("transcribe-start", {
         lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
         fromLang:   myLangRef.current,
@@ -653,6 +659,9 @@ export function useWebRTC(
       if (conversationId) socket.emit("join-room", conversationId);
       if (localStreamRef.current) {
         spablaTrace("REALTIME_START_REQUEST", { from: "socket-reconnect", myLang: myLangRef.current, targetLang: targetLangRef.current });
+        spablaTrace("TR_SOURCE_LANGUAGE", { from: "socket-reconnect", value: myLangRef.current });
+        spablaTrace("TR_TARGET_LANGUAGE", { from: "socket-reconnect", value: targetLangRef.current });
+        spablaTrace("TR_SHOULD_TRANSLATE", { from: "socket-reconnect", myLang: myLangRef.current, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLangRef.current });
         socket.emit("transcribe-start", {
           lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
           fromLang:   myLangRef.current,
@@ -742,6 +751,13 @@ export function useWebRTC(
         return;
       }
       spablaTrace("TRANSCRIPT_RESULT", { isFinal: !!isFinal, serverWillTranslate: !!serverWillTranslate, textLength: (text ?? "").length });
+      spablaTrace("TR_SERVER_WILL_TRANSLATE", {
+        serverWillTranslate: !!serverWillTranslate,
+        isFinal: !!isFinal,
+        textLength: (text ?? "").length,
+        myLang: myLangRef.current,
+        targetLang: targetLangRef.current,
+      });
       console.log("[STT CLIENT] transcript-result received | isFinal:", isFinal, "| text:", (text ?? "").substring(0, 45));
       console.log(`[R2-AUDIT] CLIENT_RECV isFinal=${isFinal} text="${(text ?? "").substring(0,80)}"`); // [R2-AUDIT]
 
@@ -771,6 +787,14 @@ export function useWebRTC(
       if (serverWillTranslate) {
         if (endingRef.current) return;
         console.log(`[R2-AUDIT] BUBBLE_CREATE speaker=local path=server text="${finalOriginal.substring(0,80)}"`); // [R2-AUDIT]
+        spablaTrace("TR_BUBBLE_TEXT", {
+          speaker: "local",
+          path: "server",
+          textLength: finalOriginal.length,
+          textPreview: finalOriginal.substring(0, 60),
+          myLang: myLangRef.current,
+          targetLang: targetLangRef.current,
+        });
         setCaptionsHistory(prev => [...prev, {
           id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
         }]);
@@ -816,11 +840,29 @@ export function useWebRTC(
 
       console.log("[STT CLIENT] adding captionsHistory:", finalOriginal.substring(0, 45));
       console.log(`[R2-AUDIT] BUBBLE_CREATE speaker=local path=client text="${finalOriginal.substring(0,80)}"`); // [R2-AUDIT]
+      spablaTrace("TR_BUBBLE_TEXT", {
+        speaker: "local",
+        path: "client",
+        textLength: finalOriginal.length,
+        textPreview: finalOriginal.substring(0, 60),
+        myLang: myLangRef.current,
+        targetLang: targetLangRef.current,
+      });
       setCaptionsHistory(prev => [...prev, {
         id: Date.now().toString(), speaker: "local", text: finalOriginal, original: finalOriginal,
       }]);
 
       console.log("[STT CLIENT] subtitle emitted | original:", finalOriginal.substring(0, 30), "translated:", translated.substring(0, 30));
+      spablaTrace("TR_TEXT_OUT", {
+        from: "client-subtitle-emit",
+        originalLength: finalOriginal.length,
+        originalPreview: finalOriginal.substring(0, 60),
+        translatedLength: translated.length,
+        translatedPreview: translated.substring(0, 60),
+        fromLang: from,
+        targetLang: to,
+        wasTranslated: translated !== finalOriginal,
+      });
       socket.emit("subtitle", { roomId: conversationId, original: finalOriginal, translated, fromLang: from });
     });
 
@@ -838,6 +880,16 @@ export function useWebRTC(
         hasTranslated: !!payload.translated,
         translatedLength: (payload.translated ?? "").length,
         serverWillStreamAudio: !!payload.serverWillStreamAudio,
+      });
+      spablaTrace("TR_TEXT_IN", {
+        from: "subtitle-received",
+        originalLength: (payload.original ?? "").length,
+        originalPreview: (payload.original ?? "").substring(0, 60),
+        translatedLength: (payload.translated ?? "").length,
+        translatedPreview: (payload.translated ?? "").substring(0, 60),
+        looksLikeEcho: !!payload.original && !!payload.translated && payload.original.trim() === payload.translated.trim(),
+        myLang: myLangRef.current,
+        targetLang: targetLangRef.current,
       });
       // Timing del experimento server-side
       if (payload._timings) {
@@ -876,6 +928,17 @@ export function useWebRTC(
 
       // Append to conversation history — remote speaker, text is already in our language
       console.log(`[TRACE-5] creating bubble text="${text.substring(0,60)}"`);
+      spablaTrace("TR_BUBBLE_TEXT", {
+        speaker: "remote",
+        path: "subtitle-in",
+        textLength: text.length,
+        textPreview: text.substring(0, 60),
+        originalLength: rawSpoken.length,
+        originalPreview: rawSpoken.substring(0, 60),
+        looksLikeEcho: text.trim() === rawSpoken.trim(),
+        myLang: myLangRef.current,
+        targetLang: targetLangRef.current,
+      });
       setCaptionsHistory(prev => [...prev, {
         id:      Date.now().toString(),
         speaker: "remote",
