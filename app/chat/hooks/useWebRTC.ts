@@ -80,6 +80,12 @@ export function useWebRTC(
   const socketRef      = useRef<Socket | null>(null);
   const pcRef          = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  // iOS Safari quirk fix: a SEPARATE audio stream (or cloned mic track) is used to feed
+  // the AudioContext capture graph, independent of the stream added to the RTCPeerConnection.
+  // Sharing one stream between pc.addTrack and ctx.createMediaStreamSource makes iOS route
+  // the audio into the WebRTC voice-mode pipeline and delivers all-zero buffers to the
+  // AudioContext side (confirmed empirically: rms=0.0000 nonZero=0% on iPhone Safari).
+  const captureStreamRef = useRef<MediaStream | null>(null);
 
   // Audio processing refs (Deepgram pipeline)
   const audioCtxRef  = useRef<AudioContext | null>(null);
@@ -191,11 +197,15 @@ export function useWebRTC(
 
     // Stop tracks, socket, peer connection
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    // Also stop the dedicated capture stream so the mic indicator turns off on iOS
+    // and no phantom capture stays alive across calls.
+    captureStreamRef.current?.getTracks().forEach((t) => t.stop());
     socketRef.current?.disconnect();
     pcRef.current?.close();
 
     // Reset all state
     localStreamRef.current = null;
+    captureStreamRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
     setHasRemote(false);
@@ -256,6 +266,37 @@ export function useWebRTC(
     setLocalStream(stream);
     setMicOn(true);
     setCamOn(true);
+
+    // 1b — Dedicated capture stream for the AudioContext pipeline (iOS Safari fix).
+    // Try a separate getUserMedia first (fully independent MediaStreamTrack instances,
+    // best case for iOS). If iOS refuses concurrent capture, fall back to cloning the
+    // mic track from the WebRTC stream — a clone still gives us a track object independent
+    // from the pc's track, which is enough on most iOS versions to bypass the routing quirk.
+    // Enable echoCancellation + noiseSuppression + autoGainControl on this branch: the peer
+    // still gets the "raw" main-stream audio via WebRTC, and STT quality improves noticeably.
+    let captureStream: MediaStream | null = null;
+    try {
+      captureStream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+      console.log("[TRACE CAPTURE STREAM] dedicated getUserMedia OK — using independent stream");
+    } catch (err: any) {
+      console.warn("[TRACE CAPTURE STREAM] dedicated getUserMedia failed:", err?.name, err?.message, "→ falling back to track.clone()");
+      const micTrack = stream.getAudioTracks()[0];
+      if (micTrack) {
+        try {
+          captureStream = new MediaStream([micTrack.clone()]);
+          console.log("[TRACE CAPTURE STREAM] track.clone() OK — using cloned mic track");
+        } catch (cloneErr: any) {
+          console.warn("[TRACE CAPTURE STREAM] track.clone() failed:", cloneErr?.message, "→ reusing shared stream (may give rms=0 on iOS)");
+          captureStream = stream;
+        }
+      } else {
+        captureStream = stream;
+      }
+    }
+    captureStreamRef.current = captureStream;
 
     // 2 — PeerConnection (ICE servers fetched server-side — no credentials in client bundle)
     const iceServers = await fetchIceServers();
@@ -377,14 +418,16 @@ export function useWebRTC(
       console.log("[TRACE AUDIO CONTEXT] reused | state=", ctx.state, "sampleRate=", ctx.sampleRate);
       ctx.resume().catch(() => {});
 
-      // Log mic track health before building the pipeline
-      const _audioTracks = stream.getAudioTracks();
-      if (_audioTracks[0]) {
-        const _t = _audioTracks[0];
-        console.log(`[TRACE MIC TRACK] enabled=${_t.enabled} muted=${_t.muted} readyState=${_t.readyState}`);
+      // Log mic track health before building the pipeline.
+      // We now feed the AudioContext from the DEDICATED capture stream (see 1b), not from
+      // the shared WebRTC stream. On iOS Safari this is what unlocks non-zero samples.
+      const captureSrc = captureStreamRef.current ?? stream;
+      const _captureAudio = captureSrc.getAudioTracks()[0];
+      if (_captureAudio) {
+        console.log(`[TRACE MIC TRACK] (capture) enabled=${_captureAudio.enabled} muted=${_captureAudio.muted} readyState=${_captureAudio.readyState} sharedWithPc=${captureSrc === stream}`);
       }
 
-      const source = ctx.createMediaStreamSource(stream);
+      const source = ctx.createMediaStreamSource(captureSrc);
       sourceRef.current = source;
       const processor = ctx.createScriptProcessor(4096, 1, 1);
       processorRef.current = processor;
@@ -732,7 +775,15 @@ export function useWebRTC(
   const toggleMic = useCallback(() => {
     const stream = localStreamRef.current;
     if (!stream) return;
-    stream.getAudioTracks().forEach((t) => { t.enabled = !t.enabled; setMicOn(t.enabled); });
+    const mainTrack = stream.getAudioTracks()[0];
+    if (!mainTrack) return;
+    const newEnabled = !mainTrack.enabled;
+    // Mute the WebRTC track (what the peer hears in raw) AND the dedicated capture stream
+    // (what feeds the translation pipeline). Both must flip together or "Muted" would still
+    // send audio to translation, or vice versa.
+    stream.getAudioTracks().forEach((t) => { t.enabled = newEnabled; });
+    captureStreamRef.current?.getAudioTracks().forEach((t) => { t.enabled = newEnabled; });
+    setMicOn(newEnabled);
   }, []);
 
   const toggleCam = useCallback(() => {
