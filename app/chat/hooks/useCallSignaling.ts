@@ -92,6 +92,15 @@ export function useCallSignaling(
 
       if (payload.eventType === "UPDATE") {
         const next = row.status as CallStatus;
+        spablaTrace("CALL_UPDATE_RECEIVED", {
+          rowId: row.id,
+          rowStatus: next,
+          rowCallerId: row.caller_id,
+          myUserId: userId,
+          isMyOutgoing: row.caller_id === userId,
+          outgoingCallIdMatches: outgoingCallIdRef.current === row.id,
+          currentCallStatus: callStatusRef.current,
+        });
 
         // Update on our own outgoing call.
         // Same batching hazard as the callee branch below: setCallStatus(next)
@@ -246,6 +255,7 @@ export function useCallSignaling(
       return;
     }
     clearRingTimeout();
+    spablaTrace("CALL_STATUS_SET", { from: "acceptCall", to: "accepted", signalId });
     setCallStatus("accepted");
   }, [clearRingTimeout]);
 

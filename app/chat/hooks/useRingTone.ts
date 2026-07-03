@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useCallback, useEffect } from "react";
+import { spablaTrace } from "@/app/chat/debug/spablaTrace";
 
 export function useRingTone() {
   const ctxRef       = useRef<AudioContext | null>(null);
@@ -54,6 +55,13 @@ export function useRingTone() {
   };
 
   const stop = useCallback(() => {
+    spablaTrace("RING_STOP", {
+      wasActive: activeRef.current,
+      hasScheduler: !!schedulerRef.current,
+      activeOscs: activeOscsRef.current.size,
+      activeGains: activeGainsRef.current.size,
+      ctxState: ctxRef.current?.state ?? null,
+    });
     activeRef.current = false;
     if (schedulerRef.current) {
       clearTimeout(schedulerRef.current);
@@ -82,6 +90,7 @@ export function useRingTone() {
     stop();
     if (typeof window === "undefined") return;
     activeRef.current = true;
+    spablaTrace("RING_START", { kind: "ringback" });
 
     const tick = async () => {
       if (!activeRef.current) return;
@@ -100,6 +109,7 @@ export function useRingTone() {
     stop();
     if (typeof window === "undefined") return;
     activeRef.current = true;
+    spablaTrace("RING_START", { kind: "ringtone" });
 
     const tick = async () => {
       if (!activeRef.current) return;

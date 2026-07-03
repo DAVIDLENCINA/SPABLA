@@ -260,12 +260,14 @@ export default function Chat() {
         outgoingCallId: signaling.outgoingCallId,
         incomingCall: signaling.incomingCall?.id,
       });
+      spablaTrace("RING_STOP_ON_ACCEPT", { mode: pendingCallModeRef.current });
       ring.stop();
       webrtc.startCall(pendingCallModeRef.current);
       if (pendingCallModeRef.current === 'video') {
         setVideoActive(true);
       }
     } else {
+      spablaTrace("RING_STOP_ON_END", { status });
       ring.stop();
       setVideoActive(false);
       setVideoExpanded(false);
