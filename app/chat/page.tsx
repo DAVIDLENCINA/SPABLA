@@ -50,6 +50,10 @@ export default function Chat() {
   const [videoExpanded, setVideoExpanded] = useState(false);
   const [showLangPicker, setShowLangPicker] = useState(false);
   const [otherLang, setOtherLang] = useState<string | null>(null);
+  // OT-077: ref-mirror of otherLang so the retry loop below can short-circuit
+  // without stale-closure risk. The setter path is unchanged (setOtherLang stays
+  // the single source of truth); this ref is READ-ONLY from the resolve callback.
+  const otherLangRef = useRef<string | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [showAttachMsg, setShowAttachMsg] = useState(false);
   const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
@@ -173,6 +177,43 @@ export default function Chat() {
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, voiceChatEntries]);
+
+  // OT-077: keep otherLangRef in sync with otherLang state.
+  useEffect(() => { otherLangRef.current = otherLang; }, [otherLang]);
+
+  // OT-077: single resolution path for otherLang. Idempotent: guards against
+  // re-doing work when the state has already been set. Returns true when
+  // otherLang gets resolved (either by hit or because it was already set),
+  // false when this conversation has no other participant with a distinct
+  // language_primary yet. Callers can retry when false is returned.
+  const resolveOtherLang = useCallback(async (
+    convId: string,
+    userId: string,
+    myLang: string,
+  ): Promise<boolean> => {
+    if (otherLangRef.current !== null) return true;
+    const { data: participants } = await supabase
+      .from("conversation_participants").select("user_id")
+      .eq("conversation_id", convId).neq("user_id", userId);
+    if (!participants?.length) return false;
+    const { data: otherUsers } = await supabase
+      .from("users").select("id, language_primary")
+      .in("id", participants.map((p: { user_id: string }) => p.user_id))
+      .neq("language_primary", myLang).limit(1);
+    if (otherUsers?.[0]) {
+      setTraceContext({ targetLang: otherUsers[0].language_primary });
+      spablaTrace("LANG_CONTEXT", {
+        source: "resolve-other-lang",
+        myLang,
+        targetLang: otherUsers[0].language_primary,
+        otherUserId: otherUsers[0].id,
+      });
+      setOtherLang(otherUsers[0].language_primary);
+      setOtherUserId(otherUsers[0].id);
+      return true;
+    }
+    return false;
+  }, []);
 
   // Accumulate caption finals and persist remote entries (receptor inserta, sin doble traducción)
   useEffect(() => {
@@ -314,20 +355,25 @@ export default function Chat() {
     persistedVoiceIdsRef.current = new Set();
     seenVoiceEntryIdsRef.current = new Set();
     await loadMessages();
-    const { data: participants } = await supabase
-      .from("conversation_participants").select("user_id")
-      .eq("conversation_id", convId).neq("user_id", u.id);
-    if (participants?.length) {
-      const { data: otherUsers } = await supabase
-        .from("users").select("id, language_primary")
-        .in("id", participants.map((p: { user_id: string }) => p.user_id))
-        .neq("language_primary", u.language_primary).limit(1);
-      if (otherUsers?.[0]) {
-        setTraceContext({ targetLang: otherUsers[0].language_primary });
-        spablaTrace("LANG_CONTEXT", { source: "init-conversation", myLang: u.language_primary, targetLang: otherUsers[0].language_primary, otherUserId: otherUsers[0].id });
-        setOtherLang(otherUsers[0].language_primary);
-        setOtherUserId(otherUsers[0].id);
-      }
+    // OT-077: first attempt runs inline (same behavior as before OT-077 for the
+    // happy path where the other peer is already present).
+    const foundImmediately = await resolveOtherLang(convId, u.id, u.language_primary);
+    // OT-077: bounded retry — schedules three background attempts at 250 / 500 /
+    // 1000 ms if the first shot came back empty. Fire-and-forget so the rest of
+    // initConversation (channel subscribe, cleanup wiring) isn't blocked. Each
+    // iteration re-guards on otherLangRef so a hit from any path stops the loop
+    // immediately. Total worst case: 1750 ms of background waiting; hard cap on
+    // number of queries: 3. Never a polling loop.
+    if (!foundImmediately) {
+      const RETRY_DELAYS_MS = [250, 500, 1000];
+      void (async () => {
+        for (const delay of RETRY_DELAYS_MS) {
+          await new Promise((r) => setTimeout(r, delay));
+          if (otherLangRef.current !== null) return;
+          const resolved = await resolveOtherLang(convId, u.id, u.language_primary);
+          if (resolved) return;
+        }
+      })();
     }
     const channel = supabase.channel(`messages:${convId}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `conversation_id=eq.${convId}` },
