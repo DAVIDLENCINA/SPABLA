@@ -458,9 +458,9 @@ io.on("connection", (socket: Socket) => {
                 transcription: { model: "whisper-1" },
                 turn_detection: {
                   type: "semantic_vad",
-                  eagerness: "medium",
+                  eagerness: "low",
                   create_response: true,
-                  interrupt_response: true,
+                  interrupt_response: false,
                 },
               },
               output: { format: { type: "audio/pcm", rate: 24000 }, voice: REALTIME_VOICE },
