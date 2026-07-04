@@ -203,12 +203,59 @@ io.on("connection", (socket: Socket) => {
     ot067(event, extra);
   }
 
+  // ── OT-070 targetLang mutation trace (READ-ONLY instrumentation) ────────────
+  // Grep '[OT-070]' in Render logs to see:
+  //   - MUTATE_TARGETLANG        every time socket.data.targetLang is written,
+  //                              with { previous, newValue, stackTag }.
+  //   - EMIT_TRANSCRIPT_RESULT   the full payload sent to the client plus the
+  //                              in-scope fromLang / targetLang / socket.data.targetLang
+  //                              / !!payload.serverWillTranslate.
+  //   - HANDLER_ENTRY            the moment update-target-lang or transcribe-start
+  //                              handlers begin executing.
+  function ot070MutateTarget(newValue: string | null, stackTag: string) {
+    const previous = (socket.data.targetLang as string | undefined) ?? null;
+    console.log("[OT-070][MUTATE_TARGETLANG]", {
+      ts: Date.now(),
+      sid: socket.id,
+      previous,
+      newValue,
+      stackTag,
+    });
+  }
+  function ot070EmitLog(
+    stackTag: string,
+    payload: Record<string, unknown>,
+    ctx: { fromLang?: string | null; targetLang?: string | null } = {}
+  ) {
+    console.log("[OT-070][EMIT_TRANSCRIPT_RESULT]", {
+      ts: Date.now(),
+      sid: socket.id,
+      stackTag,
+      fromLang: ctx.fromLang ?? null,
+      targetLang: ctx.targetLang ?? null,
+      socketDataTarget: (socket.data.targetLang as string | undefined) ?? null,
+      serverWillTranslate: !!(payload as { serverWillTranslate?: boolean }).serverWillTranslate,
+      payload,
+    });
+  }
+  function ot070Entry(stackTag: string, extra: Record<string, unknown> = {}) {
+    console.log("[OT-070][HANDLER_ENTRY]", {
+      ts: Date.now(),
+      sid: socket.id,
+      stackTag,
+      socketDataFrom: (socket.data.fromLang as string | undefined) ?? null,
+      socketDataTarget: (socket.data.targetLang as string | undefined) ?? null,
+      ...extra,
+    });
+  }
+
   // ── Opens (or reopens) a Deepgram live session with the given params ────────
   function openDeepgram(lang: string, fromLang: string, targetLang: string | null) {
     dgConn = closeDG(dgConn);
 
     if (!process.env.DEEPGRAM_API_KEY) {
       console.error("[SPABLA][DG] DEEPGRAM_API_KEY no configurada");
+      ot070EmitLog("dg-init-no-api-key", { text: "", isFinal: false, error: true }, { fromLang, targetLang });
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
       return;
     }
@@ -304,6 +351,11 @@ io.on("connection", (socket: Socket) => {
           console.log(`[STT] speech_final→translate ${translateMs}ms total=${tEmit - tReceived}ms | "${finalText.substring(0, 30)}" → "${translated.substring(0, 30)}"`);
 
           // Notificar al sender que el servidor traduce (omite /api/translate)
+          ot070EmitLog(
+            "dg-final-canTranslate",
+            { text: finalText, isFinal: true, serverWillTranslate: true },
+            { fromLang: fromL ?? null, targetLang: toL ?? null }
+          );
           socket.emit("transcript-result", {
             text: finalText, isFinal: true, serverWillTranslate: true,
           });
@@ -322,12 +374,18 @@ io.on("connection", (socket: Socket) => {
           // ── Comportamiento actual: cliente traduce ──────────────────────
           if (isActualFinal) console.log(`[TRACE-3] server→sender transcript-result text="${finalText.substring(0,60)}"`);
           console.log(`[R2-AUDIT] TR_EMIT text="${finalText.substring(0,80)}" isFinal=${isActualFinal} speech_final_was=${speechFinal}`); // [R2-AUDIT]
+          ot070EmitLog(
+            "dg-non-canTranslate",
+            { text: finalText, isFinal: isActualFinal },
+            { fromLang: fromL ?? null, targetLang: toL ?? null }
+          );
           socket.emit("transcript-result", { text: finalText, isFinal: isActualFinal });
         }
       });
 
       thisConn.on(LiveTranscriptionEvents.Error, (err: any) => {
         console.error("[SPABLA][DG] Error:", err?.message ?? err);
+        ot070EmitLog("dg-conn-error", { text: "", isFinal: false, error: true }, { fromLang, targetLang });
         socket.emit("transcript-result", { text: "", isFinal: false, error: true });
         if (dgConn === thisConn) dgConn = closeDG(thisConn);
       });
@@ -363,6 +421,7 @@ io.on("connection", (socket: Socket) => {
 
     } catch (err: any) {
       console.error("[SPABLA][DG] No se pudo abrir sesión:", err?.message ?? err);
+      ot070EmitLog("dg-init-catch", { text: "", isFinal: false, error: true }, { fromLang, targetLang });
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
       dgConn = null;
     }
@@ -416,6 +475,7 @@ io.on("connection", (socket: Socket) => {
     closeRT("reopen-different-pair");
     if (!process.env.OPENAI_API_KEY) {
       console.error("[SPABLA][RT] OPENAI_API_KEY no configurada");
+      ot070EmitLog("rt-init-no-api-key", { text: "", isFinal: false, error: true }, { fromLang, targetLang });
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
       return;
     }
@@ -575,6 +635,11 @@ io.on("connection", (socket: Socket) => {
       }
 
       if (tp === "conversation.item.input_audio_transcription.delta" && m.delta) {
+        ot070EmitLog(
+          "rt-delta",
+          { text: m.delta as string, isFinal: false },
+          { fromLang: rtFromLang, targetLang: rtTargetLang }
+        );
         socket.emit("transcript-result", { text: m.delta as string, isFinal: false });
         return;
       }
@@ -600,6 +665,11 @@ io.on("connection", (socket: Socket) => {
         // Sender path: serverWillTranslate=true makes the existing client handler
         // create the local caption WITHOUT calling /api/translate or emitting subtitle.
         ot067First("transcript-result-emitted-to-client", { textLen: lastInputTranscript.length });
+        ot070EmitLog(
+          "rt-completed",
+          { text: lastInputTranscript, isFinal: true, serverWillTranslate: true },
+          { fromLang: rtFromLang, targetLang: rtTargetLang }
+        );
         socket.emit("transcript-result", { text: lastInputTranscript, isFinal: true, serverWillTranslate: true });
         return;
       }
@@ -738,10 +808,12 @@ io.on("connection", (socket: Socket) => {
 
   // Actualiza el idioma destino sin reiniciar la sesión Deepgram
   socket.on("update-target-lang", (targetLang: string | null) => {
+    ot070Entry("update-target-lang-handler", { arg: targetLang ?? null });
     ot067First("update-target-lang-received", {
       arg: targetLang ?? null,
       priorTarget: (socket.data.targetLang as string | undefined) ?? null,
     });
+    ot070MutateTarget(targetLang ?? null, "update-target-lang");
     socket.data.targetLang    = targetLang ?? null;
     socket.data.dgTargetLang  = targetLang ?? null;
     console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
@@ -768,6 +840,11 @@ io.on("connection", (socket: Socket) => {
   socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
     lang: string; fromLang?: string; targetLang?: string | null;
   }) => {
+    ot070Entry("transcribe-start-handler", {
+      lang,
+      argFromLang: fromLang ?? null,
+      argTargetLang: targetLang ?? null,
+    });
     ot067First("transcribe-start-received", {
       lang,
       argFromLang: fromLang ?? null,
@@ -781,6 +858,7 @@ io.on("connection", (socket: Socket) => {
 
     // Also keep legacy fields used by transcript handler
     socket.data.fromLang   = fromLang   ?? lang;
+    ot070MutateTarget(targetLang ?? null, "transcribe-start");
     socket.data.targetLang = targetLang ?? null;
 
     const _resolvedFrom = socket.data.dgFromLang as string;
