@@ -55,6 +55,15 @@ export default function Chat() {
   const [voiceChatEntries, setVoiceChatEntries] = useState<CaptionEntry[]>([]);
   const [callStartTime, setCallStartTime]       = useState(0);
   const [otherUserId, setOtherUserId] = useState<string | null>(null);
+  // STABLE-FIX invariant: no call (outgoing initiate, incoming accept, or
+  // WebRTC startCall) can proceed while targetLang is null. These two states
+  // gate the UI while resolveTargetLangOrWait polls conversation_participants
+  // + users.language_primary for up to 10 s.
+  const [preparingCall, setPreparingCall] = useState(false);
+  const [prepareError,  setPrepareError]  = useState<string | null>(null);
+  // Ref-mirror of otherLang so the resolve loop can short-circuit without stale
+  // closure. Updated by a dedicated useEffect below.
+  const otherLangRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const convIdRef = useRef<string | null>(null);
@@ -174,6 +183,82 @@ export default function Chat() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, voiceChatEntries]);
 
+  // STABLE-FIX: sync otherLang state → ref so async loops see the latest value.
+  useEffect(() => { otherLangRef.current = otherLang; }, [otherLang]);
+
+  // STABLE-FIX: resolve the remote participant's language from Supabase and
+  // block up to 10 s if the other peer has not joined yet. Returns the resolved
+  // targetLang or null on timeout. Idempotent: exits immediately if otherLangRef
+  // is already populated (by any earlier resolution path, incl. sendMessage's
+  // own participant lookup at L387-407).
+  const resolveTargetLangOrWait = useCallback(async (
+    convId:    string,
+    myUserId:  string,
+    myLang:    string,
+  ): Promise<string | null> => {
+    if (otherLangRef.current !== null) return otherLangRef.current;
+    const startTs        = Date.now();
+    const TIMEOUT_MS     = 10_000;
+    const POLL_INTERVAL_MS = 500;
+    spablaTrace("RESOLVE_TARGET_LANG_START", { conversationId: convId, myLang });
+    while (Date.now() - startTs < TIMEOUT_MS) {
+      if (otherLangRef.current !== null) return otherLangRef.current;
+      const { data: participants } = await supabase
+        .from("conversation_participants").select("user_id")
+        .eq("conversation_id", convId).neq("user_id", myUserId);
+      if (participants?.length) {
+        const { data: otherUsers } = await supabase
+          .from("users").select("id, language_primary")
+          .in("id", participants.map((p: { user_id: string }) => p.user_id))
+          .neq("language_primary", myLang).limit(1);
+        if (otherUsers?.[0]) {
+          const target = otherUsers[0].language_primary as string;
+          setTraceContext({ targetLang: target });
+          spablaTrace("LANG_CONTEXT", {
+            source:      "resolve-or-wait",
+            myLang,
+            targetLang:  target,
+            otherUserId: otherUsers[0].id,
+            elapsedMs:   Date.now() - startTs,
+          });
+          setOtherLang(target);
+          setOtherUserId(otherUsers[0].id);
+          return target;
+        }
+      }
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+    }
+    spablaTrace("RESOLVE_TARGET_LANG_TIMEOUT", {
+      conversationId: convId,
+      myLang,
+      elapsedMs:      Date.now() - startTs,
+    });
+    return null;
+  }, []);
+
+  // STABLE-FIX: single guard called before any signaling.initiateCall or
+  // signaling.acceptCall. Flips preparingCall while it works. Returns true iff
+  // targetLang is safely resolved by the end; caller must abort on false.
+  const prepareCallOrAbort = useCallback(async (): Promise<boolean> => {
+    if (otherLangRef.current !== null) return true;
+    if (!user || !conversationId) {
+      setPrepareError("No se pudo preparar la traducción");
+      return false;
+    }
+    setPrepareError(null);
+    setPreparingCall(true);
+    try {
+      const target = await resolveTargetLangOrWait(conversationId, user.id, user.language_primary);
+      if (target === null) {
+        setPrepareError("No se pudo preparar la traducción");
+        return false;
+      }
+      return true;
+    } finally {
+      setPreparingCall(false);
+    }
+  }, [user, conversationId, resolveTargetLangOrWait]);
+
   // Accumulate caption finals and persist remote entries (receptor inserta, sin doble traducción)
   useEffect(() => {
     if (webrtc.captionsHistory.length === 0) return;
@@ -252,6 +337,21 @@ export default function Chat() {
     } else if (status === 'incoming') {
       ring.startRingtone();
     } else if (status === 'accepted') {
+      // STABLE-FIX invariant: startCall MUST NOT run with targetLang null.
+      // Every path that transitions to 'accepted' is gated by
+      // prepareCallOrAbort. This defensive check enforces the invariant as a
+      // last resort if a gate were ever bypassed — abort the call cleanly.
+      if (otherLangRef.current === null) {
+        console.error("[STABLE-FIX] startCall aborted — targetLang null at accept");
+        spablaTrace("STARTCALL_ABORTED_NULL_TARGET", {
+          hasOutgoing: !!signaling.outgoingCallId,
+          hasIncoming: !!signaling.incomingCall,
+        });
+        setPrepareError("No se pudo preparar la traducción");
+        const sigId = signaling.outgoingCallId ?? signaling.incomingCall?.id ?? null;
+        if (sigId) void signaling.endCall(sigId);
+        return;
+      }
       console.log("[CALL][ACCEPTED] triggering WebRTC startCall", {
         conversationId,
         userId: user?.id,
@@ -482,14 +582,18 @@ export default function Chat() {
     try {
       const status = signaling.callStatus;
       if (status === 'idle') {
-        // Initiate outgoing voice call — no getUserMedia yet
+        // STABLE-FIX: block initiate until targetLang is resolved (max 10 s).
+        const ready = await prepareCallOrAbort();
+        if (!ready) return;
         pendingCallModeRef.current = 'voice';
         await signaling.initiateCall();
       } else if (status === 'ringing' && signaling.outgoingCallId) {
         // Cancel while still ringing
         await signaling.cancelCall(signaling.outgoingCallId);
       } else if (status === 'incoming' && signaling.incomingCall) {
-        // Accept incoming call — WebRTC starts via callStatus effect
+        // STABLE-FIX: block accept until targetLang is resolved (max 10 s).
+        const ready = await prepareCallOrAbort();
+        if (!ready) return;
         pendingCallModeRef.current = signaling.incomingCall.mode ?? 'voice';
         await signaling.acceptCall(signaling.incomingCall.id);
       } else if (status === 'accepted') {
@@ -515,9 +619,15 @@ export default function Chat() {
 
   const startVideo = async () => {
     spablaTrace("START_VIDEO_REQUEST", { from: "startVideo", callStatus: signaling.callStatus });
+    // iOS Safari unlocks must stay INSIDE the click gesture — do them before the
+    // prepare await, or the AudioContext will be created outside gesture and
+    // silence itself. prepareCallOrAbort's await happens after all unlocks.
     unlockAudio();
     webrtc.unlockCapture();
     ring.prepare();
+    // STABLE-FIX: block initiate until targetLang is resolved (max 10 s).
+    const ready = await prepareCallOrAbort();
+    if (!ready) return;
     pendingCallModeRef.current = 'video';
     await signaling.initiateCall('video');
   };
@@ -531,9 +641,13 @@ export default function Chat() {
       incomingCallMode: signaling.incomingCall?.mode ?? null,
     });
     if (isIncomingVideo && signaling.incomingCall) {
+      // iOS Safari unlocks must stay inside the click gesture.
       unlockAudio();
       webrtc.unlockCapture();
       ring.prepare();
+      // STABLE-FIX: block accept until targetLang is resolved (max 10 s).
+      const ready = await prepareCallOrAbort();
+      if (!ready) return;
       pendingCallModeRef.current = 'video';
       await signaling.acceptCall(signaling.incomingCall.id);
     } else if (videoActive) {
@@ -783,6 +897,60 @@ export default function Chat() {
               </button>
             </div>
           </div>
+
+          {/* STABLE-FIX: pastilla "Preparando traducción…" mientras
+              prepareCallOrAbort resuelve targetLang. Se muestra por sí sola,
+              sin depender de callStatus, porque bloquea la fase previa al ring. */}
+          {preparingCall && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "4px 10px", marginBottom: 8, borderRadius: 20,
+              background: "rgba(62,198,198,0.12)",
+              border: "1px solid rgba(62,198,198,0.35)",
+              alignSelf: "flex-start",
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%",
+                background: "#3ec6c6", display: "block",
+                boxShadow: "0 0 6px #3ec6c6",
+              }}/>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600, letterSpacing: "0.04em" }}>
+                PREPARANDO TRADUCCIÓN…
+              </span>
+            </div>
+          )}
+          {/* STABLE-FIX: error tras timeout de resolveTargetLangOrWait. */}
+          {prepareError && !preparingCall && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "4px 10px", marginBottom: 8, borderRadius: 20,
+              background: "rgba(232,22,46,0.12)",
+              border: "1px solid rgba(232,22,46,0.35)",
+              alignSelf: "flex-start",
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: "50%",
+                background: "#e8162e", display: "block",
+                boxShadow: "0 0 6px #e8162e",
+              }}/>
+              <span style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", fontWeight: 600, letterSpacing: "0.04em" }}>
+                {prepareError}
+              </span>
+              <button
+                onClick={() => setPrepareError(null)}
+                style={{
+                  marginLeft: 4,
+                  background: "rgba(232,22,46,0.22)",
+                  border: "1px solid rgba(232,22,46,0.4)",
+                  borderRadius: 10, padding: "2px 8px",
+                  fontSize: 10, color: "rgba(255,255,255,0.75)",
+                  cursor: "pointer", fontFamily: "inherit", fontWeight: 600,
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+          )}
 
           {/* Pastilla de estado de llamada */}
           {(voiceActive || isIncoming || showVoiceControls) && (
