@@ -125,6 +125,10 @@ export function useWebRTC(
   const hasCreatedOfferRef = useRef(false);
   // Guard: prevents concurrent startCall() executions (e.g. double-tap before socket connects)
   const startingRef = useRef(false);
+  // FIX-071: true when a transcribe-start emit was blocked because targetLangRef.current
+  // was null. The targetLang useEffect below sends the deferred transcribe-start as soon
+  // as a valid targetLang lands, so the server never opens Realtime with a null target.
+  const pendingTranscribeStartRef = useRef(false);
 
   const [localStream,   setLocalStream]   = useState<MediaStream | null>(null);
   const [remoteStream,  setRemoteStream]  = useState<MediaStream | null>(null);
@@ -156,16 +160,46 @@ export function useWebRTC(
     }
     console.log("[TTS] voiceEnabled →", voiceEnabled);
   }, [voiceEnabled]);
+  // FIX-071: single emit path for transcribe-start. If targetLangRef.current is null we
+  // do NOT emit — instead we set pendingTranscribeStartRef so the targetLang useEffect
+  // below can send it as soon as a valid target lands. The full payload always carries
+  // fromLang and targetLang, so the server never enters openRealtime(null) deferred state.
+  const emitTranscribeStart = useCallback((source: string) => {
+    const socket = socketRef.current;
+    if (!socket) return;
+    const fromLang = myLangRef.current;
+    const targetLangCurrent = targetLangRef.current;
+    if (targetLangCurrent === null) {
+      pendingTranscribeStartRef.current = true;
+      console.log("[FIX-071] transcribe-start blocked waiting targetLang", { source, fromLang });
+      return;
+    }
+    pendingTranscribeStartRef.current = false;
+    const langCode = DEEPGRAM_LANG[fromLang] ?? fromLang;
+    console.log("[FIX-071] transcribe-start sent", { source, fromLang, targetLang: targetLangCurrent });
+    socket.emit("transcribe-start", {
+      lang:       langCode,
+      fromLang,
+      targetLang: targetLangCurrent,
+    });
+  }, []);
+
   useEffect(() => {
     targetLangRef.current = targetLang;
+    const socket = socketRef.current;
+    const isConnected = !!socket?.connected;
+    // FIX-071: send the transcribe-start we deferred earlier if we now have a valid target.
+    if (pendingTranscribeStartRef.current && targetLang !== null && isConnected) {
+      emitTranscribeStart("targetLang-effect");
+    }
     // Notificar al servidor cuando cambia el idioma destino (experimento server-side)
-    if (socketRef.current?.connected) {
+    if (isConnected) {
       spablaTrace("TARGET_LANG_UPDATE_EMIT", { targetLang, socketConnected: true });
-      socketRef.current.emit("update-target-lang", targetLang);
+      socket!.emit("update-target-lang", targetLang);
     } else {
       spablaTrace("TARGET_LANG_UPDATE_EMIT", { targetLang, socketConnected: false, skipped: true });
     }
-  }, [targetLang]);
+  }, [targetLang, emitTranscribeStart]);
 
   // Fix A — restart Deepgram when the user changes language during an active call.
   // Without this, Deepgram keeps transcribing in the old language and produces
@@ -178,7 +212,7 @@ export function useWebRTC(
     spablaTrace("TR_TARGET_LANGUAGE", { from: "myLang-change", value: targetLangRef.current });
     spablaTrace("TR_SHOULD_TRANSLATE", { from: "myLang-change", myLang, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLang });
     socket.emit("transcribe-stop");
-    socket.emit("transcribe-start", { lang: DEEPGRAM_LANG[myLang] ?? myLang });
+    emitTranscribeStart("myLang-change");
     console.log("[SPABLA][DG] language changed →", myLang, "— Deepgram session restarted");
   }, [myLang]);
 
@@ -495,11 +529,7 @@ export function useWebRTC(
       spablaTrace("TR_SOURCE_LANGUAGE", { from: "socket-connect", value: myLangRef.current });
       spablaTrace("TR_TARGET_LANGUAGE", { from: "socket-connect", value: targetLangRef.current });
       spablaTrace("TR_SHOULD_TRANSLATE", { from: "socket-connect", myLang: myLangRef.current, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLangRef.current });
-      socket.emit("transcribe-start", {
-        lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
-        fromLang:   myLangRef.current,
-        targetLang: targetLangRef.current,
-      });
+      emitTranscribeStart("socket-connect");
 
       // Fix 1 — teardown processor/source only. Do NOT close the AudioContext:
       // it was created and resumed in startCall() within the user gesture.
@@ -662,11 +692,7 @@ export function useWebRTC(
         spablaTrace("TR_SOURCE_LANGUAGE", { from: "socket-reconnect", value: myLangRef.current });
         spablaTrace("TR_TARGET_LANGUAGE", { from: "socket-reconnect", value: targetLangRef.current });
         spablaTrace("TR_SHOULD_TRANSLATE", { from: "socket-reconnect", myLang: myLangRef.current, targetLang: targetLangRef.current, decision: !!targetLangRef.current && targetLangRef.current !== myLangRef.current });
-        socket.emit("transcribe-start", {
-          lang:       DEEPGRAM_LANG[myLangRef.current] ?? myLangRef.current,
-          fromLang:   myLangRef.current,
-          targetLang: targetLangRef.current,
-        });
+        emitTranscribeStart("socket-reconnect");
         console.log("[SPABLA][DG] transcribe-start re-emitted after reconnect");
       }
     });
