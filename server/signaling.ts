@@ -180,6 +180,29 @@ io.on("connection", (socket: Socket) => {
   let rtFromLang:   string | null = null;
   let rtTargetLang: string | null = null;
 
+  // ── OT-067 first-utterance timeline (READ-ONLY instrumentation) ─────────────
+  // Grep '[OT-067]' in Render logs to reconstruct the timeline of the first
+  // spoken utterance per socket. Each entry includes { ts, sid, from, target,
+  // rtReady, pending } plus event-specific extras. The "first-*" gate prevents
+  // noise from repeated events during the same session. No logic modified.
+  const ot067FirstSeen: Record<string, boolean> = {};
+  function ot067(event: string, extra: Record<string, unknown> = {}) {
+    console.log(`[OT-067] ${event}`, {
+      ts: Date.now(),
+      sid: socket.id,
+      from: (socket.data.fromLang as string | undefined) ?? null,
+      target: (socket.data.targetLang as string | undefined) ?? null,
+      rtReady,
+      pending: rtPendingChunks.length,
+      ...extra,
+    });
+  }
+  function ot067First(event: string, extra: Record<string, unknown> = {}) {
+    if (ot067FirstSeen[event]) return;
+    ot067FirstSeen[event] = true;
+    ot067(event, extra);
+  }
+
   // ── Opens (or reopens) a Deepgram live session with the given params ────────
   function openDeepgram(lang: string, fromLang: string, targetLang: string | null) {
     dgConn = closeDG(dgConn);
@@ -379,6 +402,13 @@ io.on("connection", (socket: Socket) => {
   // If targetLang is missing or equal to fromLang, defer (don't open) — will retry when
   // update-target-lang arrives with a valid value (handler below).
   function openRealtime(fromLang: string, targetLang: string | null) {
+    ot067First("openRealtime-call", {
+      argFrom: fromLang,
+      argTarget: targetLang,
+      priorRtFromLang: rtFromLang,
+      priorRtTargetLang: rtTargetLang,
+      rtConnAlreadyExists: !!rtConn,
+    });
     if (rtConn && rtFromLang === fromLang && rtTargetLang === targetLang) {
       console.log(`[SPABLA][RT] already open/opening for ${fromLang}→${targetLang}, skipping reopen`);
       return;
@@ -419,6 +449,7 @@ io.on("connection", (socket: Socket) => {
 
     ws.on("open", () => {
       console.log(`[SPABLA][RT] upstream open: socket=${socket.id}`);
+      ot067First("ws-openai-open");
     });
 
     ws.on("error", (err: Error) => {
@@ -440,6 +471,14 @@ io.on("connection", (socket: Socket) => {
       try { m = JSON.parse(raw.toString("utf8")); } catch { return; }
       const tp = m?.type as string | undefined;
       if (!tp) return;
+
+      // OT-067: log the first occurrence of key auto-generated events from OpenAI.
+      // With semantic_vad + create_response=true the API auto-commits and auto-
+      // creates responses — this server never sends "input_audio_buffer.commit"
+      // or "response.create" explicitly, so we log the incoming past-tense events
+      // as the observable proxy for those milestones.
+      if (tp === "input_audio_buffer.committed") ot067First("audio-committed-from-openai");
+      if (tp === "response.created")             ot067First("response-created-from-openai");
 
       if (tp === "error") {
         console.error("[SPABLA][RT] error event:", JSON.stringify(m.error));
@@ -478,10 +517,14 @@ io.on("connection", (socket: Socket) => {
 
       if (tp === "session.updated") {
         rtReady = true;
+        ot067First("session-updated", { queuedForFlush: rtPendingChunks.length });
         // Flush any audio chunks that arrived before the session was ready.
         while (rtPendingChunks.length > 0) {
           const audio = rtPendingChunks.shift()!;
-          try { ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] flush send failed:", err); break; }
+          try {
+            ws.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+            ot067First("audio-append-sent", { origin: "flush" });
+          } catch (err) { console.error("[SPABLA][RT] flush send failed:", err); break; }
         }
         return;
       }
@@ -492,6 +535,7 @@ io.on("connection", (socket: Socket) => {
       }
 
       if (tp === "conversation.item.input_audio_transcription.completed" && m.transcript) {
+        ot067First("transcription-completed-from-openai", { textLen: (m.transcript as string).length });
         lastInputTranscript = m.transcript as string;
         console.log("[DIAG:TR] TR_TEXT_IN", {
           site: "input_audio_transcription.completed",
@@ -510,6 +554,7 @@ io.on("connection", (socket: Socket) => {
         });
         // Sender path: serverWillTranslate=true makes the existing client handler
         // create the local caption WITHOUT calling /api/translate or emitting subtitle.
+        ot067First("transcript-result-emitted-to-client", { textLen: lastInputTranscript.length });
         socket.emit("transcript-result", { text: lastInputTranscript, isFinal: true, serverWillTranslate: true });
         return;
       }
@@ -648,6 +693,10 @@ io.on("connection", (socket: Socket) => {
 
   // Actualiza el idioma destino sin reiniciar la sesión Deepgram
   socket.on("update-target-lang", (targetLang: string | null) => {
+    ot067First("update-target-lang-received", {
+      arg: targetLang ?? null,
+      priorTarget: (socket.data.targetLang as string | undefined) ?? null,
+    });
     socket.data.targetLang    = targetLang ?? null;
     socket.data.dgTargetLang  = targetLang ?? null;
     console.log(`[SPABLA] update-target-lang: socket=${socket.id} targetLang=${targetLang}`);
@@ -674,6 +723,11 @@ io.on("connection", (socket: Socket) => {
   socket.on("transcribe-start", async ({ lang, fromLang, targetLang }: {
     lang: string; fromLang?: string; targetLang?: string | null;
   }) => {
+    ot067First("transcribe-start-received", {
+      lang,
+      argFromLang: fromLang ?? null,
+      argTargetLang: targetLang ?? null,
+    });
     // Persist params so openDeepgram() can reuse them on auto-reopen
     socket.data.dgLang        = lang;
     socket.data.dgFromLang    = fromLang   ?? lang;
@@ -704,6 +758,7 @@ io.on("connection", (socket: Socket) => {
   });
 
   socket.on("audio-chunk", (chunk: ArrayBuffer) => {
+    ot067First("audio-chunk-received", { bytes: chunk.byteLength });
     _audioChunks++;
     _audioBytes += chunk.byteLength;
     const _now = Date.now();
@@ -721,7 +776,10 @@ io.on("connection", (socket: Socket) => {
       const decimated = downsample48to24(int16);
       const audio     = Buffer.from(decimated.buffer, decimated.byteOffset, decimated.byteLength).toString("base64");
       if (rtReady) {
-        try { rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
+        try {
+          rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio }));
+          ot067First("audio-append-sent", { origin: "live" });
+        } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
       } else {
         // Cap pending buffer to ~10s of audio so a slow handshake can't grow without bound.
         if (rtPendingChunks.length < 120) rtPendingChunks.push(audio);
