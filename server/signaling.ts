@@ -472,6 +472,51 @@ io.on("connection", (socket: Socket) => {
       const tp = m?.type as string | undefined;
       if (!tp) return;
 
+      // ── OT-069: log EVERY OpenAI upstream event during the session ────────────
+      // Read-only. Nothing after this block changes: existing type branches, their
+      // returns and their emits are untouched. Grep '[OT-069][OPENAI_EVENT]' to see
+      // the raw event stream and '[OT-069][KEY_EVENT]' to spot the three markers
+      // requested by the ticket.
+      {
+        const _rawTranscript = typeof m?.transcript === "string" ? (m.transcript as string) : null;
+        const _rawDelta      = typeof m?.delta === "string" ? (m.delta as string) : null;
+        const _isInputCompleted = tp === "conversation.item.input_audio_transcription.completed";
+        const _isResponseDone   = tp === "response.output_audio_transcript.done";
+        console.log("[OT-069][OPENAI_EVENT]", {
+          ts: Date.now(),
+          sid: socket.id,
+          type: tp,
+          hasDelta: _rawDelta !== null,
+          deltaLength: _rawDelta ? _rawDelta.length : 0,
+          hasTranscript: _isInputCompleted && _rawTranscript !== null,
+          transcriptLength: _isInputCompleted && _rawTranscript ? _rawTranscript.length : 0,
+          hasResponseTranscript: _isResponseDone && _rawTranscript !== null,
+          responseTranscriptLength: _isResponseDone && _rawTranscript ? _rawTranscript.length : 0,
+          fromLang: (socket.data.fromLang as string | undefined) ?? null,
+          targetLang: (socket.data.targetLang as string | undefined) ?? null,
+          rtReady,
+          pending: rtPendingChunks.length,
+        });
+        if (tp === "conversation.item.input_audio_transcription.delta") {
+          console.log("[OT-069][KEY_EVENT] input_audio_transcription.delta", {
+            sid: socket.id,
+            deltaLength: _rawDelta ? _rawDelta.length : 0,
+          });
+        }
+        if (tp === "conversation.item.input_audio_transcription.completed") {
+          console.log("[OT-069][KEY_EVENT] input_audio_transcription.completed", {
+            sid: socket.id,
+            transcriptLength: _rawTranscript ? _rawTranscript.length : 0,
+          });
+        }
+        if (tp === "response.output_audio_transcript.done") {
+          console.log("[OT-069][KEY_EVENT] response.output_audio_transcript.done", {
+            sid: socket.id,
+            transcriptLength: _rawTranscript ? _rawTranscript.length : 0,
+          });
+        }
+      }
+
       // OT-067: log the first occurrence of key auto-generated events from OpenAI.
       // With semantic_vad + create_response=true the API auto-commits and auto-
       // creates responses — this server never sends "input_audio_buffer.commit"
