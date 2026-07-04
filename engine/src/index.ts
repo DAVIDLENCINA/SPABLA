@@ -45,7 +45,27 @@ export type {
 
 // Engine facade
 export { Engine } from "./engine/Engine.js";
-export type { EngineDependencies } from "./engine/Engine.js";
+export type { EngineDependencies, EngineComponents } from "./engine/Engine.js";
+
+// Adapter registry — public surface for SDK consumers to plug in providers.
+export { AdapterRegistry, AdapterRegistryError } from "./adapter-registry/AdapterRegistry.js";
+export type {
+  AdapterKind,
+  AdapterBase,
+  AdapterByKind,
+  STTAdapter,
+  MTAdapter,
+  TTSAdapter,
+  WebRTCAdapter,
+  SignalingAdapter,
+  SupabaseAdapter,
+} from "./types/adapters.js";
+export { ADAPTER_KINDS, isAdapterKind } from "./types/adapters.js";
+
+// Turn pipeline primitives.
+export { TurnPipelineManager, TurnPipelineError } from "./pipeline/TurnPipelineManager.js";
+export type { TurnPipeline, TurnStage, TurnSpeaker } from "./types/turn.js";
+export { isTerminalTurnStage, TERMINAL_TURN_STAGES } from "./types/turn.js";
 
 // Errors that external code may want to catch
 export { InvalidTransitionError } from "./state-machine/StateMachine.js";

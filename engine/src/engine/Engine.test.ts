@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { Engine } from "./Engine.js";
 import { asUUID, asISOTimestamp, type Clock } from "../types/ids.js";
+import { EventBus } from "../event-bus/EventBus.js";
+import { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 
 let counter = 0;
 function fakeClock(): { clock: Clock; advance: (ms: number) => void } {
@@ -184,6 +186,60 @@ describe("Engine — participant lifecycle", () => {
     engine.loadConversation(asUUID("conv-1"));
     engine.removeParticipant(REMOTE.userId);
     expect(engine.snapshotConversation()?.remoteParticipant).toBeUndefined();
+  });
+});
+
+describe("Engine — component injection (fase 1.5)", () => {
+  it("uses the injected EventBus so external subscribers still receive events", () => {
+    const bus = new EventBus();
+    counter = 0;
+    const engine = new Engine({
+      clock: fakeClock().clock,
+      newId: () => asUUID(`id-${++counter}`),
+      bus,
+    });
+    const handler = vi.fn();
+    bus.on("participant.joined", handler);
+    engine.addParticipant(LOCAL);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes getAdapterRegistry() with default empty registry", () => {
+    const engine = makeEngine();
+    const reg = engine.getAdapterRegistry();
+    expect(reg.registeredKinds()).toEqual([]);
+    reg.register("stt", { kind: "stt", displayName: "fake" });
+    expect(reg.has("stt")).toBe(true);
+  });
+
+  it("accepts a pre-populated AdapterRegistry via injection", () => {
+    const custom = new AdapterRegistry();
+    custom.register("mt", { kind: "mt", displayName: "custom-mt" });
+    counter = 0;
+    const engine = new Engine({
+      clock: fakeClock().clock,
+      newId: () => asUUID(`id-${++counter}`),
+      adapters: custom,
+    });
+    expect(engine.getAdapterRegistry().has("mt")).toBe(true);
+    expect(engine.getAdapterRegistry().get("mt")?.displayName).toBe("custom-mt");
+  });
+
+  it("exposes getTurnPipelineManager()", () => {
+    const engine = makeEngine();
+    expect(engine.getTurnPipelineManager()).toBeDefined();
+    expect(engine.getTurnPipelineManager().activeForCall(asUUID("nope"))).toEqual([]);
+  });
+
+  it("does NOT alter existing command behaviour when defaults are used", () => {
+    const engine = makeEngine();
+    const initiated = vi.fn();
+    engine.on("call.initiated", initiated);
+    engine.addParticipant(LOCAL);
+    engine.addParticipant(REMOTE);
+    engine.loadConversation(asUUID("conv-1"));
+    engine.initiateCall({ mode: "voice" });
+    expect(initiated).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -19,18 +19,11 @@ import { ParticipantManager, type AddParticipantInput } from "../participant-man
 import { LanguageManager } from "../language-manager/LanguageManager.js";
 import { ConversationManager } from "../conversation-manager/ConversationManager.js";
 import { SessionManager, type CreateCallInput } from "../session-manager/SessionManager.js";
+import { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
+import { TurnPipelineManager } from "../pipeline/TurnPipelineManager.js";
+import { defaultNewId, type EngineDependencies } from "./types.js";
 
-export type EngineDependencies = Readonly<{
-  clock?: Clock;
-  /** Function returning a fresh UUID string; defaults to Math.random-based. */
-  newId?: () => UUID;
-}>;
-
-function defaultNewId(): UUID {
-  // Fine-grained ids for tests; production wiring should inject crypto.randomUUID.
-  const n = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-  return n as UUID;
-}
+export type { EngineComponents, EngineDependencies } from "./types.js";
 
 export class Engine {
   private readonly bus: EventBus;
@@ -40,20 +33,39 @@ export class Engine {
   private readonly languages: LanguageManager;
   private readonly conversation: ConversationManager;
   private readonly sessions: SessionManager;
+  private readonly adapters: AdapterRegistry;
+  private readonly turnPipelines: TurnPipelineManager;
 
   constructor(deps: EngineDependencies = {}) {
     this.clock = deps.clock ?? systemClock();
     this.newId = deps.newId ?? defaultNewId;
-    this.bus = new EventBus();
-    this.participants = new ParticipantManager(this.bus, this.clock);
-    this.languages = new LanguageManager(this.bus, this.clock);
-    this.conversation = new ConversationManager(
-      this.bus,
-      this.clock,
-      this.participants,
-      this.languages,
-    );
-    this.sessions = new SessionManager(this.bus, this.clock);
+    this.bus = deps.bus ?? new EventBus();
+    this.participants = deps.participants ?? new ParticipantManager(this.bus, this.clock);
+    this.languages = deps.languages ?? new LanguageManager(this.bus, this.clock);
+    this.conversation =
+      deps.conversation ??
+      new ConversationManager(this.bus, this.clock, this.participants, this.languages);
+    this.sessions = deps.sessions ?? new SessionManager(this.bus, this.clock);
+    this.adapters = deps.adapters ?? new AdapterRegistry();
+    this.turnPipelines = deps.turnPipelines ?? new TurnPipelineManager(this.bus, this.clock);
+  }
+
+  /**
+   * Read-only accessor for the AdapterRegistry so SDK consumers can register
+   * concrete adapters after construction. Managers themselves are not
+   * exposed — the Engine remains the only command surface.
+   */
+  getAdapterRegistry(): AdapterRegistry {
+    return this.adapters;
+  }
+
+  /**
+   * Read-only accessor for the TurnPipelineManager. Later fases wire STT/MT/
+   * TTS adapters to feed this. Fase 1.5 exposes it so tests and (eventually)
+   * plugin authors can observe pipeline state without going through commands.
+   */
+  getTurnPipelineManager(): TurnPipelineManager {
+    return this.turnPipelines;
   }
 
   /** Public read-only subscription surface. */

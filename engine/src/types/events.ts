@@ -14,6 +14,7 @@ import type { Participant } from "./participant.js";
 import type { LanguagePair } from "./language.js";
 import type { ConversationSession, LanguagePairUnresolvableReason } from "./conversation.js";
 import type { CallSession, CallState } from "./call.js";
+import type { TurnPipeline, TurnStage } from "./turn.js";
 
 /** Common metadata attached to every emitted event. */
 export type EventMeta = Readonly<{
@@ -50,6 +51,31 @@ export type CallStateChangedEvent = {
   name: "call.state.changed";
   session: CallSession;
   previousState: CallState;
+};
+
+// ── Turn pipeline lifecycle ─────────────────────────────────────────────────
+
+export type TurnStartedEvent = {
+  name: "turn.started";
+  turn: TurnPipeline;
+};
+
+export type TurnStageChangedEvent = {
+  name: "turn.stage.changed";
+  turn: TurnPipeline;
+  previousStage: TurnStage;
+};
+
+export type TurnCompletedEvent = {
+  name: "turn.completed";
+  turn: TurnPipeline;
+};
+
+export type TurnFailedEvent = {
+  name: "turn.failed";
+  turn: TurnPipeline;
+  stage: TurnStage;
+  reason: string;
 };
 
 // ── Telemetry (always emitted) ──────────────────────────────────────────────
@@ -98,6 +124,10 @@ export type EngineEvent =
   | CallMissedEvent
   | CallEndedEvent
   | CallStateChangedEvent
+  | TurnStartedEvent
+  | TurnStageChangedEvent
+  | TurnCompletedEvent
+  | TurnFailedEvent
   | TelemetryCommandReceivedEvent
   | TelemetryCommandRejectedEvent
   | TelemetryStateTransitionEvent
