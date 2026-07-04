@@ -346,7 +346,7 @@ io.on("connection", (socket: Socket) => {
   }
   // ── End openDeepgram ────────────────────────────────────────────────────────
 
-  function closeRT(reason: string = "internal"): null {
+  function closeRT(reason: string = "internal", preservePendingChunks = false): null {
     if (rtConn) {
       const ws = rtConn;
       console.log(`[SPABLA][RT] closing session ${rtFromLang ?? "?"}→${rtTargetLang ?? "?"} (${reason}) — readyState=${ws.readyState}`);
@@ -368,7 +368,11 @@ io.on("connection", (socket: Socket) => {
     }
     rtConn = null;
     rtReady = false;
-    rtPendingChunks.length = 0;
+    // preservePendingChunks=true is used by openRealtime when upgrading a same-source
+    // deferred/open state to a new target — the buffered audio is still valid for the
+    // fromLang and would otherwise be silently dropped, losing the first utterance
+    // spoken during the initConversation race window.
+    if (!preservePendingChunks) rtPendingChunks.length = 0;
     rtFromLang = null;
     rtTargetLang = null;
     return null;
@@ -383,7 +387,13 @@ io.on("connection", (socket: Socket) => {
       console.log(`[SPABLA][RT] already open/opening for ${fromLang}→${targetLang}, skipping reopen`);
       return;
     }
-    closeRT("reopen-different-pair");
+    // Same source language → the audio already buffered in rtPendingChunks is still
+    // valid for the new session (only the target changes). Preserve it across the
+    // internal close so it can flush on the next session.updated. This is what
+    // saves the first utterance spoken while openRealtime was deferred waiting
+    // for update-target-lang to arrive with a valid target.
+    const preserveBuffered = rtFromLang === fromLang && rtPendingChunks.length > 0;
+    closeRT("reopen-different-pair", preserveBuffered);
     if (!process.env.OPENAI_API_KEY) {
       console.error("[SPABLA][RT] OPENAI_API_KEY no configurada");
       socket.emit("transcript-result", { text: "", isFinal: false, error: true });
@@ -715,15 +725,19 @@ io.on("connection", (socket: Socket) => {
     }
     if (USE_REALTIME_SPEECH) {
       // B1: decimate 48k → 24k mono pcm16, base64-encode, send as input_audio_buffer.append.
-      // Queue while session.updated has not yet arrived.
-      if (!rtConn) return;
+      // Buffer whenever the upstream is not fully ready. Two cases collapse into the same
+      // queue: (a) rtConn open but session.updated not yet arrived (handshake in flight),
+      // (b) openRealtime deferred waiting for update-target-lang (rtConn null but rtFromLang
+      // set). Without buffering case (b) the first utterance spoken during the
+      // initConversation race is silently discarded → intermittent no-translation.
       const int16     = new Int16Array(chunk);
       const decimated = downsample48to24(int16);
       const audio     = Buffer.from(decimated.buffer, decimated.byteOffset, decimated.byteLength).toString("base64");
-      if (rtReady) {
+      if (rtConn && rtReady) {
         try { rtConn.send(JSON.stringify({ type: "input_audio_buffer.append", audio })); } catch (err) { console.error("[SPABLA][RT] append send failed:", err); }
       } else {
-        // Cap pending buffer to ~10s of audio so a slow handshake can't grow without bound.
+        // Cap pending buffer to ~10s of audio so a slow handshake or a stalled
+        // update-target-lang can't grow the queue without bound.
         if (rtPendingChunks.length < 120) rtPendingChunks.push(audio);
       }
       return;
