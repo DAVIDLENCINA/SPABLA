@@ -67,5 +67,21 @@ export { TurnPipelineManager, TurnPipelineError } from "./pipeline/TurnPipelineM
 export type { TurnPipeline, TurnStage, TurnSpeaker } from "./types/turn.js";
 export { isTerminalTurnStage, TERMINAL_TURN_STAGES } from "./types/turn.js";
 
+// Core API layer — public facade for web, mobile, desktop, SDK and API.
+export { SpablaCore } from "./core-api/SpablaCore.js";
+export type { SpablaEventName, SpablaEventHandler } from "./core-api/SpablaCore.js";
+export { SpablaCoreError } from "./core-api/types.js";
+export type {
+  SpablaCoreConfig,
+  ParticipantInput,
+  CreateConversationInput,
+  JoinConversationInput,
+  SendMessageInput,
+  SendMessageResult,
+  StartCallInput,
+  StartCallResult,
+  CallFlags,
+} from "./core-api/types.js";
+
 // Errors that external code may want to catch
 export { InvalidTransitionError } from "./state-machine/StateMachine.js";

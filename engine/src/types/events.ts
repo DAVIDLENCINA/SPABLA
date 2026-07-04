@@ -78,6 +78,22 @@ export type TurnFailedEvent = {
   reason: string;
 };
 
+// ── Core API layer (fase 1.6) ───────────────────────────────────────────────
+// Emitted by SpablaCore. Kept in the same discriminated union so consumers
+// only ever see one event surface via SpablaCore.subscribe().
+
+export type MessageSentEvent = {
+  name: "message.sent";
+  messageId: UUID;
+  senderId: UUID;
+  text: string;
+};
+
+export type VideoEnabledEvent  = { name: "video.enabled";  callId: UUID };
+export type VideoDisabledEvent = { name: "video.disabled"; callId: UUID };
+export type InterpreterEnabledEvent  = { name: "interpreter.enabled";  callId: UUID };
+export type InterpreterDisabledEvent = { name: "interpreter.disabled"; callId: UUID };
+
 // ── Telemetry (always emitted) ──────────────────────────────────────────────
 
 export type TelemetryCommandReceivedEvent = {
@@ -128,6 +144,11 @@ export type EngineEvent =
   | TurnStageChangedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
+  | MessageSentEvent
+  | VideoEnabledEvent
+  | VideoDisabledEvent
+  | InterpreterEnabledEvent
+  | InterpreterDisabledEvent
   | TelemetryCommandReceivedEvent
   | TelemetryCommandRejectedEvent
   | TelemetryStateTransitionEvent
