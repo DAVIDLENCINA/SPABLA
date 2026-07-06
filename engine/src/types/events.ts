@@ -15,6 +15,7 @@ import type { LanguagePair } from "./language.js";
 import type { ConversationSession, LanguagePairUnresolvableReason } from "./conversation.js";
 import type { CallSession, CallState } from "./call.js";
 import type { TurnPipeline, TurnStage } from "./turn.js";
+import type { Message, MessageStatus } from "./message.js";
 
 /** Common metadata attached to every emitted event. */
 export type EventMeta = Readonly<{
@@ -82,12 +83,32 @@ export type TurnFailedEvent = {
 // Emitted by SpablaCore. Kept in the same discriminated union so consumers
 // only ever see one event surface via SpablaCore.subscribe().
 
-export type MessageSentEvent = {
-  name: "message.sent";
-  messageId: UUID;
-  senderId: UUID;
-  text: string;
+// ── Messaging (fase 2) ──────────────────────────────────────────────────────
+// Fase 2 replaces the Fase 1.6 shape of `message.sent`. The old flat payload
+// `{ messageId, senderId, text }` is superseded by the richer `{ message }`.
+// This is an intentional break — no external consumer of the Engine event
+// surface exists yet.
+
+export type MessageCreatedEvent   = { name: "message.created";   message: Message };
+export type MessageSentEvent      = { name: "message.sent";      message: Message };
+export type MessageDeliveredEvent = {
+  name: "message.delivered";
+  message: Message;
+  previousStatus: MessageStatus;
 };
+export type MessageReadEvent = {
+  name: "message.read";
+  message: Message;
+  previousStatus: MessageStatus;
+};
+export type MessageFailedEvent = {
+  name: "message.failed";
+  message: Message;
+  stage: MessageStatus;
+  reason: string;
+};
+
+// ── Video / Interpreter toggles (Fase 1.6) ──────────────────────────────────
 
 export type VideoEnabledEvent  = { name: "video.enabled";  callId: UUID };
 export type VideoDisabledEvent = { name: "video.disabled"; callId: UUID };
@@ -144,7 +165,11 @@ export type EngineEvent =
   | TurnStageChangedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
+  | MessageCreatedEvent
   | MessageSentEvent
+  | MessageDeliveredEvent
+  | MessageReadEvent
+  | MessageFailedEvent
   | VideoEnabledEvent
   | VideoDisabledEvent
   | InterpreterEnabledEvent

@@ -1,22 +1,10 @@
 /**
  * SPABLA Core API — SpablaCore.
  *
- * The ONLY public facade meant to be consumed by web, mobile, desktop, SDK,
- * and (later) the public HTTP/RPC API. Internally uses the Engine, but the
- * Engine, managers, adapter registry and EventBus are all hidden — external
- * code has no way to reach them via this class.
- *
- * Method surface (fase 1.6, all still stubs w.r.t. real transport / AI):
- *   createConversation, joinConversation, leaveConversation,
- *   sendMessage,
- *   startCall, acceptCall, rejectCall, endCall,
- *   startVideo, stopVideo,
- *   startInterpreter, stopInterpreter,
- *   subscribe.
- *
- * Every method validates preconditions with a typed SpablaCoreError before
- * touching the Engine. Every side effect that has no Engine counterpart
- * emits a Core-layer event via the shared bus.
+ * Public facade for every consumer (web / mobile / desktop / SDK / API).
+ * Wraps Engine internally; Engine, managers and EventBus are never exposed.
+ * Precondition validation via SpablaCoreError before any Engine call.
+ * Fase 2 wires the messaging module (createOutgoing / advance / getThread).
  */
 
 import { Engine } from "../engine/Engine.js";
@@ -27,11 +15,17 @@ import type { UUID, Clock, CorrelationId } from "../types/ids.js";
 import { asCorrelationId, systemClock } from "../types/ids.js";
 import type { CallSession } from "../types/call.js";
 import type { ConversationSession } from "../types/conversation.js";
+import type { Message, MessageThread } from "../types/message.js";
+import type { MessageManager } from "../messaging/MessageManager.js";
 import {
   SpablaCoreError,
   type CallFlags,
   type CreateConversationInput,
+  type GetMessagesInput,
+  type GetMessagesResult,
   type JoinConversationInput,
+  type MarkAsReadInput,
+  type NotifyIncomingMessageInput,
   type SendMessageInput,
   type SendMessageResult,
   type SpablaCoreConfig,
@@ -47,16 +41,17 @@ export class SpablaCore {
   private readonly bus: EventBus;
   private readonly clock: Clock;
   private readonly newId: () => UUID;
+  private readonly messages: MessageManager;
   private readonly flagsByCall: Map<UUID, CallFlags> = new Map();
 
   constructor(config: SpablaCoreConfig = {}) {
     this.clock = config.clock ?? systemClock();
     this.newId = config.newId ?? defaultNewId;
-    // The Core owns a private bus; the Engine is injected with it so all
-    // events flow through the same channel. External code cannot reach the
-    // bus — only `subscribe()`.
+    // Core owns the bus; Engine is constructed with it so Engine + Core events
+    // share one channel. External code reaches the bus only via subscribe().
     this.bus = new EventBus();
     this.engine = new Engine({ clock: this.clock, newId: this.newId, bus: this.bus });
+    this.messages = this.engine.getMessageManager();
   }
 
   // ── Conversation ────────────────────────────────────────────────────────
@@ -94,26 +89,84 @@ export class SpablaCore {
     this.engine.removeParticipant(userId);
   }
 
-  // ── Messaging (stub) ────────────────────────────────────────────────────
+  // ── Messaging ───────────────────────────────────────────────────────────
 
-  /**
-   * Emits `message.sent` after validating text. Does NOT send anything over
-   * a network in Fase 1.6 — real transport is wired in later fases. Returns
-   * the messageId so callers can correlate.
-   */
+  /** Creates an outgoing Message and advances it to "sent". No network. */
   sendMessage(input: SendMessageInput): SendMessageResult {
     const conv = this.engine.snapshotConversation();
     if (!conv) throw new SpablaCoreError("no-conversation-loaded");
     const text = (input?.text ?? "").trim();
     if (text.length === 0) throw new SpablaCoreError("empty-message");
     const messageId = this.newId();
-    this.emitCore({
-      name: "message.sent",
-      messageId,
-      senderId: conv.localParticipant.userId,
-      text,
-    });
+    const cid = this.correlation();
+    this.messages.createOutgoing(
+      {
+        messageId,
+        conversationId: conv.id,
+        senderId: conv.localParticipant.userId,
+        text,
+        language: conv.localParticipant.language,
+      },
+      cid,
+    );
+    this.messages.advance(messageId, "sent", cid);
     return Object.freeze({ messageId });
+  }
+
+  /** Inject an incoming Message (transport-adapter target in Fase 4+). */
+  notifyIncomingMessage(input: NotifyIncomingMessageInput): SendMessageResult {
+    const conv = this.engine.snapshotConversation();
+    if (!conv) throw new SpablaCoreError("no-conversation-loaded");
+    if (!conv.remoteParticipant) throw new SpablaCoreError("no-remote-participant");
+    if (input?.senderId !== conv.remoteParticipant.userId) {
+      throw new SpablaCoreError("sender-not-remote", { senderId: input?.senderId });
+    }
+    const text = (input?.text ?? "").trim();
+    if (text.length === 0) throw new SpablaCoreError("empty-message");
+    const messageId = input.messageId ?? this.newId();
+    this.messages.createIncoming(
+      {
+        messageId,
+        conversationId: conv.id,
+        senderId: input.senderId,
+        text,
+        language: input.language ?? conv.remoteParticipant.language,
+        ...(input.initialStatus !== undefined ? { initialStatus: input.initialStatus } : {}),
+      },
+      this.correlation(),
+    );
+    return Object.freeze({ messageId });
+  }
+
+  /** History of messages in the loaded conversation. */
+  getMessages(input: GetMessagesInput = {}): GetMessagesResult {
+    const conv = this.engine.snapshotConversation();
+    if (!conv) throw new SpablaCoreError("no-conversation-loaded");
+    let messages: ReadonlyArray<Message> = this.messages.list();
+    if (input.before !== undefined) {
+      const cutoff = input.before;
+      messages = Object.freeze(messages.filter((m) => m.createdAt < cutoff));
+    }
+    if (input.limit !== undefined && messages.length > input.limit) {
+      messages = Object.freeze(messages.slice(messages.length - input.limit));
+    }
+    const participants = conv.participants.map((p) => p.userId);
+    return Object.freeze({
+      messages,
+      thread: this.messages.getThread(participants),
+    });
+  }
+
+  /** Mark an INCOMING message as read (outgoing reads come from peer). */
+  markAsRead(input: MarkAsReadInput): void {
+    const conv = this.engine.snapshotConversation();
+    if (!conv) throw new SpablaCoreError("no-conversation-loaded");
+    const msg = this.messages.get(input.messageId);
+    if (!msg) throw new SpablaCoreError("unknown-messageId", { messageId: input.messageId });
+    if (msg.direction !== "incoming") {
+      throw new SpablaCoreError("cannot-mark-outgoing-as-read", { messageId: input.messageId });
+    }
+    this.messages.advance(input.messageId, "read", this.correlation());
   }
 
   // ── Call control ────────────────────────────────────────────────────────
@@ -184,24 +237,18 @@ export class SpablaCore {
     this.emitCore({ name: "interpreter.disabled", callId });
   }
 
-  // ── Subscription surface ────────────────────────────────────────────────
+  // ── Subscription + read-only snapshots ──────────────────────────────────
 
   subscribe<N extends SpablaEventName>(name: N, handler: SpablaEventHandler<N>): Unsubscribe {
     return this.bus.on(name, handler);
   }
-
-  // ── Read-only snapshots (no manager leakage) ────────────────────────────
-
-  getConversation(): ConversationSession | undefined {
-    return this.engine.snapshotConversation();
-  }
-
-  getCall(callId: UUID): CallSession | undefined {
-    return this.engine.snapshotCall(callId);
-  }
-
-  getCallFlags(callId: UUID): CallFlags | undefined {
-    return this.flagsByCall.get(callId);
+  getConversation(): ConversationSession | undefined { return this.engine.snapshotConversation(); }
+  getCall(callId: UUID): CallSession | undefined { return this.engine.snapshotCall(callId); }
+  getCallFlags(callId: UUID): CallFlags | undefined { return this.flagsByCall.get(callId); }
+  getMessage(messageId: UUID): Message | undefined { return this.messages.get(messageId); }
+  getThread(): MessageThread | undefined {
+    const conv = this.engine.snapshotConversation();
+    return conv ? this.messages.getThread(conv.participants.map((p) => p.userId)) : undefined;
   }
 
   // ── Internals (not exported) ────────────────────────────────────────────
@@ -225,14 +272,17 @@ export class SpablaCore {
 
   private emitCore(
     partial:
-      | { name: "message.sent"; messageId: UUID; senderId: UUID; text: string }
       | { name: "video.enabled"; callId: UUID }
       | { name: "video.disabled"; callId: UUID }
       | { name: "interpreter.enabled"; callId: UUID }
       | { name: "interpreter.disabled"; callId: UUID },
   ): void {
-    const correlationId: CorrelationId = asCorrelationId(this.newId() as string);
+    const correlationId = this.correlation();
     const meta = { ts: this.clock.nowISO(), correlationId };
     this.bus.emit({ ...partial, meta });
+  }
+
+  private correlation(): CorrelationId {
+    return asCorrelationId(this.newId() as string);
   }
 }

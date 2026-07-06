@@ -5,9 +5,10 @@
  * external consumers a stable import surface for method arguments.
  */
 
-import type { UUID } from "../types/ids.js";
+import type { UUID, ISOTimestamp } from "../types/ids.js";
 import type { LangCode } from "../types/language.js";
 import type { CallMode } from "../types/call.js";
+import type { Message, MessageThread } from "../types/message.js";
 
 /** Participant identity + language, as it enters the Core API. */
 export type ParticipantInput = Readonly<{
@@ -57,6 +58,35 @@ export type CallFlags = Readonly<{
 export type SpablaCoreConfig = Readonly<{
   clock?: import("../types/ids.js").Clock;
   newId?: () => UUID;
+}>;
+
+/** Argument for `getMessages`. */
+export type GetMessagesInput = Readonly<{
+  /** Maximum number of messages to return (most recent kept if truncating). */
+  limit?: number;
+  /** Only include messages with `createdAt < before`. */
+  before?: ISOTimestamp;
+}>;
+
+/** Return of `getMessages`. */
+export type GetMessagesResult = Readonly<{
+  messages: ReadonlyArray<Message>;
+  thread: MessageThread | undefined;
+}>;
+
+/** Argument for `markAsRead`. */
+export type MarkAsReadInput = Readonly<{
+  messageId: UUID;
+}>;
+
+/** Argument for `notifyIncomingMessage`. */
+export type NotifyIncomingMessageInput = Readonly<{
+  messageId?: UUID;
+  senderId: UUID;
+  text: string;
+  language?: LangCode | null;
+  /** Initial status for the incoming message. Default: `"sent"`. */
+  initialStatus?: "sent" | "delivered";
 }>;
 
 /** Typed error thrown by Core-API precondition checks. */

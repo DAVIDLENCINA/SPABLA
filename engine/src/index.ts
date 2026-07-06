@@ -67,6 +67,26 @@ export { TurnPipelineManager, TurnPipelineError } from "./pipeline/TurnPipelineM
 export type { TurnPipeline, TurnStage, TurnSpeaker } from "./types/turn.js";
 export { isTerminalTurnStage, TERMINAL_TURN_STAGES } from "./types/turn.js";
 
+// Messaging (fase 2) — Message contracts and manager error type.
+export type {
+  Message,
+  MessageThread,
+  MessageStatus,
+  MessageDirection,
+} from "./types/message.js";
+export {
+  isTerminalMessageStatus,
+  TERMINAL_MESSAGE_STATUSES,
+} from "./types/message.js";
+export {
+  MessageManager,
+  MessageManagerError,
+} from "./messaging/MessageManager.js";
+export type {
+  CreateOutgoingInput,
+  CreateIncomingInput,
+} from "./messaging/MessageManager.js";
+
 // Core API layer — public facade for web, mobile, desktop, SDK and API.
 export { SpablaCore } from "./core-api/SpablaCore.js";
 export type { SpablaEventName, SpablaEventHandler } from "./core-api/SpablaCore.js";
@@ -78,6 +98,10 @@ export type {
   JoinConversationInput,
   SendMessageInput,
   SendMessageResult,
+  GetMessagesInput,
+  GetMessagesResult,
+  MarkAsReadInput,
+  NotifyIncomingMessageInput,
   StartCallInput,
   StartCallResult,
   CallFlags,

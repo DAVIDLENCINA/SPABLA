@@ -231,6 +231,12 @@ describe("Engine — component injection (fase 1.5)", () => {
     expect(engine.getTurnPipelineManager().activeForCall(asUUID("nope"))).toEqual([]);
   });
 
+  it("exposes getMessageManager() with default empty state", () => {
+    const engine = makeEngine();
+    expect(engine.getMessageManager()).toBeDefined();
+    expect(engine.getMessageManager().list()).toEqual([]);
+  });
+
   it("does NOT alter existing command behaviour when defaults are used", () => {
     const engine = makeEngine();
     const initiated = vi.fn();
