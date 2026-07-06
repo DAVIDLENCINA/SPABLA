@@ -76,6 +76,24 @@ export { isTerminalSTTState, TERMINAL_STT_STATES } from "./types/stt.js";
 export { STTManager, STTManagerError } from "./stt/STTManager.js";
 export type { CreateSTTSessionInput } from "./stt/STTManager.js";
 
+// Translation (fase 4) — contracts + adapter interface + manager.
+export type {
+  TranslationSession, TranslationRequest, TranslationResult, TranslationError,
+  TranslationSessionState, TranslationRequestState,
+  TranslationAdapter, TranslationAdapterRequest, TranslationAdapterResponse,
+} from "./types/translation.js";
+export {
+  isTerminalTranslationSessionState, isTerminalTranslationRequestState,
+  TERMINAL_TRANSLATION_SESSION_STATES, TERMINAL_TRANSLATION_REQUEST_STATES,
+} from "./types/translation.js";
+export {
+  TranslationManager, TranslationManagerError,
+} from "./translation/TranslationManager.js";
+export type {
+  CreateTranslationSessionInput,
+  RequestTranslationInput as ManagerRequestTranslationInput,
+} from "./translation/TranslationManager.js";
+
 // Messaging (fase 2) — Message contracts and manager error type.
 export type {
   Message,
@@ -121,6 +139,11 @@ export type {
   SimulateSTTPartialInput,
   SimulateSTTFinalInput,
   SimulateSTTErrorInput,
+  StartTranslationInput,
+  StartTranslationResult,
+  StopTranslationInput,
+  RequestTranslationInput,
+  RequestTranslationResult,
 } from "./core-api/types.js";
 
 // Errors that external code may want to catch

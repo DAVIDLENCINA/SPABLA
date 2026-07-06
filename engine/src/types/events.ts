@@ -24,6 +24,12 @@ import type {
   STTSessionState,
   STTTurn,
 } from "./stt.js";
+import type {
+  TranslationError,
+  TranslationRequest,
+  TranslationResult,
+  TranslationSession,
+} from "./translation.js";
 
 /** Common metadata attached to every emitted event. */
 export type EventMeta = Readonly<{
@@ -139,6 +145,39 @@ export type STTFailedEvent = {
 };
 export type STTSessionEndedEvent = { name: "stt.session.ended"; session: STTSession };
 
+// ── Translation (fase 4) ────────────────────────────────────────────────────
+
+export type TranslationSessionStartedEvent = {
+  name: "translation.session.started";
+  session: TranslationSession;
+};
+export type TranslationRequestCreatedEvent = {
+  name: "translation.request.created";
+  session: TranslationSession;
+  request: TranslationRequest;
+};
+export type TranslationRequestDispatchedEvent = {
+  name: "translation.request.dispatched";
+  session: TranslationSession;
+  request: TranslationRequest;
+};
+export type TranslationCompletedEvent = {
+  name: "translation.completed";
+  session: TranslationSession;
+  request: TranslationRequest;
+  result: TranslationResult;
+};
+export type TranslationFailedEvent = {
+  name: "translation.failed";
+  session: TranslationSession;
+  request: TranslationRequest;
+  error: TranslationError;
+};
+export type TranslationSessionEndedEvent = {
+  name: "translation.session.ended";
+  session: TranslationSession;
+};
+
 // ── Video / Interpreter toggles (Fase 1.6) ──────────────────────────────────
 
 export type VideoEnabledEvent  = { name: "video.enabled";  callId: UUID };
@@ -206,6 +245,12 @@ export type EngineEvent =
   | STTFinalEvent
   | STTFailedEvent
   | STTSessionEndedEvent
+  | TranslationSessionStartedEvent
+  | TranslationRequestCreatedEvent
+  | TranslationRequestDispatchedEvent
+  | TranslationCompletedEvent
+  | TranslationFailedEvent
+  | TranslationSessionEndedEvent
   | VideoEnabledEvent
   | VideoDisabledEvent
   | InterpreterEnabledEvent

@@ -104,6 +104,19 @@ export type SimulateSTTErrorInput = Readonly<{
   sessionId: UUID; code: string; message: string;
 }>;
 
+// ── Translation (fase 4) ────────────────────────────────────────────────────
+
+export type StartTranslationInput = Readonly<{ callId: UUID }>;
+export type StartTranslationResult = Readonly<{ sessionId: UUID }>;
+export type StopTranslationInput = Readonly<{ sessionId: UUID }>;
+export type RequestTranslationInput = Readonly<{
+  sessionId: UUID;
+  text: string;
+  sourceLanguage: LangCode;
+  sourceTurnId?: UUID;
+}>;
+export type RequestTranslationResult = Readonly<{ requestId: UUID }>;
+
 /** Typed error thrown by Core-API precondition checks. */
 export class SpablaCoreError extends Error {
   public readonly reason: string;

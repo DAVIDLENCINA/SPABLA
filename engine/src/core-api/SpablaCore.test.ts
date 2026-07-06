@@ -923,6 +923,412 @@ describe("SpablaCore — subscribe surface", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Translation (fase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type FakeAdapterResp = { translatedText: string; detectedSourceLanguage?: import("../types/language.js").LangCode };
+type FakeAdapterReq = {
+  requestId: import("../types/ids.js").UUID;
+  text: string;
+  from: import("../types/language.js").LangCode;
+  to: import("../types/language.js").LangCode;
+};
+
+class FakeMT implements import("../types/translation.js").TranslationAdapter {
+  readonly kind = "mt" as const;
+  readonly displayName: string;
+  private readonly resp: (r: FakeAdapterReq) => Promise<FakeAdapterResp>;
+  public calls: FakeAdapterReq[] = [];
+  constructor(resp: (r: FakeAdapterReq) => Promise<FakeAdapterResp>, name = "fake-mt") {
+    this.resp = resp;
+    this.displayName = name;
+  }
+  translate(r: FakeAdapterReq): Promise<FakeAdapterResp> {
+    this.calls.push(r);
+    return this.resp(r);
+  }
+}
+
+function coreWithAdapter(): { core: SpablaCore; adapter: FakeMT } {
+  const core = makeCore();
+  const adapter = new FakeMT(async (r) => ({ translatedText: `[EN] ${r.text}` }));
+  (core as unknown as { engine: { getAdapterRegistry(): { register: (k: string, a: unknown) => void } } })
+    .engine.getAdapterRegistry().register("mt", adapter);
+  return { core, adapter };
+}
+async function flush(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+describe("SpablaCore — startTranslation", () => {
+  it("returns sessionId; getTranslationSession reflects active", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    expect(sessionId).toBeDefined();
+    expect(core.getTranslationSession(sessionId)?.state).toBe("active");
+  });
+
+  it("rejects when the CallSession does not exist", () => {
+    const { core } = coreWithAdapter();
+    seedConversation(core);
+    expect(() => core.startTranslation({ callId: asUUID("nope") })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects when the CallSession is not accepted", () => {
+    const { core } = coreWithAdapter();
+    seedConversation(core);
+    const { callId } = core.startCall({ mode: "voice" });
+    expect(() => core.startTranslation({ callId })).toThrow(SpablaCoreError);
+  });
+
+  it("carries the call's LanguagePair verbatim (from conv)", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const s = core.getTranslationSession(sessionId)!;
+    expect(s.languagePair.from).toBe("es");
+    expect(s.languagePair.to).toBe("en");
+  });
+
+  it("emits translation.session.started", () => {
+    const { core } = coreWithAdapter();
+    const started = vi.fn();
+    core.subscribe("translation.session.started", started);
+    const callId = seedActiveCall(core);
+    core.startTranslation({ callId });
+    expect(started).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SpablaCore — stopTranslation", () => {
+  it("transitions to completed and emits translation.session.ended", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const ended = vi.fn();
+    core.subscribe("translation.session.ended", ended);
+    core.stopTranslation({ sessionId });
+    expect(core.getTranslationSession(sessionId)?.state).toBe("completed");
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown sessionId", () => {
+    const { core } = coreWithAdapter();
+    expect(() => core.stopTranslation({ sessionId: asUUID("nope") })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects if the session is already terminal", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.stopTranslation({ sessionId });
+    expect(() => core.stopTranslation({ sessionId })).toThrow();
+  });
+
+  it("multiple sessions are independent", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const a = core.startTranslation({ callId });
+    const b = core.startTranslation({ callId });
+    core.stopTranslation({ sessionId: a.sessionId });
+    expect(core.getTranslationSession(a.sessionId)?.state).toBe("completed");
+    expect(core.getTranslationSession(b.sessionId)?.state).toBe("active");
+  });
+});
+
+describe("SpablaCore — requestTranslation", () => {
+  it("happy path: adapter resolves and translation.completed arrives", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const completed = vi.fn();
+    core.subscribe("translation.completed", completed);
+    const { requestId } = core.requestTranslation(
+      { sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(completed).toHaveBeenCalledTimes(1);
+    expect(core.getTranslationRequest(requestId)?.result?.translatedText).toBe("[EN] hola");
+  });
+
+  it("no adapter registered → translation.failed", async () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const failed = vi.fn();
+    core.subscribe("translation.failed", failed);
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("no-adapter");
+  });
+
+  it("rejects unknown sessionId", () => {
+    const { core } = coreWithAdapter();
+    seedActiveCall(core);
+    expect(() => core.requestTranslation(
+      { sessionId: asUUID("nope"), text: "hola", sourceLanguage: "es" })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects when the session is terminal", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.stopTranslation({ sessionId });
+    const failed = vi.fn();
+    core.subscribe("translation.failed", failed);
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("session-terminal");
+  });
+
+  it("preserves sourceTurnId when passed", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const turnRef = asUUID("t-1");
+    const { requestId } = core.requestTranslation(
+      { sessionId, text: "hola", sourceLanguage: "es", sourceTurnId: turnRef });
+    await flush();
+    expect(core.getTranslationRequest(requestId)?.sourceTurnId).toBe(turnRef);
+  });
+
+  it("carries sourceLanguage and targetLanguage correctly", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const { requestId } = core.requestTranslation(
+      { sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    const req = core.getTranslationRequest(requestId)!;
+    expect(req.sourceLanguage).toBe("es");
+    expect(req.targetLanguage).toBe("en");
+  });
+
+  it("rejects empty text", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    expect(() =>
+      core.requestTranslation({ sessionId, text: "", sourceLanguage: "es" }),
+    ).toThrow(SpablaCoreError);
+  });
+
+  it("listActiveTranslationSessions filters by callId and excludes terminals", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const a = core.startTranslation({ callId });
+    const b = core.startTranslation({ callId });
+    core.stopTranslation({ sessionId: a.sessionId });
+    const active = core.listActiveTranslationSessions(callId);
+    expect(active.map((s) => s.id)).toEqual([b.sessionId]);
+  });
+
+  it("multiple requests in same session don't interfere", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const r1 = core.requestTranslation({ sessionId, text: "uno", sourceLanguage: "es" });
+    const r2 = core.requestTranslation({ sessionId, text: "dos", sourceLanguage: "es" });
+    await flush();
+    expect(core.getTranslationRequest(r1.requestId)?.result?.translatedText).toBe("[EN] uno");
+    expect(core.getTranslationRequest(r2.requestId)?.result?.translatedText).toBe("[EN] dos");
+    expect(core.getTranslationSession(sessionId)?.completedCount).toBe(2);
+  });
+});
+
+describe("SpablaCore — Translation adapter", () => {
+  it("adapter is registered via getAdapterRegistry (private) — visible only through Engine", () => {
+    const { core, adapter } = coreWithAdapter();
+    expect(adapter.calls).toHaveLength(0);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  it("adapter can be replaced at runtime", async () => {
+    const { core } = coreWithAdapter();
+    const registry = (core as unknown as { engine: { getAdapterRegistry(): {
+      register: (k: string, a: unknown) => void; unregister: (k: string) => boolean;
+    } } }).engine.getAdapterRegistry();
+    registry.unregister("mt");
+    const other = new FakeMT(async (r) => ({ translatedText: `HELLO ${r.text}` }), "other");
+    registry.register("mt", other);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    const { requestId } = core.requestTranslation(
+      { sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(core.getTranslationRequest(requestId)?.result?.translatedText).toBe("HELLO hola");
+    expect(core.getTranslationRequest(requestId)?.result?.providerDisplayName).toBe("other");
+  });
+
+  it("SpablaCore does not expose any adapter accessor", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    expect(methods.has("getAdapterRegistry")).toBe(false);
+    expect(methods.has("registerAdapter")).toBe(false);
+  });
+
+  it("adapter failure does not tear down the session", async () => {
+    const core = makeCore();
+    const registry = (core as unknown as { engine: { getAdapterRegistry(): {
+      register: (k: string, a: unknown) => void;
+    } } }).engine.getAdapterRegistry();
+    let shouldFail = true;
+    registry.register("mt", new FakeMT(async (r) => {
+      if (shouldFail) throw new Error("boom");
+      return { translatedText: `[EN] ${r.text}` };
+    }));
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "uno", sourceLanguage: "es" });
+    await flush();
+    expect(core.getTranslationSession(sessionId)?.state).toBe("active");
+    shouldFail = false;
+    const r2 = core.requestTranslation({ sessionId, text: "dos", sourceLanguage: "es" });
+    await flush();
+    expect(core.getTranslationRequest(r2.requestId)?.state).toBe("completed");
+  });
+});
+
+describe("SpablaCore — Translation events", () => {
+  it("subscribe receives all 6 events across a lifecycle", async () => {
+    const { core } = coreWithAdapter();
+    const names = [
+      "translation.session.started",
+      "translation.request.created",
+      "translation.request.dispatched",
+      "translation.completed",
+      "translation.session.ended",
+    ] as const;
+    const seen = new Map<string, number>();
+    for (const n of names) {
+      core.subscribe(n, () => seen.set(n, (seen.get(n) ?? 0) + 1));
+    }
+    const failed = vi.fn();
+    core.subscribe("translation.failed", failed);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    core.stopTranslation({ sessionId });
+    for (const n of names) expect(seen.get(n)).toBe(1);
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it("event meta carries ts and correlationId", async () => {
+    const { core } = coreWithAdapter();
+    const captured = vi.fn();
+    core.subscribe("translation.completed", captured);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    const meta = captured.mock.calls[0]?.[0].meta;
+    expect(meta.ts).toBeDefined();
+    expect(meta.correlationId).toBeDefined();
+  });
+
+  it("unsubscribe stops delivery", async () => {
+    const { core } = coreWithAdapter();
+    const handler = vi.fn();
+    const unsub = core.subscribe("translation.completed", handler);
+    unsub();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("events flow via the same bus as Engine/STT/Messaging", async () => {
+    const { core } = coreWithAdapter();
+    const orderName: string[] = [];
+    core.subscribe("call.state.changed", () => orderName.push("call"));
+    core.subscribe("stt.session.started", () => orderName.push("stt"));
+    core.subscribe("translation.completed", () => orderName.push("translation"));
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(orderName).toContain("call");
+    expect(orderName).toContain("stt");
+    expect(orderName).toContain("translation");
+  });
+
+  it("ordering: request.created → request.dispatched → completed", async () => {
+    const { core } = coreWithAdapter();
+    const order: string[] = [];
+    core.subscribe("translation.request.created", () => order.push("created"));
+    core.subscribe("translation.request.dispatched", () => order.push("dispatched"));
+    core.subscribe("translation.completed", () => order.push("completed"));
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flush();
+    expect(order).toEqual(["created", "dispatched", "completed"]);
+  });
+});
+
+describe("SpablaCore — Translation encapsulation + STT-manual bridge", () => {
+  it("SpablaCore does not expose TranslationManager on its prototype", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    expect(methods.has("getTranslationManager")).toBe(false);
+  });
+
+  it("endCall does NOT auto-stop translation sessions", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTranslation({ callId });
+    core.endCall(callId);
+    // translation session is NOT auto-terminated
+    expect(core.getTranslationSession(sessionId)?.state).toBe("active");
+  });
+
+  it("manual STT + Translation: sourceTurnId preserved end-to-end", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId: sttId } = core.startSTT({ callId, speaker: "local" });
+    const { sessionId: mtId } = core.startTranslation({ callId });
+    core.simulateSTTPartial({ sessionId: sttId, text: "hola" });
+    core.simulateSTTFinal({ sessionId: sttId, text: "hola mundo", language: "es" });
+    // fetch the final's turnId from the session's last turn snapshot
+    const sttSession = core.getSTTSession(sttId)!;
+    // The last turn — currentTurnId is undefined post-final; use engine manager
+    const engineMgr = (core as unknown as { engine: {
+      getSTTManager(): { listTurns: (id: import("../types/ids.js").UUID) => Array<{ turnId: import("../types/ids.js").UUID }> };
+    } }).engine.getSTTManager();
+    const lastTurnId = engineMgr.listTurns(sttSession.id).slice(-1)[0]!.turnId;
+    const { requestId } = core.requestTranslation({
+      sessionId: mtId, text: "hola mundo", sourceLanguage: "es", sourceTurnId: lastTurnId,
+    });
+    await flush();
+    expect(core.getTranslationRequest(requestId)?.sourceTurnId).toBe(lastTurnId);
+    expect(core.getTranslationRequest(requestId)?.state).toBe("completed");
+  });
+
+  it("Fase 3 STT tests still pass alongside Translation (spot-check)", () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+    core.stopSTT({ sessionId });
+    expect(core.getSTTSession(sessionId)?.state).toBe("completed");
+  });
+
+  it("prototype includes the 3 translation commands + 3 snapshots", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    for (const n of [
+      "startTranslation", "stopTranslation", "requestTranslation",
+      "getTranslationSession", "getTranslationRequest", "listActiveTranslationSessions",
+    ]) expect(methods.has(n)).toBe(true);
+  });
+});
+
 describe("SpablaCore — encapsulation guarantees", () => {
   const core = makeCore();
   const publicMethods = new Set(

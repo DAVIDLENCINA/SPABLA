@@ -1,12 +1,6 @@
 /**
- * SPABLA Engine — facade.
- *
- * Public surface = commands (methods) + subscribe(). All state lives inside
- * managers; the Engine only orchestrates. Every command emits a telemetry
- * event so the causal chain is auditable.
- *
- * This is the ONLY module external consumers touch in Fase 1. Managers are
- * private implementation.
+ * SPABLA Engine — facade. Public = commands + subscribe(). Managers hold
+ * state; every command emits a telemetry event for causal auditing.
  */
 
 import type { UUID, Clock, CorrelationId } from "../types/ids.js";
@@ -23,6 +17,7 @@ import { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 import { TurnPipelineManager } from "../pipeline/TurnPipelineManager.js";
 import { MessageManager } from "../messaging/MessageManager.js";
 import { STTManager } from "../stt/STTManager.js";
+import { TranslationManager } from "../translation/TranslationManager.js";
 import { defaultNewId, type EngineDependencies } from "./types.js";
 
 export type { EngineComponents, EngineDependencies } from "./types.js";
@@ -39,6 +34,7 @@ export class Engine {
   private readonly turnPipelines: TurnPipelineManager;
   private readonly messages: MessageManager;
   private readonly stt: STTManager;
+  private readonly translation: TranslationManager;
 
   constructor(deps: EngineDependencies = {}) {
     this.clock = deps.clock ?? systemClock();
@@ -54,30 +50,16 @@ export class Engine {
     this.turnPipelines = deps.turnPipelines ?? new TurnPipelineManager(this.bus, this.clock);
     this.messages = deps.messages ?? new MessageManager(this.bus, this.clock);
     this.stt = deps.stt ?? new STTManager(this.bus, this.clock, this.newId);
+    this.translation = deps.translation
+      ?? new TranslationManager(this.bus, this.clock, this.newId, this.adapters);
   }
 
-  /** Read-only accessor for the MessageManager. */
+  /** Read-only manager accessors. Command surface remains the Engine itself. */
   getMessageManager(): MessageManager { return this.messages; }
-  /** Read-only accessor for the STTManager. */
   getSTTManager(): STTManager { return this.stt; }
-
-  /**
-   * Read-only accessor for the AdapterRegistry so SDK consumers can register
-   * concrete adapters after construction. Managers themselves are not
-   * exposed — the Engine remains the only command surface.
-   */
-  getAdapterRegistry(): AdapterRegistry {
-    return this.adapters;
-  }
-
-  /**
-   * Read-only accessor for the TurnPipelineManager. Later fases wire STT/MT/
-   * TTS adapters to feed this. Fase 1.5 exposes it so tests and (eventually)
-   * plugin authors can observe pipeline state without going through commands.
-   */
-  getTurnPipelineManager(): TurnPipelineManager {
-    return this.turnPipelines;
-  }
+  getTranslationManager(): TranslationManager { return this.translation; }
+  getAdapterRegistry(): AdapterRegistry { return this.adapters; }
+  getTurnPipelineManager(): TurnPipelineManager { return this.turnPipelines; }
 
   /** Public read-only subscription surface. */
   on<N extends EngineEventName>(name: N, handler: EventHandler<N>): Unsubscribe {

@@ -243,6 +243,12 @@ describe("Engine — component injection (fase 1.5)", () => {
     expect(engine.getSTTManager().listActiveSessions(asUUID("nope"))).toEqual([]);
   });
 
+  it("exposes getTranslationManager() with default empty state", () => {
+    const engine = makeEngine();
+    expect(engine.getTranslationManager()).toBeDefined();
+    expect(engine.getTranslationManager().listActiveSessions(asUUID("nope"))).toEqual([]);
+  });
+
   it("does NOT alter existing command behaviour when defaults are used", () => {
     const engine = makeEngine();
     const initiated = vi.fn();

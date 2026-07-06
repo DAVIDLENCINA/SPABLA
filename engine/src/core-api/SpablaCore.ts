@@ -14,9 +14,10 @@ import type { CallSession } from "../types/call.js";
 import type { ConversationSession } from "../types/conversation.js";
 import type { Message, MessageThread } from "../types/message.js";
 import type { MessageManager } from "../messaging/MessageManager.js";
-import type { STTManager } from "../stt/STTManager.js";
 import type { STTSession, STTTurn } from "../types/stt.js";
+import type { TranslationRequest, TranslationSession } from "../types/translation.js";
 import { SttOps } from "./stt-ops.js";
+import { TranslationOps } from "./translation-ops.js";
 import {
   SpablaCoreError,
   type CallFlags, type CreateConversationInput,
@@ -27,6 +28,8 @@ import {
   type SimulateSTTErrorInput, type SimulateSTTFinalInput, type SimulateSTTPartialInput,
   type SpablaCoreConfig, type StartCallInput, type StartCallResult,
   type StartSTTInput, type StartSTTResult, type StopSTTInput,
+  type StartTranslationInput, type StartTranslationResult, type StopTranslationInput,
+  type RequestTranslationInput, type RequestTranslationResult,
 } from "./types.js";
 
 export type SpablaEventName = EngineEventName;
@@ -38,52 +41,39 @@ export class SpablaCore {
   private readonly clock: Clock;
   private readonly newId: () => UUID;
   private readonly messages: MessageManager;
-  private readonly stt: STTManager;
   private readonly sttOps: SttOps;
+  private readonly translationOps: TranslationOps;
   private readonly flagsByCall: Map<UUID, CallFlags> = new Map();
 
   constructor(config: SpablaCoreConfig = {}) {
     this.clock = config.clock ?? systemClock();
     this.newId = config.newId ?? defaultNewId;
-    // Core owns the bus; Engine is constructed with it so Engine + Core events
-    // share one channel. External code reaches the bus only via subscribe().
     this.bus = new EventBus();
     this.engine = new Engine({ clock: this.clock, newId: this.newId, bus: this.bus });
     this.messages = this.engine.getMessageManager();
-    this.stt = this.engine.getSTTManager();
-    this.sttOps = new SttOps(this.engine, this.stt, this.newId, () => this.correlation());
+    const cid = () => this.correlation();
+    this.sttOps = new SttOps(this.engine, this.engine.getSTTManager(), this.newId, cid);
+    this.translationOps = new TranslationOps(
+      this.engine, this.engine.getTranslationManager(), this.newId, cid);
   }
 
   // ── Conversation ────────────────────────────────────────────────────────
 
-  /** Sets up the local participant and loads the conversation. */
   createConversation(input: CreateConversationInput): void {
     if (!input?.conversationId) throw new SpablaCoreError("missing-conversationId");
     if (!input.local?.userId) throw new SpablaCoreError("missing-local-userId");
-    this.engine.addParticipant({
-      userId: input.local.userId,
-      displayName: input.local.displayName,
-      language: input.local.language,
-      role: "local",
-    });
+    const { userId, displayName, language } = input.local;
+    this.engine.addParticipant({ userId, displayName, language, role: "local" });
     this.engine.loadConversation(input.conversationId);
   }
 
-  /** Adds a remote participant to the loaded conversation. */
   joinConversation(input: JoinConversationInput): void {
-    if (!this.engine.snapshotConversation()) {
-      throw new SpablaCoreError("no-conversation-loaded");
-    }
+    if (!this.engine.snapshotConversation()) throw new SpablaCoreError("no-conversation-loaded");
     if (!input?.remote?.userId) throw new SpablaCoreError("missing-remote-userId");
-    this.engine.addParticipant({
-      userId: input.remote.userId,
-      displayName: input.remote.displayName,
-      language: input.remote.language,
-      role: "remote",
-    });
+    const { userId, displayName, language } = input.remote;
+    this.engine.addParticipant({ userId, displayName, language, role: "remote" });
   }
 
-  /** Removes a participant. Idempotent for unknown ids? No — throws. */
   leaveConversation(userId: UUID): void {
     if (!userId) throw new SpablaCoreError("missing-userId");
     this.engine.removeParticipant(userId);
@@ -91,7 +81,6 @@ export class SpablaCore {
 
   // ── Messaging ───────────────────────────────────────────────────────────
 
-  /** Creates an outgoing Message and advances it to "sent". No network. */
   sendMessage(input: SendMessageInput): SendMessageResult {
     const conv = this.engine.snapshotConversation();
     if (!conv) throw new SpablaCoreError("no-conversation-loaded");
@@ -99,21 +88,13 @@ export class SpablaCore {
     if (text.length === 0) throw new SpablaCoreError("empty-message");
     const messageId = this.newId();
     const cid = this.correlation();
+    const { userId: senderId, language } = conv.localParticipant;
     this.messages.createOutgoing(
-      {
-        messageId,
-        conversationId: conv.id,
-        senderId: conv.localParticipant.userId,
-        text,
-        language: conv.localParticipant.language,
-      },
-      cid,
-    );
+      { messageId, conversationId: conv.id, senderId, text, language }, cid);
     this.messages.advance(messageId, "sent", cid);
     return Object.freeze({ messageId });
   }
 
-  /** Inject an incoming Message (transport-adapter target in Fase 4+). */
   notifyIncomingMessage(input: NotifyIncomingMessageInput): SendMessageResult {
     const conv = this.engine.snapshotConversation();
     if (!conv) throw new SpablaCoreError("no-conversation-loaded");
@@ -126,10 +107,7 @@ export class SpablaCore {
     const messageId = input.messageId ?? this.newId();
     this.messages.createIncoming(
       {
-        messageId,
-        conversationId: conv.id,
-        senderId: input.senderId,
-        text,
+        messageId, conversationId: conv.id, senderId: input.senderId, text,
         language: input.language ?? conv.remoteParticipant.language,
         ...(input.initialStatus !== undefined ? { initialStatus: input.initialStatus } : {}),
       },
@@ -138,7 +116,6 @@ export class SpablaCore {
     return Object.freeze({ messageId });
   }
 
-  /** History of messages in the loaded conversation. */
   getMessages(input: GetMessagesInput = {}): GetMessagesResult {
     const conv = this.engine.snapshotConversation();
     if (!conv) throw new SpablaCoreError("no-conversation-loaded");
@@ -150,14 +127,10 @@ export class SpablaCore {
     if (input.limit !== undefined && messages.length > input.limit) {
       messages = Object.freeze(messages.slice(messages.length - input.limit));
     }
-    const participants = conv.participants.map((p) => p.userId);
-    return Object.freeze({
-      messages,
-      thread: this.messages.getThread(participants),
-    });
+    const thread = this.messages.getThread(conv.participants.map((p) => p.userId));
+    return Object.freeze({ messages, thread });
   }
 
-  /** Mark an INCOMING message as read (outgoing reads come from peer). */
   markAsRead(input: MarkAsReadInput): void {
     const conv = this.engine.snapshotConversation();
     if (!conv) throw new SpablaCoreError("no-conversation-loaded");
@@ -178,10 +151,7 @@ export class SpablaCore {
     if (!conv.languagePair) throw new SpablaCoreError("no-language-pair");
     const mode = input?.mode ?? "voice";
     const callId = this.engine.initiateCall({ mode });
-    this.flagsByCall.set(callId, {
-      videoEnabled: mode === "video",
-      interpreterEnabled: false,
-    });
+    this.flagsByCall.set(callId, { videoEnabled: mode === "video", interpreterEnabled: false });
     return Object.freeze({ callId });
   }
 
@@ -248,6 +218,14 @@ export class SpablaCore {
   getSTTTurn(tid: UUID): STTTurn | undefined { return this.sttOps.getTurn(tid); }
   listActiveSTTSessions(cid: UUID): ReadonlyArray<STTSession> { return this.sttOps.listActive(cid); }
 
+  // ── Translation (fase 4) — thin delegators to TranslationOps ────────────
+  startTranslation(i: StartTranslationInput): StartTranslationResult { return this.translationOps.start(i); }
+  stopTranslation(i: StopTranslationInput): void { this.translationOps.stop(i); }
+  requestTranslation(i: RequestTranslationInput): RequestTranslationResult { return this.translationOps.request(i); }
+  getTranslationSession(sid: UUID): TranslationSession | undefined { return this.translationOps.getSession(sid); }
+  getTranslationRequest(rid: UUID): TranslationRequest | undefined { return this.translationOps.getRequest(rid); }
+  listActiveTranslationSessions(cid: UUID): ReadonlyArray<TranslationSession> { return this.translationOps.listActive(cid); }
+
   // ── Subscription + read-only snapshots ──────────────────────────────────
 
   subscribe<N extends SpablaEventName>(name: N, handler: SpablaEventHandler<N>): Unsubscribe {
@@ -276,9 +254,7 @@ export class SpablaCore {
     if (call.state !== "accepted") {
       throw new SpablaCoreError("call-not-active", { callId, state: call.state });
     }
-    return (
-      this.flagsByCall.get(callId) ?? { videoEnabled: false, interpreterEnabled: false }
-    );
+    return this.flagsByCall.get(callId) ?? { videoEnabled: false, interpreterEnabled: false };
   }
 
   private emitCore(
