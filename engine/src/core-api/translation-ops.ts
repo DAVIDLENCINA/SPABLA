@@ -35,9 +35,10 @@ export class TranslationOps {
       throw new SpablaCoreError("call-not-accepted",
         { callId: input.callId, state: call.state });
     }
+    const languagePair = input.languagePair ?? call.languagePair;
     const sessionId = this.newId();
     this.translation.createSession(
-      { sessionId, callSessionId: input.callId, languagePair: call.languagePair },
+      { sessionId, callSessionId: input.callId, languagePair },
       this.correlation(),
     );
     return Object.freeze({ sessionId });

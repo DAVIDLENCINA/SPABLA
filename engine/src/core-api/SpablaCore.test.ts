@@ -1001,6 +1001,23 @@ describe("SpablaCore — startTranslation", () => {
     core.startTranslation({ callId });
     expect(started).toHaveBeenCalledTimes(1);
   });
+
+  it("accepts a custom languagePair overriding the call's default", async () => {
+    const { core } = coreWithAdapter();
+    const callId = seedActiveCall(core);
+    // Default pair on this test's conversation is ES → EN. Open a second
+    // session in the reverse direction on the SAME call.
+    const inverse = (await import("../types/language.js")).makeLanguagePair("en", "es");
+    const { sessionId: forward } = core.startTranslation({ callId });
+    const { sessionId: reverse } = core.startTranslation({ callId, languagePair: inverse });
+    const forwardSess = core.getTranslationSession(forward)!;
+    const reverseSess = core.getTranslationSession(reverse)!;
+    expect(forwardSess.languagePair.from).toBe("es");
+    expect(forwardSess.languagePair.to).toBe("en");
+    expect(reverseSess.languagePair.from).toBe("en");
+    expect(reverseSess.languagePair.to).toBe("es");
+    expect(forwardSess.id).not.toBe(reverseSess.id);
+  });
 });
 
 describe("SpablaCore — stopTranslation", () => {

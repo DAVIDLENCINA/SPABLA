@@ -6,7 +6,7 @@
  */
 
 import type { UUID, ISOTimestamp } from "../types/ids.js";
-import type { LangCode } from "../types/language.js";
+import type { LangCode, LanguagePair } from "../types/language.js";
 import type { CallMode } from "../types/call.js";
 import type { Message, MessageThread } from "../types/message.js";
 import type { STTSpeaker } from "../types/stt.js";
@@ -106,7 +106,15 @@ export type SimulateSTTErrorInput = Readonly<{
 
 // ── Translation (fase 4) ────────────────────────────────────────────────────
 
-export type StartTranslationInput = Readonly<{ callId: UUID }>;
+export type StartTranslationInput = Readonly<{
+  callId: UUID;
+  /**
+   * Optional override. If omitted, the call's own `languagePair` is used.
+   * Provide it to open a translation session in the reverse direction of the
+   * call (bilingual conversations need one session per direction).
+   */
+  languagePair?: LanguagePair;
+}>;
 export type StartTranslationResult = Readonly<{ sessionId: UUID }>;
 export type StopTranslationInput = Readonly<{ sessionId: UUID }>;
 export type RequestTranslationInput = Readonly<{

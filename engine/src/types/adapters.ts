@@ -1,14 +1,17 @@
 /**
  * SPABLA Engine — Adapter marker contracts.
  *
- * These interfaces define ONLY the shape that external adapters must
- * implement. The Engine itself does not depend on any concrete adapter in
- * Fase 1.5 — they exist so the AdapterRegistry can be typed and so future
- * fases have a stable target to code against.
+ * These interfaces define the shape that external adapters must implement.
+ * The Engine itself does not depend on any concrete adapter — they exist so
+ * the AdapterRegistry can be typed and so future fases have a stable target
+ * to code against.
  *
  * Each interface has a `readonly kind` discriminator matching the registry
  * key.
  */
+
+import type { LangCode } from "./language.js";
+import type { UUID } from "./ids.js";
 
 export type AdapterKind =
   | "stt"
@@ -28,9 +31,28 @@ export interface STTAdapter extends AdapterBase<"stt"> {
   readonly displayName: string;
 }
 
-/** Machine translation adapter (text-to-text). */
+/** Payload the Engine hands to any translation adapter. */
+export type MTAdapterRequest = Readonly<{
+  requestId: UUID;
+  text: string;
+  from: LangCode;
+  to: LangCode;
+}>;
+
+/** Response expected back from any translation adapter. */
+export type MTAdapterResponse = Readonly<{
+  translatedText: string;
+  detectedSourceLanguage?: LangCode;
+}>;
+
+/**
+ * Machine translation adapter (text-to-text). Fase 4 elevates this from a
+ * pure marker to the working contract: `translate` is required so the
+ * TranslationManager can rely on it without an unsafe cast.
+ */
 export interface MTAdapter extends AdapterBase<"mt"> {
   readonly displayName: string;
+  translate(request: MTAdapterRequest): Promise<MTAdapterResponse>;
 }
 
 /** Text-to-Speech adapter. */

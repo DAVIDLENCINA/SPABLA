@@ -330,6 +330,30 @@ describe("TranslationManager — errors", () => {
     expect(mgr.getSession(SESSION)?.failedCount).toBe(1);
   });
 
+  it("sync-throwing adapter is caught and surfaced as translation.failed", async () => {
+    const badAdapter: TranslationAdapter = {
+      kind: "mt",
+      displayName: "sync-thrower",
+      translate: () => {
+        throw new Error("sync boom");
+      },
+    };
+    const { bus, mgr } = makeMgr(badAdapter);
+    mgr.createSession(baseCreate(), CID);
+    const failed = vi.fn();
+    bus.on("translation.failed", failed);
+    const req = mgr.requestTranslation(
+      { sessionId: SESSION, text: "hola", sourceLanguage: "es" }, CID);
+    expect(req.state).toBe("failed");
+    expect(mgr.getRequest(req.id)?.state).toBe("failed");
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("provider-rejected");
+    expect(failed.mock.calls[0]?.[0].error.message).toBe("sync boom");
+    // no leftover in-flight state
+    await flush();
+    expect(mgr.getRequest(req.id)?.state).toBe("failed");
+  });
+
   it("empty text throws (defensive invariant on the manager)", () => {
     const { mgr } = makeMgr(echoAdapter());
     mgr.createSession(baseCreate(), CID);

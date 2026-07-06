@@ -214,7 +214,11 @@ describe("Engine — component injection (fase 1.5)", () => {
 
   it("accepts a pre-populated AdapterRegistry via injection", () => {
     const custom = new AdapterRegistry();
-    custom.register("mt", { kind: "mt", displayName: "custom-mt" });
+    custom.register("mt", {
+      kind: "mt",
+      displayName: "custom-mt",
+      translate: async (r) => ({ translatedText: r.text }),
+    });
     counter = 0;
     const engine = new Engine({
       clock: fakeClock().clock,

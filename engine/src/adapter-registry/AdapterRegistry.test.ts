@@ -11,7 +11,11 @@ import type {
 } from "../types/adapters.js";
 
 const stt: STTAdapter = { kind: "stt", displayName: "fake-stt" };
-const mt: MTAdapter = { kind: "mt", displayName: "fake-mt" };
+const mt: MTAdapter = {
+  kind: "mt",
+  displayName: "fake-mt",
+  translate: async (r) => ({ translatedText: `[${r.to}] ${r.text}` }),
+};
 const tts: TTSAdapter = { kind: "tts", displayName: "fake-tts" };
 const webrtc: WebRTCAdapter = { kind: "webrtc", displayName: "fake-webrtc" };
 const signaling: SignalingAdapter = { kind: "signaling", displayName: "fake-signaling" };
@@ -79,6 +83,13 @@ describe("AdapterRegistry — validation", () => {
     reg.register("stt", stt);
     expect(() => reg.register("stt", stt)).not.toThrow();
     expect(reg.get("stt")).toBe(stt);
+  });
+
+  it("rejects an mt adapter that lacks a translate() method", () => {
+    const reg = new AdapterRegistry();
+    // Bypass the compile-time check to prove the runtime guard also fires.
+    const markerOnly = { kind: "mt", displayName: "marker-only" } as unknown as MTAdapter;
+    expect(() => reg.register("mt", markerOnly)).toThrow(AdapterRegistryError);
   });
 });
 

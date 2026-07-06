@@ -9,7 +9,7 @@
 
 import type { UUID, ISOTimestamp } from "./ids.js";
 import type { LangCode, LanguagePair } from "./language.js";
-import type { AdapterBase } from "./adapters.js";
+import type { MTAdapter, MTAdapterRequest, MTAdapterResponse } from "./adapters.js";
 
 // ── State machines ─────────────────────────────────────────────────────────
 
@@ -93,28 +93,16 @@ export type TranslationRequest = Readonly<{
 
 // ── Adapter contract ───────────────────────────────────────────────────────
 
-export type TranslationAdapterRequest = Readonly<{
-  requestId: UUID;
-  text: string;
-  from: LangCode;
-  to: LangCode;
-}>;
-
-export type TranslationAdapterResponse = Readonly<{
-  translatedText: string;
-  detectedSourceLanguage?: LangCode;
-}>;
-
 /**
- * Concrete shape any translation provider must implement. Extends the Fase 1.5
- * `AdapterBase<"mt">` marker with a bounded async `translate` operation.
+ * Concrete shape any translation provider must implement. Aliased to the
+ * `MTAdapter` slot in `AdapterByKind`, so the AdapterRegistry rejects at
+ * `register()` any impl that lacks a `translate` method.
  *
  * Requirements:
  *  - MUST resolve or reject the returned Promise in finite time.
  *  - MUST return text in the requested `to` language.
  *  - MUST NOT know the EventBus, ConversationSession, or any Engine internals.
  */
-export interface TranslationAdapter extends AdapterBase<"mt"> {
-  readonly displayName: string;
-  translate(request: TranslationAdapterRequest): Promise<TranslationAdapterResponse>;
-}
+export type TranslationAdapter = MTAdapter;
+export type TranslationAdapterRequest = MTAdapterRequest;
+export type TranslationAdapterResponse = MTAdapterResponse;

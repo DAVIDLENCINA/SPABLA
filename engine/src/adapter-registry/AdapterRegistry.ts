@@ -46,6 +46,11 @@ export class AdapterRegistry {
         `impl.kind mismatch: expected '${kind}', got '${(impl as { kind: string }).kind}'`,
       );
     }
+    // Runtime contract check per kind. TypeScript already forbids these at
+    // compile time, but the registry is the only choke point in JS-land.
+    if (kind === "mt" && typeof (impl as { translate?: unknown }).translate !== "function") {
+      throw new AdapterRegistryError(kind, "mt-adapter-missing-translate");
+    }
     const existing = this.slots.get(kind);
     if (existing && existing !== impl) {
       throw new AdapterRegistryError(kind, "already-registered");

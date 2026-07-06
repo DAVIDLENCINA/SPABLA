@@ -1,16 +1,9 @@
 /**
- * SPABLA Engine — TranslationManager (Fase 4).
- *
- * Owner of TranslationSession + TranslationRequest snapshots. Applies both
- * state machines and emits `translation.*` events. Delegates the actual
- * text-to-text work to whichever adapter is registered under kind `"mt"` in
- * the AdapterRegistry. The manager never imports a concrete provider — the
- * adapter is looked up at command time.
- *
- * Async model: `requestTranslation` returns synchronously with the
- * TranslationRequest snapshot in `dispatched` state (or `failed` if a
- * precondition trips). The adapter Promise resolves later and drives the
- * terminal transition + `translation.completed | failed` event.
+ * SPABLA Engine — TranslationManager (Fase 4). Owns Session + Request
+ * snapshots, applies both state machines, and delegates translation to the
+ * "mt" adapter looked up from the AdapterRegistry at command time. No
+ * concrete provider is ever imported. Async: returns the request snapshot
+ * synchronously; adapter Promise drives the terminal event.
  */
 
 import type { Clock, CorrelationId, UUID } from "../types/ids.js";
@@ -20,6 +13,7 @@ import type { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 import {
   isTerminalTranslationSessionState,
   type TranslationAdapter,
+  type TranslationAdapterResponse,
   type TranslationError,
   type TranslationRequest,
   type TranslationRequestState,
@@ -140,7 +134,7 @@ export class TranslationManager {
       return this.failRequest(requestId, "session-terminal",
         `session ${input.sessionId} is ${withCounter.state}`, cid);
     }
-    const adapter = this.adapters.get("mt") as TranslationAdapter | undefined;
+    const adapter = this.adapters.get("mt");
     if (!adapter) {
       return this.failRequest(requestId, "no-adapter",
         "no TranslationAdapter registered for kind 'mt'", cid);
@@ -186,9 +180,20 @@ export class TranslationManager {
       request: dispatched,
       meta: { ts: now, correlationId: cid },
     });
-    adapter
-      .translate({ requestId: request.id, text: request.sourceText,
-        from: request.sourceLanguage, to: request.targetLanguage })
+    // Guard against a misbehaving adapter that throws SYNCHRONOUSLY instead of
+    // returning a rejected Promise. Without this, the throw would escape the
+    // .then/.catch chain and leave the request stuck in `dispatched` forever.
+    let pending: Promise<TranslationAdapterResponse>;
+    try {
+      pending = adapter.translate({
+        requestId: request.id, text: request.sourceText,
+        from: request.sourceLanguage, to: request.targetLanguage,
+      });
+    } catch (err) {
+      this.onAdapterRejected(request.id, err, cid);
+      return this.requests.get(request.id)!;
+    }
+    pending
       .then((response) => this.onAdapterResolved(request.id, adapter, response, cid))
       .catch((err: unknown) => this.onAdapterRejected(request.id, err, cid));
     return dispatched;
