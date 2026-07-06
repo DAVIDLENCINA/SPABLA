@@ -13,9 +13,11 @@ Estándar documental que gobierna este archivo:
 ## 1. Filosofía
 
 "Estable" no significa "ha funcionado una vez". Significa que la fase
-cumple simultáneamente ocho criterios verificables y auditables. Que
-"parezca funcionar" en una prueba puntual no califica. Es el aprendizaje
-directo de V1.
+cumple simultáneamente los ocho criterios universales de §2, los
+principios normativos permanentes de §2.9, y — si la fase introduce
+transporte real, WebRTC o audio/red observable — los criterios
+adicionales de §3. Que "parezca funcionar" en una prueba puntual no
+califica. Es el aprendizaje directo de V1.
 
 Un cierre estable produce siempre tres artefactos:
 
@@ -32,10 +34,10 @@ Sin los tres, la fase no es estable — es candidata.
 
 Estos ocho criterios aplican a **toda** fase que introduzca módulos
 nuevos o modifique funcionalidad del Engine. Los planes de fase citan
-este estándar y añaden solo su DELTA (§3).
+este estándar y añaden solo su DELTA (§4).
 
 1. **Suite de tests verde.** `npm --prefix engine test` sin fallos. El
-   número exacto lo declara cada plan de fase (§3.1).
+   número exacto lo declara cada plan de fase (§4.1).
 
 2. **Cobertura mínima**:
    - Global: ≥ 85 % en las cuatro métricas (statements, branches,
@@ -74,25 +76,82 @@ este estándar y añaden solo su DELTA (§3).
 Los ocho son bloqueantes. Cualquier fallo → la fase queda como
 **candidata**, no como **stable**, y se itera antes del tag.
 
+### 2.9 Principios normativos permanentes
+
+Aplican simultáneamente a los ocho criterios anteriores. Rescatados
+tal cual estaban formulados en la arquitectura original y en Engine
+"Definición operativa de estable":
+
+- **Precondiciones codificadas en tipos o state machines**, no solo en
+  UI. Los invariantes fallan explícitamente en runtime si alguien los
+  bypasea. UI-only gates están prohibidos. Cada invariante del Engine
+  tiene al menos un test unitario que la verifica.
+- **Sin flags de feature acumulativos.** Un motor STT / MT / TTS a la
+  vez. Cero `if (USE_X_ENGINE) ...` bifurcando el pipeline. Al
+  sustituir un motor se reemplaza; no coexiste.
+
+Su incumplimiento bloquea el tag igual que los ocho numerados.
+
 ---
 
-## 3. DELTA por fase
+## 3. Criterios adicionales según naturaleza de la fase
+
+Los criterios de §2 son necesarios pero no suficientes cuando la fase
+introduce transporte real, WebRTC, adaptadores de red o audio real. En
+esos casos se aplican también los criterios de esta sección. Cada plan
+de fase declara explícitamente en su DELTA si le aplican.
+
+### 3.1 Prueba real bidireccional documentada
+
+Aplica a fases que activen transporte real entre pares (WebRTC,
+señalización real, audio capturado desde micrófono, TTS reproducido en
+altavoz).
+
+- Ejecutada por humano — no automatización.
+- En al menos dos combinaciones de dispositivo (mínimo Chrome desktop ↔
+  iPhone Safari).
+- Con capturas o logs adjuntos al reporte de auditoría.
+- La prueba se documenta en un guion escrito (pasos exactos, dispositivos,
+  resultados esperados) archivado junto al reporte de la fase.
+- La prueba se ha ejecutado al menos tres veces por dos personas
+  distintas (o dos sesiones separadas por al menos 24 h con contexto
+  reseteado), con resultado idéntico.
+
+### 3.2 Cleanup verificado post-`call.ended`
+
+Aplica a fases con adaptadores de red o audio activos.
+
+- En los tres escenarios (caller cuelga, callee cuelga, socket / red
+  muere abruptamente) los adaptadores llegan a estado terminal
+  (`closed` / `idle` / `offline`) dentro de 5 s del `call.ended`.
+- Cero eventos residuales en logs durante 10 s post-cleanup.
+- Ningún evento `telemetry.*` posterior a `call.ended` durante 30 s.
+
+### 3.3 Cero regresiones en prueba real de N-1
+
+Cuando la fase anterior contaba con una prueba real bidireccional (§3.1),
+esa prueba se ejecuta de nuevo tras cerrar la fase actual y sigue
+pasando idéntica.
+
+---
+
+## 4. DELTA por fase
 
 Cada plan de fase declara **solo** lo específico frente a los criterios
 universales. La estructura mínima del DELTA:
 
-### 3.1 Suite mínima
+### 4.1 Suite mínima
 
 - Número total de tests esperado.
 - Número de tests nuevos aportados por la fase.
 - Los tests preexistentes siguen verdes.
 
-### 3.2 Módulo de dominio
+### 4.2 Módulo de dominio
 
 - Nombre del directorio nuevo (`engine/src/<módulo>/`).
 - Cobertura objetivo del módulo (≥ 95 % por defecto).
 
-### 3.3 Prohibiciones específicas
+### 4.3 Prohibiciones específicas
 
 - Proveedores concretos prohibidos en la fase (lista puntual, se suma a
   la lista transversal de
@@ -102,7 +161,7 @@ universales. La estructura mínima del DELTA:
 - Contratos que la fase deliberadamente NO abre (adaptador real,
   streaming, etc.).
 
-### 3.4 Verificaciones adicionales
+### 4.4 Verificaciones adicionales
 
 Cualquier grep o comprobación que solo tenga sentido para esa fase (p.ej.
 Fase 4: `grep -r "openai|gemini|deepl|claude|anthropic|@google" engine/src/translation/`
@@ -110,13 +169,21 @@ Fase 4: `grep -r "openai|gemini|deepl|claude|anthropic|@google" engine/src/trans
 [`SPABLA_V2_CODE_STANDARD.md §11`](SPABLA_V2_CODE_STANDARD.md#11-verificación-por-grep-templates)
 se dan por hechos.
 
-### 3.5 Tag propuesto
+### 4.5 Aplicabilidad de §3
 
-Nombre exacto siguiendo la convención §4.
+El plan declara si los criterios adicionales de §3 (prueba real
+bidireccional, cleanup post-`call.ended`, regresiones en prueba real
+N-1) aplican a la fase. Fases puramente de modelo en memoria (Engine
+Foundation, Messaging, STT, Translation, TTS mientras sean simuladas)
+NO activan §3. Fases con adaptadores reales de red / audio / WebRTC SÍ.
+
+### 4.6 Tag propuesto
+
+Nombre exacto siguiendo la convención §5.
 
 ---
 
-## 4. Nombres de tag
+## 5. Nombres de tag
 
 Formato canónico:
 
@@ -141,7 +208,7 @@ Reglas:
 
 ---
 
-## 5. Procedimiento de cierre de fase
+## 6. Procedimiento de cierre de fase
 
 1. **Ejecutar la suite completa**: `npm --prefix engine test`.
 2. **Ejecutar cobertura**: `npx vitest run --coverage`.
@@ -149,13 +216,17 @@ Reglas:
 4. **Ejecutar los greps del §2.8**.
 5. **Verificar V1 byte-idéntico (§2.7)**.
 6. **Verificar cap de tamaño (§2.5)**.
-7. **Redactar auditoría** en `docs/audit_reports/AUDIT_<YYYY-MM-DD>_phase-<N>-<slug>.md`
+7. **Verificar §2.9 principios normativos permanentes**.
+8. **Si §3 aplica** a la fase (según §4.5): ejecutar prueba real
+   bidireccional, verificar cleanup post-`call.ended`, verificar
+   regresiones en prueba real N-1.
+9. **Redactar auditoría** en `docs/audit_reports/AUDIT_<YYYY-MM-DD>_phase-<N>-<slug>.md`
    con veredicto por criterio.
-8. **Commit** con mensaje según convención de
-   [`../SPABLA_V2_DOCUMENTATION_STANDARD.md §9`](../SPABLA_V2_DOCUMENTATION_STANDARD.md#9-convención-de-nombres).
-9. **Push** de la rama.
-10. **Tag anotado** + push del tag.
-11. **Reporte final** al jefe de proyecto con SHA de commit, SHA de tag,
+10. **Commit** con mensaje según convención de
+    [`../SPABLA_V2_DOCUMENTATION_STANDARD.md §9`](../SPABLA_V2_DOCUMENTATION_STANDARD.md#9-convención-de-nombres).
+11. **Push** de la rama.
+12. **Tag anotado** + push del tag.
+13. **Reporte final** al jefe de proyecto con SHA de commit, SHA de tag,
     cobertura, nº de tests, estado del working tree.
 
 Cualquier paso fallido detiene la secuencia y la fase se declara
@@ -164,14 +235,15 @@ rama antes de reintentar.
 
 ---
 
-## 6. Candidato vs estable
+## 7. Candidato vs estable
 
-- **`candidate`**: al menos uno de los ocho criterios no se cumple, o la
-  auditoría documenta un hallazgo bloqueante. El tag no se crea; el
-  commit sí puede existir pero el reporte lo etiqueta explícitamente
-  como candidato. Iteración obligatoria antes del tag.
-- **`stable`**: los ocho criterios se cumplen sin excepción; la
-  auditoría lo verifica documento en mano; el tag existe y está
+- **`candidate`**: al menos uno de los criterios aplicables (§2 siempre;
+  §3 según §4.5) no se cumple, o la auditoría documenta un hallazgo
+  bloqueante. El tag no se crea; el commit sí puede existir pero el
+  reporte lo etiqueta explícitamente como candidato. Iteración
+  obligatoria antes del tag.
+- **`stable`**: todos los criterios aplicables se cumplen sin excepción;
+  la auditoría lo verifica documento en mano; el tag existe y está
   publicado.
 
 Un candidato nunca se re-etiqueta a estable sin re-ejecutar la
@@ -179,7 +251,7 @@ verificación completa desde el paso 1.
 
 ---
 
-## 7. Excepciones y ADRs
+## 8. Excepciones y ADRs
 
 Cualquier relajación de un criterio requiere ADR previa en
 `docs/decisions/ADR-XXX-*.md`. Ejemplos hipotéticos que la
@@ -199,8 +271,9 @@ Sin ADR previa aprobada, cualquier desviación bloquea el tag.
 Este estándar entra en vigor desde su commit. Los planes de fase futuros
 lo referencian con:
 
-> "Aplican los ocho criterios universales de
-> [`SPABLA_V2_RELEASE_STANDARD.md`](../standards/SPABLA_V2_RELEASE_STANDARD.md).
-> El DELTA de esta fase es …"
+> "Aplican los criterios universales de
+> [`SPABLA_V2_RELEASE_STANDARD.md §2`](../standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales)
+> y, si procede según §4.5, los adicionales de §3. El DELTA de esta
+> fase es …"
 
 y añaden únicamente lo específico del módulo introducido.

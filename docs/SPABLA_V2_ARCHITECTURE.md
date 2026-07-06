@@ -150,11 +150,16 @@ subcarpetas `adapter-registry/`, `conversation-manager/`, `core-api/`,
 `engine/`, `event-bus/`, `language-manager/`, `messaging/`,
 `participant-manager/`, `pipeline/`, `session-manager/`,
 `state-machine/`, `stt/`, `translation/`, `types/`. La estructura
-cliente/servidor completa la definirán las fases posteriores.
+cliente/servidor completa la definirán las fases posteriores según el
+árbol propuesto abajo.
 
-Regla estructural: ningún archivo de un submódulo importa de otro
-submódulo salvo vía Engine (regla formalizada en
-[`decisions/ADR-002-2026-07-04-engine-mediates-modules.md`](decisions/ADR-002-2026-07-04-engine-mediates-modules.md)).
+### Reglas estructurales
+
+- Ningún archivo de `modules/X/` puede importar de `modules/Y/` salvo lo declarado en la tabla del §2. Regla equivalente en el Engine actual: ningún archivo de `engine/src/<módulo>/` importa de otro `<módulo>/` salvo vía Engine. Base normativa en [`decisions/ADR-002-2026-07-04-engine-mediates-modules.md`](decisions/ADR-002-2026-07-04-engine-mediates-modules.md).
+- `app/` solo compone providers y renderiza. Cero lógica de negocio.
+- `server/` sigue el mismo principio: un router por responsabilidad, sin coexistir motores tras flags.
+- Todo componente en `modules/ui/` es puro. No llama hooks de negocio.
+- Un lint rule (o ADR + review manual) verifica los límites de importación.
 
 ---
 
@@ -184,8 +189,12 @@ Cada fase produce **código + tag protegido + prueba real bidireccional document
 
 ## 8. Criterio de versión estable
 
-Los ocho criterios universales para declarar una fase estable viven en
-[`standards/SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales).
+Los criterios canónicos para declarar una fase estable viven en
+[`standards/SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales)
+(universales, aplican siempre) y
+[§3](standards/SPABLA_V2_RELEASE_STANDARD.md#3-criterios-adicionales-según-naturaleza-de-la-fase)
+(adicionales, aplican a fases con transporte real, WebRTC, audio o
+adaptadores de red).
 
 ---
 

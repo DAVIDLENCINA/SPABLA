@@ -219,8 +219,11 @@ refs) viven en
 
 ## Definición operativa de "estable"
 
-Los criterios universales para declarar una fase estable viven en
-[`standards/SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales).
+Los criterios canónicos para declarar una fase estable viven en
+[`standards/SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales)
+(universales) y
+[§3](standards/SPABLA_V2_RELEASE_STANDARD.md#3-criterios-adicionales-según-naturaleza-de-la-fase)
+(condicionales según la naturaleza de la fase).
 
 ---
 
