@@ -1346,6 +1346,423 @@ describe("SpablaCore — Translation encapsulation + STT-manual bridge", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TTS (fase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+type FakeTTSChunk = {
+  seq: number;
+  audioBytes: Uint8Array;
+  mimeType: string;
+  isFinal: boolean;
+};
+type FakeTTSRequest = {
+  requestId: import("../types/ids.js").UUID;
+  text: string;
+  language: import("../types/language.js").LangCode;
+  voiceId: string;
+};
+
+class FakeTts implements import("../types/tts.js").TTSAdapter {
+  readonly kind = "tts" as const;
+  readonly displayName: string;
+  public calls: FakeTTSRequest[] = [];
+  private readonly plan: (r: FakeTTSRequest, s: AbortSignal) => AsyncIterable<FakeTTSChunk>;
+  constructor(
+    plan: (r: FakeTTSRequest, s: AbortSignal) => AsyncIterable<FakeTTSChunk>,
+    name = "fake-tts",
+  ) {
+    this.plan = plan;
+    this.displayName = name;
+  }
+  synthesize(r: FakeTTSRequest, s: AbortSignal): AsyncIterable<FakeTTSChunk> {
+    this.calls.push(r);
+    return this.plan(r, s);
+  }
+}
+
+function singleTts(): FakeTts {
+  return new FakeTts(async function* () {
+    yield { seq: 0, audioBytes: new Uint8Array([1]), mimeType: "audio/wav", isFinal: true };
+  });
+}
+function multiTts(n: number): FakeTts {
+  return new FakeTts(async function* () {
+    for (let i = 0; i < n; i++) {
+      yield {
+        seq: i,
+        audioBytes: new Uint8Array([i + 1]),
+        mimeType: "audio/wav",
+        isFinal: i === n - 1,
+      };
+    }
+  });
+}
+
+function coreWithTts(adapter: FakeTts = singleTts()): { core: SpablaCore; adapter: FakeTts } {
+  const core = makeCore();
+  (core as unknown as { engine: { getAdapterRegistry(): {
+    register: (k: string, a: unknown) => void;
+  } } }).engine.getAdapterRegistry().register("tts", adapter);
+  return { core, adapter };
+}
+const VOICE = { language: "en" as const, voiceId: "alice" };
+async function flushTts(cycles = 60): Promise<void> {
+  for (let i = 0; i < cycles; i++) await Promise.resolve();
+}
+
+describe("SpablaCore — startTTS", () => {
+  it("returns sessionId; getTTSSession reflects active", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    expect(sessionId).toBeDefined();
+    expect(core.getTTSSession(sessionId)?.state).toBe("active");
+  });
+
+  it("rejects if the CallSession does not exist", () => {
+    const { core } = coreWithTts();
+    seedConversation(core);
+    expect(() => core.startTTS({ callId: asUUID("nope"), voice: VOICE })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects if the CallSession is not accepted", () => {
+    const { core } = coreWithTts();
+    seedConversation(core);
+    const { callId } = core.startCall({ mode: "voice" });
+    expect(() => core.startTTS({ callId, voice: VOICE })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects if voice.voiceId is empty", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    expect(() =>
+      core.startTTS({ callId, voice: { language: "en", voiceId: "" } }),
+    ).toThrow(SpablaCoreError);
+  });
+
+  it("emits tts.session.started", () => {
+    const { core } = coreWithTts();
+    const started = vi.fn();
+    core.subscribe("tts.session.started", started);
+    const callId = seedActiveCall(core);
+    core.startTTS({ callId, voice: VOICE });
+    expect(started).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SpablaCore — stopTTS", () => {
+  it("active → completed + tts.session.ended", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const ended = vi.fn();
+    core.subscribe("tts.session.ended", ended);
+    core.stopTTS({ sessionId });
+    expect(core.getTTSSession(sessionId)?.state).toBe("completed");
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown sessionId", () => {
+    const { core } = coreWithTts();
+    expect(() => core.stopTTS({ sessionId: asUUID("nope") })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects a terminal session", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.stopTTS({ sessionId });
+    expect(() => core.stopTTS({ sessionId })).toThrow();
+  });
+
+  it("cancels in-flight requests via adapter (AbortSignal path)", async () => {
+    const pending = new FakeTts(async function* (_r, _s) {
+      await new Promise<void>(() => {});
+      yield { seq: 0, audioBytes: new Uint8Array([1]), mimeType: "audio/wav", isFinal: true };
+    });
+    const { core } = coreWithTts(pending);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const { requestId } = core.requestSpeech({ sessionId, text: "hi" });
+    core.stopTTS({ sessionId });
+    expect(core.getTTSRequest(requestId)?.state).toBe("cancelled");
+  });
+});
+
+describe("SpablaCore — requestSpeech", () => {
+  it("happy path with FakeTTSAdapter → tts.completed llega", async () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const completed = vi.fn();
+    core.subscribe("tts.completed", completed);
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(completed).toHaveBeenCalledTimes(1);
+  });
+
+  it("no adapter registered → tts.failed", async () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const failed = vi.fn();
+    core.subscribe("tts.failed", failed);
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("no-adapter");
+  });
+
+  it("rejects unknown sessionId", () => {
+    const { core } = coreWithTts();
+    seedActiveCall(core);
+    expect(() =>
+      core.requestSpeech({ sessionId: asUUID("nope"), text: "hi" }),
+    ).toThrow(SpablaCoreError);
+  });
+
+  it("rejects terminal session", async () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.stopTTS({ sessionId });
+    const failed = vi.fn();
+    core.subscribe("tts.failed", failed);
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("session-terminal");
+  });
+
+  it("rejects empty text", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    expect(() =>
+      core.requestSpeech({ sessionId, text: "" }),
+    ).toThrow(SpablaCoreError);
+  });
+
+  it("listActiveTTSSessions returns active sessions for the given callId", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const a = core.startTTS({ callId, voice: VOICE });
+    const b = core.startTTS({ callId, voice: VOICE });
+    core.stopTTS({ sessionId: a.sessionId });
+    const active = core.listActiveTTSSessions(callId);
+    expect(active.map((s) => s.id)).toEqual([b.sessionId]);
+  });
+
+  it("multiple requests in the same session don't interfere", async () => {
+    const { core } = coreWithTts(multiTts(3));
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const r1 = core.requestSpeech({ sessionId, text: "one" });
+    const r2 = core.requestSpeech({ sessionId, text: "two" });
+    await flushTts();
+    expect(core.getTTSRequest(r1.requestId)?.state).toBe("completed");
+    expect(core.getTTSRequest(r2.requestId)?.state).toBe("completed");
+    expect(core.getTTSSession(sessionId)?.completedCount).toBe(2);
+  });
+});
+
+describe("SpablaCore — TTS adapter", () => {
+  it("adapter registered via getAdapterRegistry().register('tts', fake)", () => {
+    const { core, adapter } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    expect(adapter.calls).toHaveLength(1);
+  });
+
+  it("adapter is replaceable at runtime", async () => {
+    const { core } = coreWithTts();
+    const registry = (core as unknown as { engine: { getAdapterRegistry(): {
+      register: (k: string, a: unknown) => void; unregister: (k: string) => boolean;
+    } } }).engine.getAdapterRegistry();
+    registry.unregister("tts");
+    const other = new FakeTts(async function* () {
+      yield { seq: 0, audioBytes: new Uint8Array([9]), mimeType: "audio/wav", isFinal: true };
+    }, "other");
+    registry.register("tts", other);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(other.calls).toHaveLength(1);
+  });
+
+  it("adapter is not exposed via public SpablaCore methods", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    expect(methods.has("getAdapterRegistry")).toBe(false);
+    expect(methods.has("getTTSAdapter")).toBe(false);
+  });
+
+  it("sync-throw of synthesize does NOT leave request stuck", async () => {
+    const bad = new FakeTts(((): FakeTts["synthesize"] => () => {
+      throw new Error("boom");
+    })() as never);
+    const { core } = coreWithTts(bad);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const failed = vi.fn();
+    core.subscribe("tts.failed", failed);
+    const { requestId } = core.requestSpeech({ sessionId, text: "hi" });
+    expect(core.getTTSRequest(requestId)?.state).toBe("failed");
+    expect(failed.mock.calls[0]?.[0].error.code).toBe("provider-rejected");
+  });
+});
+
+describe("SpablaCore — TTS events", () => {
+  it("subscribe receives all 6 events across a lifecycle", async () => {
+    const { core } = coreWithTts();
+    const names = [
+      "tts.session.started", "tts.request.created", "tts.request.dispatched",
+      "tts.chunk.generated", "tts.completed", "tts.session.ended",
+    ] as const;
+    const seen = new Map<string, number>();
+    for (const n of names) core.subscribe(n, () => seen.set(n, (seen.get(n) ?? 0) + 1));
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    core.stopTTS({ sessionId });
+    for (const n of names) expect(seen.get(n)).toBe(1);
+  });
+
+  it("event meta carries ts and correlationId", async () => {
+    const { core } = coreWithTts();
+    const captured = vi.fn();
+    core.subscribe("tts.completed", captured);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    const meta = captured.mock.calls[0]?.[0].meta;
+    expect(meta.ts).toBeDefined();
+    expect(meta.correlationId).toBeDefined();
+  });
+
+  it("unsubscribe stops delivery", async () => {
+    const { core } = coreWithTts();
+    const handler = vi.fn();
+    const unsub = core.subscribe("tts.completed", handler);
+    unsub();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("events share the same bus as Engine + STT + Translation + Messaging", async () => {
+    const { core } = coreWithTts();
+    const order: string[] = [];
+    core.subscribe("call.state.changed", () => order.push("call"));
+    core.subscribe("stt.session.started", () => order.push("stt"));
+    core.subscribe("tts.completed", () => order.push("tts"));
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(order).toContain("call");
+    expect(order).toContain("stt");
+    expect(order).toContain("tts");
+  });
+
+  it("ordering per request: request.created → chunk.generated* → completed", async () => {
+    const { core } = coreWithTts(multiTts(3));
+    const order: string[] = [];
+    core.subscribe("tts.request.created", () => order.push("created"));
+    core.subscribe("tts.chunk.generated", () => order.push("chunk"));
+    core.subscribe("tts.completed", () => order.push("completed"));
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    await flushTts();
+    expect(order).toEqual(["created", "chunk", "chunk", "chunk", "completed"]);
+  });
+});
+
+describe("SpablaCore — TTS encapsulation + Translation-manual bridge", () => {
+  it("SpablaCore does not expose TTSManager on prototype", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    expect(methods.has("getTTSManager")).toBe(false);
+  });
+
+  it("endCall does NOT auto-stop TTS sessions", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.endCall(callId);
+    expect(core.getTTSSession(sessionId)?.state).toBe("active");
+  });
+
+  it("stopTTS cancels via AbortSignal (adapter observable)", async () => {
+    let sawAbort = false;
+    const pending = new FakeTts(async function* (_r, s) {
+      const w = new Promise<void>((res) => {
+        s.addEventListener("abort", () => { sawAbort = true; res(); });
+      });
+      await w;
+      yield { seq: 0, audioBytes: new Uint8Array([1]), mimeType: "audio/wav", isFinal: true };
+    });
+    const { core } = coreWithTts(pending);
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    core.requestSpeech({ sessionId, text: "hi" });
+    core.stopTTS({ sessionId });
+    await flushTts();
+    expect(sawAbort).toBe(true);
+  });
+
+  it("manual Translation + TTS: sourceTranslationRequestId preserved end-to-end", async () => {
+    class MtFake implements import("../types/translation.js").TranslationAdapter {
+      readonly kind = "mt" as const;
+      readonly displayName = "fake-mt";
+      async translate(r: import("../types/translation.js").TranslationAdapterRequest):
+        Promise<import("../types/translation.js").TranslationAdapterResponse> {
+        return { translatedText: `[EN] ${r.text}` };
+      }
+    }
+    const { core } = coreWithTts();
+    (core as unknown as { engine: { getAdapterRegistry(): {
+      register: (k: string, a: unknown) => void;
+    } } }).engine.getAdapterRegistry().register("mt", new MtFake());
+    const callId = seedActiveCall(core);
+    const { sessionId: mtSession } = core.startTranslation({ callId });
+    const { requestId: mtReq } = core.requestTranslation({
+      sessionId: mtSession, text: "hola", sourceLanguage: "es",
+    });
+    await flushTts();
+    const { sessionId: ttsSession } = core.startTTS({ callId, voice: VOICE });
+    const { requestId: ttsReq } = core.requestSpeech({
+      sessionId: ttsSession, text: "hi", sourceTranslationRequestId: mtReq,
+    });
+    await flushTts();
+    expect(core.getTTSRequest(ttsReq)?.sourceTranslationRequestId).toBe(mtReq);
+    expect(core.getTTSRequest(ttsReq)?.state).toBe("completed");
+  });
+
+  it("386 Fase 4 tests still pass alongside TTS (spot-check)", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+    core.stopSTT({ sessionId });
+    expect(core.getSTTSession(sessionId)?.state).toBe("completed");
+  });
+
+  it("prototype includes the 3 TTS commands + 3 snapshots", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    for (const n of [
+      "startTTS", "stopTTS", "requestSpeech",
+      "getTTSSession", "getTTSRequest", "listActiveTTSSessions",
+    ]) expect(methods.has(n)).toBe(true);
+  });
+});
+
 describe("SpablaCore — encapsulation guarantees", () => {
   const core = makeCore();
   const publicMethods = new Set(

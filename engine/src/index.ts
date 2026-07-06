@@ -94,6 +94,22 @@ export type {
   RequestTranslationInput as ManagerRequestTranslationInput,
 } from "./translation/TranslationManager.js";
 
+// TTS (fase 5) — contracts + adapter aliases + manager.
+export type {
+  TTSSession, TTSSynthesisRequest, TTSAudioChunk, TTSSynthesisResult, TTSError,
+  TTSSessionState, TTSRequestState, TTSErrorCode, TTSVoiceConfig,
+} from "./types/tts.js";
+export {
+  isTerminalTTSSessionState, isTerminalTTSRequestState,
+  TERMINAL_TTS_SESSION_STATES, TERMINAL_TTS_REQUEST_STATES,
+} from "./types/tts.js";
+export { TTSManager, TTSManagerError, DEFAULT_FIRST_CHUNK_TIMEOUT_MS } from "./tts/TTSManager.js";
+export type {
+  CreateTTSSessionInput,
+  RequestSpeechInput as ManagerRequestSpeechInput,
+  TTSManagerOptions,
+} from "./tts/TTSManager.js";
+
 // Messaging (fase 2) — Message contracts and manager error type.
 export type {
   Message,
@@ -144,6 +160,11 @@ export type {
   StopTranslationInput,
   RequestTranslationInput,
   RequestTranslationResult,
+  StartTTSInput,
+  StartTTSResult,
+  StopTTSInput,
+  RequestSpeechInput,
+  RequestSpeechResult,
 } from "./core-api/types.js";
 
 // Errors that external code may want to catch

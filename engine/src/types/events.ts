@@ -1,12 +1,8 @@
 /**
- * SPABLA Engine — Event contract.
- *
- * Discriminated union of every event the Engine emits. Consumers subscribe
- * to specific event names and receive the matching payload.
- *
- * Fase 1 scope: conversation lifecycle, participant lifecycle, language
- * resolution, call state machine, telemetry. NO adapter, STT, MT, TTS or
- * turn-level events yet (those arrive in later fases).
+ * SPABLA Engine — Event contract. Discriminated union de todos los
+ * eventos que el Engine emite. El scope se extendió por fase:
+ * Fase 1 foundation + Fase 2 messaging + Fase 3 STT + Fase 4 translation
+ * + Fase 5 TTS.
  */
 
 import type { UUID, ISOTimestamp, CorrelationId } from "./ids.js";
@@ -30,6 +26,13 @@ import type {
   TranslationResult,
   TranslationSession,
 } from "./translation.js";
+import type {
+  TTSAudioChunk,
+  TTSError,
+  TTSSession,
+  TTSSynthesisRequest,
+  TTSSynthesisResult,
+} from "./tts.js";
 
 /** Common metadata attached to every emitted event. */
 export type EventMeta = Readonly<{
@@ -178,6 +181,26 @@ export type TranslationSessionEndedEvent = {
   session: TranslationSession;
 };
 
+// ── TTS (fase 5) ────────────────────────────────────────────────────────────
+
+export type TTSSessionStartedEvent = { name: "tts.session.started"; session: TTSSession };
+export type TTSRequestCreatedEvent = {
+  name: "tts.request.created"; session: TTSSession; request: TTSSynthesisRequest;
+};
+export type TTSRequestDispatchedEvent = {
+  name: "tts.request.dispatched"; session: TTSSession; request: TTSSynthesisRequest;
+};
+export type TTSChunkGeneratedEvent = {
+  name: "tts.chunk.generated"; session: TTSSession; request: TTSSynthesisRequest; chunk: TTSAudioChunk;
+};
+export type TTSCompletedEvent = {
+  name: "tts.completed"; session: TTSSession; request: TTSSynthesisRequest; result: TTSSynthesisResult;
+};
+export type TTSFailedEvent = {
+  name: "tts.failed"; session: TTSSession; request: TTSSynthesisRequest; error: TTSError;
+};
+export type TTSSessionEndedEvent = { name: "tts.session.ended"; session: TTSSession };
+
 // ── Video / Interpreter toggles (Fase 1.6) ──────────────────────────────────
 
 export type VideoEnabledEvent  = { name: "video.enabled";  callId: UUID };
@@ -251,6 +274,13 @@ export type EngineEvent =
   | TranslationCompletedEvent
   | TranslationFailedEvent
   | TranslationSessionEndedEvent
+  | TTSSessionStartedEvent
+  | TTSRequestCreatedEvent
+  | TTSRequestDispatchedEvent
+  | TTSChunkGeneratedEvent
+  | TTSCompletedEvent
+  | TTSFailedEvent
+  | TTSSessionEndedEvent
   | VideoEnabledEvent
   | VideoDisabledEvent
   | InterpreterEnabledEvent

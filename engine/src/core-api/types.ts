@@ -125,6 +125,28 @@ export type RequestTranslationInput = Readonly<{
 }>;
 export type RequestTranslationResult = Readonly<{ requestId: UUID }>;
 
+// ── TTS (fase 5) ────────────────────────────────────────────────────────────
+
+export type StartTTSInput = Readonly<{
+  callId: UUID;
+  voice: {
+    language: LangCode;
+    voiceId: string;
+    rate?: number;
+    pitch?: number;
+  };
+}>;
+export type StartTTSResult = Readonly<{ sessionId: UUID }>;
+export type StopTTSInput = Readonly<{ sessionId: UUID }>;
+export type RequestSpeechInput = Readonly<{
+  sessionId: UUID;
+  text: string;
+  language?: LangCode;
+  voiceId?: string;
+  sourceTranslationRequestId?: UUID;
+}>;
+export type RequestSpeechResult = Readonly<{ requestId: UUID }>;
+
 /** Typed error thrown by Core-API precondition checks. */
 export class SpablaCoreError extends Error {
   public readonly reason: string;

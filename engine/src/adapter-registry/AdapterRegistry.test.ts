@@ -16,7 +16,11 @@ const mt: MTAdapter = {
   displayName: "fake-mt",
   translate: async (r) => ({ translatedText: `[${r.to}] ${r.text}` }),
 };
-const tts: TTSAdapter = { kind: "tts", displayName: "fake-tts" };
+const tts: TTSAdapter = {
+  kind: "tts",
+  displayName: "fake-tts",
+  synthesize: async function* () { yield { seq: 0, audioBytes: new Uint8Array([1]), mimeType: "audio/wav", isFinal: true }; },
+};
 const webrtc: WebRTCAdapter = { kind: "webrtc", displayName: "fake-webrtc" };
 const signaling: SignalingAdapter = { kind: "signaling", displayName: "fake-signaling" };
 const supabase: SupabaseAdapter = { kind: "supabase", displayName: "fake-supabase" };
@@ -90,6 +94,12 @@ describe("AdapterRegistry — validation", () => {
     // Bypass the compile-time check to prove the runtime guard also fires.
     const markerOnly = { kind: "mt", displayName: "marker-only" } as unknown as MTAdapter;
     expect(() => reg.register("mt", markerOnly)).toThrow(AdapterRegistryError);
+  });
+
+  it("rejects a tts adapter that lacks a synthesize() method", () => {
+    const reg = new AdapterRegistry();
+    const markerOnly = { kind: "tts", displayName: "marker-only" } as unknown as TTSAdapter;
+    expect(() => reg.register("tts", markerOnly)).toThrow(AdapterRegistryError);
   });
 });
 

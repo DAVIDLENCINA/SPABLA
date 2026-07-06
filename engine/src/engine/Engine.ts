@@ -18,6 +18,7 @@ import { TurnPipelineManager } from "../pipeline/TurnPipelineManager.js";
 import { MessageManager } from "../messaging/MessageManager.js";
 import { STTManager } from "../stt/STTManager.js";
 import { TranslationManager } from "../translation/TranslationManager.js";
+import { TTSManager } from "../tts/TTSManager.js";
 import { defaultNewId, type EngineDependencies } from "./types.js";
 
 export type { EngineComponents, EngineDependencies } from "./types.js";
@@ -35,6 +36,7 @@ export class Engine {
   private readonly messages: MessageManager;
   private readonly stt: STTManager;
   private readonly translation: TranslationManager;
+  private readonly tts: TTSManager;
 
   constructor(deps: EngineDependencies = {}) {
     this.clock = deps.clock ?? systemClock();
@@ -52,12 +54,15 @@ export class Engine {
     this.stt = deps.stt ?? new STTManager(this.bus, this.clock, this.newId);
     this.translation = deps.translation
       ?? new TranslationManager(this.bus, this.clock, this.newId, this.adapters);
+    this.tts = deps.tts
+      ?? new TTSManager(this.bus, this.clock, this.newId, this.adapters);
   }
 
   /** Read-only manager accessors. Command surface remains the Engine itself. */
   getMessageManager(): MessageManager { return this.messages; }
   getSTTManager(): STTManager { return this.stt; }
   getTranslationManager(): TranslationManager { return this.translation; }
+  getTTSManager(): TTSManager { return this.tts; }
   getAdapterRegistry(): AdapterRegistry { return this.adapters; }
   getTurnPipelineManager(): TurnPipelineManager { return this.turnPipelines; }
 

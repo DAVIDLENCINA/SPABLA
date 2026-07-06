@@ -55,9 +55,33 @@ export interface MTAdapter extends AdapterBase<"mt"> {
   translate(request: MTAdapterRequest): Promise<MTAdapterResponse>;
 }
 
-/** Text-to-Speech adapter. */
+/** Payload the Engine hands to any TTS adapter. */
+export type TTSAdapterRequest = Readonly<{
+  requestId: UUID;
+  text: string;
+  language: LangCode;
+  voiceId: string;
+  rate?: number;
+  pitch?: number;
+}>;
+
+/** Chunk emitted by any TTS adapter through its async iterable. */
+export type TTSAdapterChunk = Readonly<{
+  seq: number;
+  audioBytes: Uint8Array;
+  mimeType: string;
+  isFinal: boolean;
+}>;
+
+/**
+ * Text-to-Speech adapter. Fase 5 promotes this marker to the working
+ * contract: `synthesize` is required so the TTSManager can rely on it
+ * without an unsafe cast, and the AdapterRegistry rejects at register()
+ * any impl that lacks it (tipo + runtime).
+ */
 export interface TTSAdapter extends AdapterBase<"tts"> {
   readonly displayName: string;
+  synthesize(request: TTSAdapterRequest, signal: AbortSignal): AsyncIterable<TTSAdapterChunk>;
 }
 
 /** WebRTC transport adapter (RTCPeerConnection wrapper). */

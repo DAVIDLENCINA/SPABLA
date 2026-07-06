@@ -16,8 +16,10 @@ import type { Message, MessageThread } from "../types/message.js";
 import type { MessageManager } from "../messaging/MessageManager.js";
 import type { STTSession, STTTurn } from "../types/stt.js";
 import type { TranslationRequest, TranslationSession } from "../types/translation.js";
+import type { TTSSession, TTSSynthesisRequest } from "../types/tts.js";
 import { SttOps } from "./stt-ops.js";
 import { TranslationOps } from "./translation-ops.js";
+import { TtsOps } from "./tts-ops.js";
 import {
   SpablaCoreError,
   type CallFlags, type CreateConversationInput,
@@ -30,6 +32,8 @@ import {
   type StartSTTInput, type StartSTTResult, type StopSTTInput,
   type StartTranslationInput, type StartTranslationResult, type StopTranslationInput,
   type RequestTranslationInput, type RequestTranslationResult,
+  type StartTTSInput, type StartTTSResult, type StopTTSInput,
+  type RequestSpeechInput, type RequestSpeechResult,
 } from "./types.js";
 
 export type SpablaEventName = EngineEventName;
@@ -43,6 +47,7 @@ export class SpablaCore {
   private readonly messages: MessageManager;
   private readonly sttOps: SttOps;
   private readonly translationOps: TranslationOps;
+  private readonly ttsOps: TtsOps;
   private readonly flagsByCall: Map<UUID, CallFlags> = new Map();
 
   constructor(config: SpablaCoreConfig = {}) {
@@ -55,6 +60,8 @@ export class SpablaCore {
     this.sttOps = new SttOps(this.engine, this.engine.getSTTManager(), this.newId, cid);
     this.translationOps = new TranslationOps(
       this.engine, this.engine.getTranslationManager(), this.newId, cid);
+    this.ttsOps = new TtsOps(
+      this.engine, this.engine.getTTSManager(), this.newId, cid);
   }
 
   // ── Conversation ────────────────────────────────────────────────────────
@@ -225,6 +232,14 @@ export class SpablaCore {
   getTranslationSession(sid: UUID): TranslationSession | undefined { return this.translationOps.getSession(sid); }
   getTranslationRequest(rid: UUID): TranslationRequest | undefined { return this.translationOps.getRequest(rid); }
   listActiveTranslationSessions(cid: UUID): ReadonlyArray<TranslationSession> { return this.translationOps.listActive(cid); }
+
+  // ── TTS (fase 5) — thin delegators to TtsOps ────────────────────────────
+  startTTS(i: StartTTSInput): StartTTSResult { return this.ttsOps.start(i); }
+  stopTTS(i: StopTTSInput): void { this.ttsOps.stop(i); }
+  requestSpeech(i: RequestSpeechInput): RequestSpeechResult { return this.ttsOps.request(i); }
+  getTTSSession(sid: UUID): TTSSession | undefined { return this.ttsOps.getSession(sid); }
+  getTTSRequest(rid: UUID): TTSSynthesisRequest | undefined { return this.ttsOps.getRequest(rid); }
+  listActiveTTSSessions(cid: UUID): ReadonlyArray<TTSSession> { return this.ttsOps.listActive(cid); }
 
   // ── Subscription + read-only snapshots ──────────────────────────────────
 

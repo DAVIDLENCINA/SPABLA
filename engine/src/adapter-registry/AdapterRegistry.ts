@@ -51,6 +51,9 @@ export class AdapterRegistry {
     if (kind === "mt" && typeof (impl as { translate?: unknown }).translate !== "function") {
       throw new AdapterRegistryError(kind, "mt-adapter-missing-translate");
     }
+    if (kind === "tts" && typeof (impl as { synthesize?: unknown }).synthesize !== "function") {
+      throw new AdapterRegistryError(kind, "tts-adapter-missing-synthesize");
+    }
     const existing = this.slots.get(kind);
     if (existing && existing !== impl) {
       throw new AdapterRegistryError(kind, "already-registered");
