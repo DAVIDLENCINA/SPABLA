@@ -202,6 +202,13 @@ describe("MessageManager — transitions", () => {
     expect(() => mgr.fail(M1, "reason", CID)).toThrow(MessageManagerError);
   });
 
+  it("advance() rejects target 'created' (must use createOutgoing) and 'failed' (must use fail)", () => {
+    const mgr = new MessageManager(new EventBus(), clock());
+    mgr.createOutgoing(baseOutgoing(), CID);
+    expect(() => mgr.advance(M1, "created", CID)).toThrow(MessageManagerError);
+    expect(() => mgr.advance(M1, "failed", CID)).toThrow(MessageManagerError);
+  });
+
   it("emits the correct event for each transition", () => {
     const bus = new EventBus();
     const mgr = new MessageManager(bus, clock());

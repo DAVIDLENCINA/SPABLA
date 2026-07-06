@@ -378,6 +378,11 @@ describe("SpablaCore — messaging encapsulation + compat", () => {
     expect(publicMethods.has("getMessageManager")).toBe(false);
   });
 
+  it("getThread returns undefined when no conversation has been loaded", () => {
+    const core = makeCore();
+    expect(core.getThread()).toBeUndefined();
+  });
+
   it("endCall does NOT clear message history", () => {
     const core = makeCore();
     seedConversation(core);
