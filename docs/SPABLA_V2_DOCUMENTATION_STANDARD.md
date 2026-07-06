@@ -383,7 +383,7 @@ justificar la separación semántica).
 
 ---
 
-## 14. Entregable de este documento
+## 14. Vigencia y aplicación
 
 Este archivo es el estándar normativo de documentación de SPABLA V2.
 Rige desde su commit. Su modificación futura requiere el procedimiento
