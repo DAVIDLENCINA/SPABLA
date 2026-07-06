@@ -251,9 +251,9 @@ export class STTManager {
       final: undefined, isActive: true,
     });
     this.turns.set(turnId, turn);
-    const list = this.turnsBySession.get(session.id) ?? [];
-    list.push(turnId);
-    this.turnsBySession.set(session.id, list);
+    // Invariant: createSession always initialised turnsBySession[session.id]=[]
+    // before any ensureActiveTurn call could reach this branch.
+    this.turnsBySession.get(session.id)!.push(turnId);
     const updated = Object.freeze({
       ...session, currentTurnId: turnId, turnCount: session.turnCount + 1,
     }) as STTSession;
@@ -262,8 +262,10 @@ export class STTManager {
   }
 
   private closeTurn(turnId: UUID, withFinal: boolean, final?: STTFinal): void {
-    const turn = this.turns.get(turnId);
-    if (!turn) return;
+    // Invariant: all callers (stop, simulateFinal, simulateError) pass a
+    // turnId taken from session.currentTurnId, which is set by
+    // ensureActiveTurn together with `this.turns.set(turnId, turn)`.
+    const turn = this.turns.get(turnId)!;
     this.turns.set(turnId, Object.freeze({
       ...turn, endedAt: this.clock.nowISO(), isActive: false,
       final: withFinal ? final : turn.final,

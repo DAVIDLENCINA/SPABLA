@@ -267,6 +267,11 @@ describe("STTManager — queries and immutability", () => {
     expect(mgr.getTurn(asUUID("nope"))).toBeUndefined();
   });
 
+  it("listTurns returns an empty array for an unknown sessionId (public fallback)", () => {
+    const mgr = makeManager();
+    expect(mgr.listTurns(asUUID("nope"))).toEqual([]);
+  });
+
   it("listActiveSessions filters by callSessionId and excludes terminals", () => {
     const mgr = makeManager();
     mgr.createSession(baseCreate(), CID);
