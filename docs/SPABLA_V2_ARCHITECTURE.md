@@ -1,109 +1,52 @@
 # SPABLA V2 — Arquitectura
 
-Documento de tipo Arquitectura. Define bloques del sistema, límites entre
-ellos, contratos estables (por **nombre**), y la hoja de ruta de fases.
-El detalle de cuerpos de contrato, prohibiciones transversales y
-criterios de aceptación vive en los estándares y planes de fase
-referenciados; este documento no los reimprime.
-
-Documentos de referencia obligatoria:
-
-- [`SPABLA_V2_PRODUCT_CORE.md`](SPABLA_V2_PRODUCT_CORE.md) — alma del
-  producto; prevalece sobre este documento.
-- [`SPABLA_V2_ENGINE.md`](SPABLA_V2_ENGINE.md) — núcleo del Engine con
-  las máquinas de estado y la lista de contratos y adaptadores.
-- [`standards/SPABLA_V2_CODE_STANDARD.md`](standards/SPABLA_V2_CODE_STANDARD.md) —
-  reglas transversales de código y prohibiciones.
-- [`standards/SPABLA_V2_RELEASE_STANDARD.md`](standards/SPABLA_V2_RELEASE_STANDARD.md) —
-  criterios universales de "estable" y cierre de fase.
-- [`SPABLA_V2_DOCUMENTATION_STANDARD.md`](SPABLA_V2_DOCUMENTATION_STANDARD.md) —
-  estándar documental que gobierna este archivo.
+Documento de Fase 0. Ningún código funcional. Solo contratos, límites y decisiones que rigen la reconstrucción.
 
 ---
 
 ## 1. Objetivo de SPABLA V2
 
-SPABLA V2 es una aplicación de chat con llamada y videollamada entre dos
-usuarios que hablan idiomas distintos. Cada intervención de voz se
-transcribe, se traduce, aparece como burbuja de texto en el idioma del
-receptor y se reproduce como audio traducido. Reconstrucción desde cero
-— cero herencia de código de V1 excepto el esquema Supabase (ver ADR
-[ADR-001](decisions/ADR-001-2026-07-04-v1-portable-items.md)).
+SPABLA V2 es una aplicación de chat con llamada y videollamada entre dos usuarios que hablan idiomas distintos. Cada intervención de voz se transcribe, se traduce, aparece como burbuja de texto en el idioma del receptor y se reproduce como audio traducido. Reconstrucción desde cero — cero herencia de código de V1 excepto el esquema Supabase.
 
 ### Principios de diseño
 
-1. **Contratos explícitos.** Cada módulo declara qué recibe y qué emite.
-   Nada se comunica por refs globales, closures, o estado compartido
-   implícito.
-2. **Una responsabilidad por archivo.** El cap de líneas y su
-   procedimiento de extracción viven en
-   [Code Standard §3](standards/SPABLA_V2_CODE_STANDARD.md#3-tamaño-de-archivo).
-3. **Precondiciones antes de conectar.** No se abre socket, ni sesión
-   STT, ni WebRTC sin tener el par `(fromLang, targetLang)` validado y
-   con `fromLang !== targetLang`. No es un guard defensivo; es una
-   precondición de tipo (`LanguagePair` — ver Engine §Contratos).
-4. **Fases independientes.** Cada fase se cierra con tag protegido,
-   prueba real bidireccional documentada, y sin regresiones. Ver
-   [Release Standard](standards/SPABLA_V2_RELEASE_STANDARD.md) para el
-   procedimiento.
-5. **Cero feature flags acumulativos.** Al sustituir un motor STT/MT/TTS
-   se reemplaza, no se coexiste. Detalle en [Code Standard
-   §6](standards/SPABLA_V2_CODE_STANDARD.md#6-prohibiciones-transversales).
+1. **Contratos explícitos.** Cada módulo declara qué recibe y qué emite. Nada se comunica por refs globales, closures, o estado compartido implícito.
+2. **Una responsabilidad por archivo.** Los archivos monolito de V1 (`page.tsx` ~1200, `useWebRTC.ts` ~1150, `signaling.ts` ~800) están prohibidos por diseño. Cap y procedimiento en [`standards/SPABLA_V2_CODE_STANDARD.md §3`](standards/SPABLA_V2_CODE_STANDARD.md#3-tamaño-de-archivo).
+3. **Precondiciones antes de conectar.** No se abre socket, ni sesión STT, ni WebRTC sin tener el par `(fromLang, targetLang)` validado y con `fromLang !== targetLang`. No es un guard defensivo; es una precondición de tipo.
+4. **Fases independientes.** Cada fase se cierra con tag protegido, prueba real bidireccional documentada, y sin regresiones. No se avanza sin cierre.
+5. **Cero feature flags acumulativos.** Al sustituir un motor STT/MT/TTS se reemplaza, no se coexiste. Nada de `if (USE_X_ENGINE) ...` bifurcando el pipeline.
 
 ---
 
 ## 2. Módulos principales
 
-Trece módulos de dominio, cada uno con responsabilidad única.
+Trece módulos, cada uno con una responsabilidad única y dependencias declaradas.
 
 | # | Módulo | Responsabilidad | Depende de | Emite |
 |---|---|---|---|---|
 | 1 | `auth` | Autenticación anónima Supabase | Supabase | `User { id, name, language }` |
 | 2 | `conversation` | Conversación + participantes + realtime membership | `auth`, Supabase | `Conversation`, `Participant[]` |
 | 3 | `messaging` | Mensajes de texto + timeline | `conversation` | `Message` events |
-| 4 | `call-session` | Contrato de sesión de llamada | `conversation` | Estados + acciones de sesión |
-| 5 | `signaling` | Transporte de señales entre pares | `call-session` | Eventos WebRTC |
+| 4 | `call-session` | Contrato de sesión de llamada (§3) | `conversation` | Estados de sesión + acciones |
+| 5 | `signaling` | Transporte de señales entre pares (offer/answer/ICE + eventos custom) | `call-session` | Eventos WebRTC |
 | 6 | `webrtc` | `RTCPeerConnection`, tracks, upgrade de video | `signaling` | Tracks de audio/video |
 | 7 | `audio-capture` | `MediaStream` de mic + downsample + unlocks iOS | `webrtc` | PCM chunks |
-| 8 | `stt` | Voz → texto (partial + final) | `audio-capture` | `STTPartial`, `STTFinal` |
-| 9 | `translator` | Texto origen → texto destino | `stt` | `TranslationResult` |
-| 10 | `tts` | Texto → audio streaming | `translator` | `TTSAudioChunk` |
+| 8 | `stt` | Voz → texto (partial + final) | `audio-capture` | `Utterance { turnId, text, isFinal }` |
+| 9 | `translator` | Texto origen → texto destino | `stt` | `Translation { turnId, source, target }` |
+| 10 | `tts` | Texto → audio streaming | `translator` | Audio chunks `{ turnId, seq }` |
 | 11 | `bubbles` | Estado + renderizado del timeline traducido | `translator`, `messaging` | Ninguno (sink de UI) |
 | 12 | `ring` | Tonos de llamada entrantes/salientes | `call-session` | Ninguno (sink de audio) |
 | 13 | `ui` | Componentes React puros (props → JSX) | Todos los sinks | JSX |
 
-**Regla arquitectónica reforzada por ADR
-[ADR-002](decisions/ADR-002-2026-07-04-engine-mediates-modules.md):** los
-módulos **no se hablan directamente**. Todo pasa por el **SPABLA
-Engine** (ver Engine.md §1). La columna "Depende de" indica la fuente
-semántica de los datos, no un import directo.
-
-Cada módulo se testea de forma aislada. Los tests de integración cubren
-solo las adyacencias declaradas.
+Cada módulo se testea de forma aislada. Los tests de integración cubren solo las adyacencias declaradas en esta tabla. Cualquier import cruzado no declarado es un error de arquitectura.
 
 ---
 
-## 3. Contrato `CallSession`
+## 3. Contrato CallSession
 
-La sesión de llamada es la primitiva central de V2. Sustituye la mezcla
-de V1 (`useCallSignaling` + `useWebRTC` + refs cruzados + estado en
-`page.tsx`) por un único objeto inmutable con máquina de estados
-explícita.
+La sesión de llamada es la primitiva central de V2. Sustituye la mezcla de V1 (`useCallSignaling` + `useWebRTC` + refs cruzados + estado en `page.tsx`) por un único objeto inmutable con máquina de estados explícita.
 
-Nombre del contrato: `CallSession`. Estado: `CallState`. Cuerpo canónico
-en el código fuente: `engine/src/types/call.ts`. Descripción de campos y
-máquina de estados: ver
-[Engine §4 Contratos foundation](SPABLA_V2_ENGINE.md#4-contratos-foundation)
-y [Engine §5.1 CallState](SPABLA_V2_ENGINE.md#51-callstate-fase-1).
-
-**Invariantes clave** (verificadas en la máquina de estados y en tests):
-
-- No se crea sin `caller.language !== callee.language`.
-- Transiciones limitadas al DAG documentado en Engine.md.
-- `webrtc.openConnection()` sólo aceptable con `state === "accepted"` —
-  invariante de tipo.
-- Inmutable desde fuera de `session-manager`; consumers reciben
-  snapshots vía eventos, nunca refs mutables.
+Cuerpo y API canónicos: ver [`SPABLA_V2_ENGINE.md §4`](SPABLA_V2_ENGINE.md#4-contrato-callsession) y el código fuente `engine/src/types/call.ts`.
 
 ---
 
@@ -112,26 +55,22 @@ y [Engine §5.1 CallState](SPABLA_V2_ENGINE.md#51-callstate-fase-1).
 ```
 1. Usuario visita URL de conversación.
 
-2. Módulo `conversation` resuelve participantes y sus idiomas
-   (Supabase + realtime).
-   • Si peer_language ausente → UI muestra "esperando participante"
-     con timeout 30 s y error.
-   • Botón de llamada permanece DESHABILITADO hasta que ambos lados
-     tengan lang válido y != propio.
+2. Módulo `conversation` resuelve participantes y sus idiomas (Supabase + realtime).
+   • Si peer_language ausente → UI muestra "esperando participante" con timeout 30 s y error.
+   • Botón de llamada permanece DESHABILITADO hasta que ambos lados tengan lang válido y != propio.
 
 3. Usuario A pulsa llamar.
-   • Engine.initiateCall({ mode: "voice" }) → crea CallSession
-     en "ringing".
+   • callSession.initiate({ mode: "voice" }) → crea CallSession, DB actualiza estado a "ringing".
    • Supabase Realtime propaga al peer.
 
 4. Usuario B recibe evento → CallSession pasa a "incoming".
    • ring.startIncoming(). UI muestra aceptar/rechazar.
 
-5. Usuario B acepta → Engine.acceptCall(id) → estado "accepted".
+5. Usuario B acepta → callSession.accept(id) → estado "accepted" en DB.
 
 6. Ambos clientes observan "accepted" y ejecutan en secuencia:
    • ring.stop()
-   • webrtc.openConnection(callSession) — protegido por invariante
+   • webrtc.openConnection(callSession) — protegido por invariante de tipo
    • audio-capture.start() — dentro del gesture handler para iOS
    • signaling.exchangeOfferAnswer(...) hasta ICE conectado
 
@@ -141,18 +80,15 @@ y [Engine §5.1 CallState](SPABLA_V2_ENGINE.md#51-callstate-fase-1).
    • tts.startPlayback()  (solo receptor)
 
 8. Al colgar cualquier lado:
-   • Engine.endCall(id) → estado "ended"
+   • callSession.end(id) → estado "ended"
    • Todos los módulos ejecutan cleanup en orden inverso al arranque:
-     stt.stop() → translator.stop() → tts.stop() → webrtc.close()
-     → audio-capture.stop() → ring.stop()
+     stt.stop() → translator.stop() → tts.stop() → webrtc.close() → audio-capture.stop() → ring.stop()
    • bubbles conserva el historial de la sesión.
 
-9. Estado terminal "ended" → UI vuelve a modo chat. Estado en DB queda
-   archivado.
+9. Estado terminal "ended" → UI vuelve a modo chat. Estado en DB queda archivado.
 ```
 
-**Regla dura:** cualquier evento posterior a `state === "ended"` es
-descartado por cada módulo receptor, verificado en tests unitarios.
+**Regla dura:** cualquier evento posterior a `state === "ended"` (transcript-result, translated, audio-chunk) es descartado por cada módulo receptor sin excepción, verificado en tests unitarios de cada módulo.
 
 ---
 
@@ -165,136 +101,95 @@ Pipeline lineal, cada eslabón medible y sustituible sin tocar el resto.
   mic → audio-capture → PCM chunks (24 kHz mono)
         │
         ▼
-  signaling backend → stt (adapter STT: Deepgram Live | Whisper streaming | ...)
+  signaling backend → stt (Deepgram Live | Whisper streaming)
         │
-        ├── stt.partial → local caption del emisor
+        ├── partial → Utterance{ turnId, text, isFinal: false } → sender local caption
         │
-        └── stt.final { text, language, turnId }
+        └── final   → Utterance{ turnId, text, isFinal: true }
                       │
                       ▼
-                      translator (adapter MT: OpenAI | Gemini | DeepL | Claude | ...)
+                      translator (GPT-4o-mini | traductor dedicado)
                       │
-                      ├── translation.completed { translatedText, targetLang } → subtitle receptor
+                      ├── Translation{ turnId, source, target } → subtitle event al receptor
                       │
-                      └── translation.completed → tts (adapter TTS: ElevenLabs | OpenAI TTS | Cartesia | ...)
-                                                  │
-                                                  ▼
-                                                  tts.chunk.generated { requestId, seq, isFinal } → receptor
-                                                                                                     │
-                                                                                                     ▼
-                                                                                                 PlaybackQueue ordenada por turnId + seq
+                      └── Translation → tts (ElevenLabs | OpenAI TTS)
+                                        │
+                                        ▼
+                                        audio chunks{ turnId, seq } → receptor
+                                                                        │
+                                                                        ▼
+                                                                    PlaybackQueue ordenada por turnId
 
 [receptor]
-  bubbles inserta burbuja al recibir translation.completed
-  PlaybackQueue reproduce chunks estrictamente en orden turnId + seq
+  bubbles inserta burbuja al recibir subtitle{ turnId, translated }
+  tts.PlaybackQueue reproduce chunks ordenados por turnId + seq
 ```
 
 ### Contratos entre eslabones
 
-- **`turnId` es único, estable e inmutable** durante todo el ciclo del
-  turno. Partial y final comparten `turnId`. La request de traducción
-  hereda `sourceTurnId`. Los chunks TTS enlazan al request vía
-  `sourceTranslationRequestId`.
-- **Cola ordenada en el receptor.** La `PlaybackQueue` reproduce chunks
-  estrictamente en orden. Un turno nuevo NO interrumpe la reproducción
-  del anterior — se encola. Solo `call.ended` corta la cola con
-  `flush()`.
-- **Partials nunca se traducen ni se muestran como burbuja final.** Solo
-  alimentan la caption local del emisor.
-- **`bubbles` inserta la burbuja al recibir `translation.completed`.**
-  Nunca antes.
-- **Un `turnId` puede fallar sin propagar el fallo.** Si `translator` o
-  `tts` erroran para un turno, se emite `translation.failed` o
-  `tts.failed` con `code` específico y el pipeline sigue con el turno
-  siguiente.
+- **`turnId` es único, estable e inmutable** durante todo el ciclo del turno. Partial y final comparten `turnId`. La traducción hereda el mismo `turnId`. Los chunks TTS del turno usan `turnId + seq`. Un burbuja del receptor se asocia a exactamente un `turnId`.
+- **Cola ordenada en el receptor.** La `PlaybackQueue` reproduce chunks estrictamente en orden de `turnId` de emisión. Un turno nuevo NO interrumpe la reproducción del anterior — se encola. Solo un `callSession.end` corta la cola con `flush()`.
+- **Partials nunca se traducen ni se muestran como burbuja final.** Solo alimentan la caption local del emisor.
+- **`bubbles` inserta la burbuja al recibir `Translation`. Nunca antes.** No hay burbujas "en construcción" mostradas al receptor.
+- **Un `turnId` puede fallar sin propagar el fallo.** Si `translator` o `tts` erroran para un turnId, ese turno se marca fallido y se emite un `TurnError { turnId, stage, reason }`. La UI del emisor muestra un icono discreto; el pipeline sigue con el siguiente turnId.
 
 ### Latencia esperada
 
 - STT partial: < 300 ms.
 - STT final: fin de silencio + 200-500 ms.
-- Traducción: 300-800 ms.
+- Traducción: 300-800 ms (una llamada por turno, no streaming).
 - TTS primer chunk: 200-500 ms tras traducción.
 - **Latencia total emisor→primer audio del receptor: ≤ 3 s objetivo, ≤ 5 s aceptable.**
 
 ---
 
-## 6. Estructura del repositorio
+## 6. Estructura de carpetas propuesta
 
-El paquete `engine/` es la primera pieza construida (Fases 1–5). Los
-módulos de aplicación (`app/`, `server/`, cliente móvil, etc.) se
-construyen en fases posteriores fuera del alcance actual.
+Estructura real actual del Engine V2: paquete `engine/src/` con
+subcarpetas `adapter-registry/`, `conversation-manager/`, `core-api/`,
+`engine/`, `event-bus/`, `language-manager/`, `messaging/`,
+`participant-manager/`, `pipeline/`, `session-manager/`,
+`state-machine/`, `stt/`, `translation/`, `types/`. La estructura
+cliente/servidor completa la definirán las fases posteriores.
 
-### 6.1 Estructura actual del Engine (fases 1–4)
-
-```
-engine/
-└── src/
-    ├── adapter-registry/          # AdapterRegistry (Fase 1.5)
-    ├── conversation-manager/       # ConversationManager (Fase 1)
-    ├── core-api/                   # SpablaCore + ops companions
-    ├── engine/                     # Engine facade (Fase 1)
-    ├── event-bus/                  # EventBus síncrono (Fase 1)
-    ├── language-manager/           # LanguageManager (Fase 1)
-    ├── messaging/                  # MessageManager (Fase 2)
-    ├── participant-manager/        # ParticipantManager (Fase 1)
-    ├── pipeline/                   # TurnPipelineManager (Fase 1.5)
-    ├── session-manager/            # SessionManager (Fase 1)
-    ├── state-machine/              # StateMachine primitivo
-    ├── stt/                        # STTManager (Fase 3)
-    ├── translation/                # TranslationManager (Fase 4)
-    └── types/                      # Contratos foundation + por módulo
-        ├── adapters.ts             # Marker interfaces por kind
-        ├── call.ts, conversation.ts, participant.ts, language.ts,
-        │   ids.ts, events.ts, message.ts, stt.ts, translation.ts,
-        │   turn.ts
-        └── (futura: tts.ts en Fase 5)
-```
-
-Reglas estructurales aplicables al Engine:
-
-- Ningún archivo de `engine/src/<módulo>/` importa de otro `<módulo>/`
-  salvo lo declarado en las dependencias de constructor (`Engine`
-  compone los managers vía DI).
-- Un lint rule (o ADR + review manual) verifica los límites de
-  importación.
-
-### 6.2 Roadmap de estructura cliente/servidor
-
-Los módulos consumidores del Engine (React app, backend de señalización,
-etc.) llegan en fases posteriores fuera de este documento. Cuando se
-abra la fase correspondiente, su plan describirá la estructura exacta.
+Regla estructural: ningún archivo de un submódulo importa de otro
+submódulo salvo vía Engine (regla formalizada en
+[`decisions/ADR-002-2026-07-04-engine-mediates-modules.md`](decisions/ADR-002-2026-07-04-engine-mediates-modules.md)).
 
 ---
 
 ## 7. Fases de construcción
 
-Cada fase produce **código + tag protegido + prueba real bidireccional
-documentada + reporte de auditoría** conforme al
-[Release Standard §5](standards/SPABLA_V2_RELEASE_STANDARD.md#5-procedimiento-de-cierre-de-fase).
+Cada fase produce **código + tag protegido + prueba real bidireccional documentada**.
 
-| Fase | Alcance | Módulos activos | Plan | Tag al cierre |
-|---|---|---|---|---|
-| **Fase 0** | Arquitectura documentada. Sin código funcional. | `docs` | Este archivo + [Product Core](SPABLA_V2_PRODUCT_CORE.md) | — |
-| **Fase 1** | Engine Foundation. Contratos, managers básicos, `SpablaCore`. | `conversation-manager`, `language-manager`, `participant-manager`, `session-manager`, `engine`, `core-api`, `event-bus`, `state-machine`, `pipeline`, `adapter-registry` | (integrado en Engine.md) | `spabla-v2-engine-foundation-2026-07-04` |
-| **Fase 2** | Messaging module. Mensajes de texto con estado. | + `messaging` | (rama `spabla-v2/fase-2-messaging`) | `spabla-v2-phase-2-messaging-2026-07-04` |
-| **Fase 3** | STT module. Voz → texto. | + `stt` | [Plan Fase 3](phases/SPABLA_V2_PHASE_3_STT_PLAN.md) | `spabla-v2-phase-3-stt-2026-07-06` |
-| **Fase 4** | Translation module. Texto origen → destino. | + `translation` | [Plan Fase 4](phases/SPABLA_V2_PHASE_4_TRANSLATION_PLAN.md) | `spabla-v2-phase-4-translation-2026-07-06` |
-| **Fase 5** | TTS module. Texto → audio streaming. | + `tts` | [Plan Fase 5](phases/SPABLA_V2_PHASE_5_TTS_PLAN.md) | (pendiente) |
-| **Fase 6** | Videollamada + orquestación STT → MT → TTS. | Extensión `webrtc` + orquestador | (pendiente) | (pendiente) |
-| **Fase 7** | Endurecimiento. Errores exhaustivos, timeouts, cleanup, telemetría, RLS. | Todo | (pendiente) | `v2-stable` |
+| Fase | Alcance | Módulos activos | Tag al cierre |
+|---|---|---|---|
+| **Fase 0** | Arquitectura documentada. Sin código funcional. | `docs` | `spabla-v2/fase-0` |
+| **Fase 1** | Chat estable. Users, conversaciones, participantes, mensajes de texto, RLS, realtime en ambos sentidos. Sin llamada. | `auth`, `conversation`, `messaging`, `ui` (mínimo) | `spabla-v2-engine-foundation-2026-07-04` |
+| **Fase 2** | Llamada sin traducción. WebRTC end-to-end, señalización, tonos, aceptar/rechazar/colgar. Audio crudo entre pares. | + `call-session`, `signaling`, `webrtc`, `audio-capture`, `ring` | `spabla-v2-phase-2-messaging-2026-07-04` |
+| **Fase 3** | STT integrado. Backend transcribe y devuelve `Utterance` al sender. Sin traducción, sin TTS, sin burbujas. | + `stt` | `spabla-v2-phase-3-stt-2026-07-06` |
+| **Fase 4** | Traducción de texto. Cada final se traduce y se emite como `Translation` al peer, con burbuja en su chat. | + `translator`, `bubbles` | `spabla-v2-phase-4-translation-2026-07-06` |
+| **Fase 5** | TTS streaming. Sobre Fase 4, se genera audio traducido y se reproduce en el receptor con cola ordenada por turnId. | + `tts` | (pendiente) |
+| **Fase 6** | Videollamada. Pista de video sobre la sesión ya negociada. Traducción intacta. | Extensión de `webrtc` + `ui` | (pendiente) |
+| **Fase 7** | Endurecimiento. Errores exhaustivos en cada eslabón, timeouts, cleanup verificado, telemetría, RLS auditada, tests completos. | Todo | `v2-stable` |
 
-Las reglas transversales entre fases (no abrir sin cerrar la anterior;
-ADR obligatoria para modificar fase previa; re-tag si se descubre
-contrato incompleto) están consolidadas en
-[Release Standard §5–§6](standards/SPABLA_V2_RELEASE_STANDARD.md#5-procedimiento-de-cierre-de-fase).
+### Reglas duras entre fases
+
+- No se abre una fase sin haber cerrado, taggeado y probado la anterior.
+- No se toca un módulo de una fase anterior sin justificación escrita (ADR) y sin re-validar la prueba real de esa fase.
+- Cada fase produce como entregable mínimo: código + tag protegido + `docs/phases/SPABLA_V2_PHASE_<N>_<AREA>_PLAN.md` con qué se hizo, qué se probó, qué queda fuera de scope.
+- Si una fase requiere cambios en un módulo de fase anterior por descubrimiento tardío de un contrato incompleto, el fix vive en una rama aparte, se valida, se merge, y **la fase anterior se re-tagguea**.
 
 ---
 
-## 8. Criterios de "estable"
+## 8. Criterio de versión estable
 
 Los ocho criterios universales para declarar una fase estable viven en
-[`SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales).
-Cada plan de fase añade solo el DELTA específico.
+[`standards/SPABLA_V2_RELEASE_STANDARD.md §2`](standards/SPABLA_V2_RELEASE_STANDARD.md#2-criterios-universales).
 
-Este documento no reimprime los criterios; toda referencia a "cierre de
-fase" o "tag protegido" debe leerse contra la fuente única.
+---
+
+### Sobre lo salvable de V1
+
+Decisión registrada en
+[`decisions/ADR-001-2026-07-04-v1-portable-items.md`](decisions/ADR-001-2026-07-04-v1-portable-items.md).
