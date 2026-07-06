@@ -1,10 +1,7 @@
 /**
- * SPABLA Core API — SpablaCore.
- *
- * Public facade for every consumer (web / mobile / desktop / SDK / API).
- * Wraps Engine internally; Engine, managers and EventBus are never exposed.
- * Precondition validation via SpablaCoreError before any Engine call.
- * Fase 2 wires the messaging module (createOutgoing / advance / getThread).
+ * SPABLA Core API — SpablaCore. Public facade for every consumer.
+ * Wraps Engine; Engine, managers and EventBus are never exposed. STT
+ * command orchestration lives in SttOps (thin delegators from here).
  */
 
 import { Engine } from "../engine/Engine.js";
@@ -17,20 +14,19 @@ import type { CallSession } from "../types/call.js";
 import type { ConversationSession } from "../types/conversation.js";
 import type { Message, MessageThread } from "../types/message.js";
 import type { MessageManager } from "../messaging/MessageManager.js";
+import type { STTManager } from "../stt/STTManager.js";
+import type { STTSession, STTTurn } from "../types/stt.js";
+import { SttOps } from "./stt-ops.js";
 import {
   SpablaCoreError,
-  type CallFlags,
-  type CreateConversationInput,
-  type GetMessagesInput,
-  type GetMessagesResult,
-  type JoinConversationInput,
-  type MarkAsReadInput,
-  type NotifyIncomingMessageInput,
-  type SendMessageInput,
-  type SendMessageResult,
-  type SpablaCoreConfig,
-  type StartCallInput,
-  type StartCallResult,
+  type CallFlags, type CreateConversationInput,
+  type GetMessagesInput, type GetMessagesResult,
+  type JoinConversationInput, type MarkAsReadInput,
+  type NotifyIncomingMessageInput, type PushAudioChunkInput,
+  type SendMessageInput, type SendMessageResult,
+  type SimulateSTTErrorInput, type SimulateSTTFinalInput, type SimulateSTTPartialInput,
+  type SpablaCoreConfig, type StartCallInput, type StartCallResult,
+  type StartSTTInput, type StartSTTResult, type StopSTTInput,
 } from "./types.js";
 
 export type SpablaEventName = EngineEventName;
@@ -42,6 +38,8 @@ export class SpablaCore {
   private readonly clock: Clock;
   private readonly newId: () => UUID;
   private readonly messages: MessageManager;
+  private readonly stt: STTManager;
+  private readonly sttOps: SttOps;
   private readonly flagsByCall: Map<UUID, CallFlags> = new Map();
 
   constructor(config: SpablaCoreConfig = {}) {
@@ -52,6 +50,8 @@ export class SpablaCore {
     this.bus = new EventBus();
     this.engine = new Engine({ clock: this.clock, newId: this.newId, bus: this.bus });
     this.messages = this.engine.getMessageManager();
+    this.stt = this.engine.getSTTManager();
+    this.sttOps = new SttOps(this.engine, this.stt, this.newId, () => this.correlation());
   }
 
   // ── Conversation ────────────────────────────────────────────────────────
@@ -236,6 +236,17 @@ export class SpablaCore {
     this.flagsByCall.set(callId, { ...flags, interpreterEnabled: false });
     this.emitCore({ name: "interpreter.disabled", callId });
   }
+
+  // ── STT (fase 3) — thin delegators to SttOps ────────────────────────────
+  startSTT(input: StartSTTInput): StartSTTResult { return this.sttOps.start(input); }
+  stopSTT(input: StopSTTInput): void { this.sttOps.stop(input); }
+  pushAudioChunk(input: PushAudioChunkInput): void { this.sttOps.pushChunk(input); }
+  simulateSTTPartial(input: SimulateSTTPartialInput): void { this.sttOps.simulatePartial(input); }
+  simulateSTTFinal(input: SimulateSTTFinalInput): void { this.sttOps.simulateFinal(input); }
+  simulateSTTError(input: SimulateSTTErrorInput): void { this.sttOps.simulateError(input); }
+  getSTTSession(sid: UUID): STTSession | undefined { return this.sttOps.getSession(sid); }
+  getSTTTurn(tid: UUID): STTTurn | undefined { return this.sttOps.getTurn(tid); }
+  listActiveSTTSessions(cid: UUID): ReadonlyArray<STTSession> { return this.sttOps.listActive(cid); }
 
   // ── Subscription + read-only snapshots ──────────────────────────────────
 

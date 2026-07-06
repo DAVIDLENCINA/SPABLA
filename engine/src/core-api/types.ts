@@ -9,6 +9,7 @@ import type { UUID, ISOTimestamp } from "../types/ids.js";
 import type { LangCode } from "../types/language.js";
 import type { CallMode } from "../types/call.js";
 import type { Message, MessageThread } from "../types/message.js";
+import type { STTSpeaker } from "../types/stt.js";
 
 /** Participant identity + language, as it enters the Core API. */
 export type ParticipantInput = Readonly<{
@@ -87,6 +88,20 @@ export type NotifyIncomingMessageInput = Readonly<{
   language?: LangCode | null;
   /** Initial status for the incoming message. Default: `"sent"`. */
   initialStatus?: "sent" | "delivered";
+}>;
+
+// ── STT (fase 3) ────────────────────────────────────────────────────────────
+
+export type StartSTTInput = Readonly<{ callId: UUID; speaker: STTSpeaker }>;
+export type StartSTTResult = Readonly<{ sessionId: UUID }>;
+export type StopSTTInput = Readonly<{ sessionId: UUID }>;
+export type PushAudioChunkInput = Readonly<{ sessionId: UUID; chunk: Uint8Array }>;
+export type SimulateSTTPartialInput = Readonly<{ sessionId: UUID; text: string }>;
+export type SimulateSTTFinalInput = Readonly<{
+  sessionId: UUID; text: string; language?: LangCode | null;
+}>;
+export type SimulateSTTErrorInput = Readonly<{
+  sessionId: UUID; code: string; message: string;
 }>;
 
 /** Typed error thrown by Core-API precondition checks. */

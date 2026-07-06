@@ -369,6 +369,305 @@ describe("SpablaCore — messaging events", () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// STT (fase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+function seedActiveCall(core: SpablaCore) {
+  seedConversation(core);
+  const { callId } = core.startCall({ mode: "voice" });
+  core.acceptCall(callId);
+  return callId;
+}
+
+describe("SpablaCore — startSTT", () => {
+  it("returns sessionId; getSTTSession reflects listening", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    expect(sessionId).toBeDefined();
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+  });
+
+  it("rejects when no conversation is loaded", () => {
+    const core = makeCore();
+    expect(() => core.startSTT({ callId: asUUID("nope"), speaker: "local" })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects when the CallSession does not exist", () => {
+    const core = makeCore();
+    seedConversation(core);
+    expect(() => core.startSTT({ callId: asUUID("nope"), speaker: "local" })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects when the CallSession is not accepted", () => {
+    const core = makeCore();
+    seedConversation(core);
+    const { callId } = core.startCall({ mode: "voice" });
+    expect(() => core.startSTT({ callId, speaker: "local" })).toThrow(SpablaCoreError);
+  });
+
+  it("emits stt.session.started", () => {
+    const core = makeCore();
+    const started = vi.fn();
+    core.subscribe("stt.session.started", started);
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    expect(started).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a second active session for the same (callId, speaker)", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    expect(() => core.startSTT({ callId, speaker: "local" })).toThrow(SpablaCoreError);
+  });
+});
+
+describe("SpablaCore — stopSTT", () => {
+  it("transitions the session to completed and emits stt.session.ended", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    const ended = vi.fn();
+    core.subscribe("stt.session.ended", ended);
+    core.stopSTT({ sessionId });
+    expect(core.getSTTSession(sessionId)?.state).toBe("completed");
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits stt.session.ended once", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    const ended = vi.fn();
+    core.subscribe("stt.session.ended", ended);
+    core.stopSTT({ sessionId });
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects unknown sessionId", () => {
+    const core = makeCore();
+    expect(() => core.stopSTT({ sessionId: asUUID("nope") })).toThrow(SpablaCoreError);
+  });
+
+  it("rejects if the session is already terminal", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.stopSTT({ sessionId });
+    expect(() => core.stopSTT({ sessionId })).toThrow();
+  });
+
+  it("clears currentTurnId when stopping mid-turn", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.simulateSTTPartial({ sessionId, text: "half" });
+    core.stopSTT({ sessionId });
+    expect(core.getSTTSession(sessionId)?.currentTurnId).toBeUndefined();
+  });
+});
+
+describe("SpablaCore — pushAudioChunk", () => {
+  it("first chunk transitions listening → transcribing", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.pushAudioChunk({ sessionId, chunk: new Uint8Array(128) });
+    expect(core.getSTTSession(sessionId)?.state).toBe("transcribing");
+  });
+
+  it("bytes accumulate in bytesReceived", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.pushAudioChunk({ sessionId, chunk: new Uint8Array(50) });
+    core.pushAudioChunk({ sessionId, chunk: new Uint8Array(70) });
+    expect(core.getSTTSession(sessionId)?.bytesReceived).toBe(120);
+  });
+
+  it("rejects unknown sessionId", () => {
+    const core = makeCore();
+    expect(() =>
+      core.pushAudioChunk({ sessionId: asUUID("nope"), chunk: new Uint8Array(1) }),
+    ).toThrow(SpablaCoreError);
+  });
+
+  it("rejects when the session is terminal", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.stopSTT({ sessionId });
+    expect(() =>
+      core.pushAudioChunk({ sessionId, chunk: new Uint8Array(1) }),
+    ).toThrow();
+  });
+
+  it("multiple chunks inside one turn do not create a new turn", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.pushAudioChunk({ sessionId, chunk: new Uint8Array(10) });
+    core.pushAudioChunk({ sessionId, chunk: new Uint8Array(10) });
+    expect(core.getSTTSession(sessionId)?.turnCount).toBe(0);
+  });
+});
+
+describe("SpablaCore — simulatePartial / simulateFinal / simulateError", () => {
+  it("simulateSTTPartial propagates and updates the active turn", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    const partial = vi.fn();
+    core.subscribe("stt.partial", partial);
+    core.simulateSTTPartial({ sessionId, text: "hola" });
+    expect(partial).toHaveBeenCalledTimes(1);
+    expect(core.getSTTSession(sessionId)?.currentTurnId).toBeDefined();
+  });
+
+  it("simulateSTTFinal closes the turn and transitions to listening", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.simulateSTTPartial({ sessionId, text: "hola" });
+    core.simulateSTTFinal({ sessionId, text: "hola mundo", language: "es" });
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+    expect(core.getSTTSession(sessionId)?.currentTurnId).toBeUndefined();
+  });
+
+  it("simulateSTTError transitions to failed", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.simulateSTTError({ sessionId, code: "x", message: "y" });
+    expect(core.getSTTSession(sessionId)?.state).toBe("failed");
+  });
+
+  it("all three reject unknown sessionId", () => {
+    const core = makeCore();
+    const nope = asUUID("nope");
+    expect(() => core.simulateSTTPartial({ sessionId: nope, text: "x" })).toThrow(SpablaCoreError);
+    expect(() => core.simulateSTTFinal({ sessionId: nope, text: "x" })).toThrow(SpablaCoreError);
+    expect(() => core.simulateSTTError({ sessionId: nope, code: "x", message: "y" })).toThrow(SpablaCoreError);
+  });
+
+  it("all three reject on a terminal session", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.stopSTT({ sessionId });
+    expect(() => core.simulateSTTPartial({ sessionId, text: "x" })).toThrow();
+    expect(() => core.simulateSTTFinal({ sessionId, text: "x" })).toThrow();
+    expect(() => core.simulateSTTError({ sessionId, code: "x", message: "y" })).toThrow();
+  });
+});
+
+describe("SpablaCore — STT events", () => {
+  it("subscribe receives all 5 STT event names", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    const names: string[] = [];
+    core.subscribe("stt.session.started", (e) => names.push(e.name));
+    core.subscribe("stt.partial", (e) => names.push(e.name));
+    core.subscribe("stt.final", (e) => names.push(e.name));
+    core.subscribe("stt.failed", (e) => names.push(e.name));
+    core.subscribe("stt.session.ended", (e) => names.push(e.name));
+    core.simulateSTTPartial({ sessionId, text: "x" });
+    core.simulateSTTFinal({ sessionId, text: "x done", language: "en" });
+    core.stopSTT({ sessionId });
+    // session.started was emitted BEFORE our subscribe here — expected absent
+    expect(names).toEqual(["stt.partial", "stt.final", "stt.session.ended"]);
+  });
+
+  it("events carry meta.ts and meta.correlationId", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const started = vi.fn();
+    core.subscribe("stt.session.started", started);
+    core.startSTT({ callId, speaker: "local" });
+    expect(started.mock.calls[0]?.[0].meta.ts).toBeDefined();
+    expect(started.mock.calls[0]?.[0].meta.correlationId).toBeDefined();
+  });
+
+  it("unsubscribe stops STT event delivery", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    const partial = vi.fn();
+    const off = core.subscribe("stt.partial", partial);
+    off();
+    core.simulateSTTPartial({ sessionId, text: "x" });
+    expect(partial).not.toHaveBeenCalled();
+  });
+
+  it("STT events flow through the same bus as Engine + messaging", () => {
+    const core = makeCore();
+    const engineEvent = vi.fn();
+    const stt = vi.fn();
+    core.subscribe("call.accepted", engineEvent);
+    core.subscribe("stt.session.started", stt);
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    expect(engineEvent).toHaveBeenCalledTimes(1);
+    expect(stt).toHaveBeenCalledTimes(1);
+  });
+
+  it("stt.session.started is emitted before any stt.partial for that session", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const seen: string[] = [];
+    core.subscribe("stt.session.started", () => seen.push("started"));
+    core.subscribe("stt.partial", () => seen.push("partial"));
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.simulateSTTPartial({ sessionId, text: "x" });
+    expect(seen).toEqual(["started", "partial"]);
+  });
+});
+
+describe("SpablaCore — STT encapsulation and compat", () => {
+  it("does not expose the STTManager directly", () => {
+    const publicMethods = new Set(
+      Object.getOwnPropertyNames(SpablaCore.prototype).filter((n) => n !== "constructor"),
+    );
+    expect(publicMethods.has("getSTTManager")).toBe(false);
+    expect(publicMethods.has("stt")).toBe(false);
+  });
+
+  it("endCall does NOT auto-stop STT sessions (explicit in fase 3)", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    core.endCall(callId);
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+  });
+
+  it("sendMessage still works during an active STT session", () => {
+    const core = makeCore();
+    const callId = seedActiveCall(core);
+    core.startSTT({ callId, speaker: "local" });
+    const { messageId } = core.sendMessage({ text: "in-call" });
+    expect(core.getMessage(messageId)?.text).toBe("in-call");
+  });
+
+  it("Fase 2 messaging tests remain green (spot check: getMessages returns empty)", () => {
+    const core = makeCore();
+    seedConversation(core);
+    expect(core.getMessages().messages).toEqual([]);
+  });
+
+  it("exposes the 3 STT commands + 3 simulate* + 3 snapshots on prototype", () => {
+    const publicMethods = new Set(
+      Object.getOwnPropertyNames(SpablaCore.prototype).filter((n) => n !== "constructor"),
+    );
+    for (const name of [
+      "startSTT", "stopSTT", "pushAudioChunk",
+      "simulateSTTPartial", "simulateSTTFinal", "simulateSTTError",
+      "getSTTSession", "getSTTTurn", "listActiveSTTSessions",
+    ]) expect(publicMethods.has(name)).toBe(true);
+  });
+});
+
 describe("SpablaCore — messaging encapsulation + compat", () => {
   it("does not expose the MessageManager directly", () => {
     const core = makeCore();

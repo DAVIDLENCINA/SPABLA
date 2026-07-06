@@ -67,6 +67,15 @@ export { TurnPipelineManager, TurnPipelineError } from "./pipeline/TurnPipelineM
 export type { TurnPipeline, TurnStage, TurnSpeaker } from "./types/turn.js";
 export { isTerminalTurnStage, TERMINAL_TURN_STAGES } from "./types/turn.js";
 
+// STT (fase 3) — contracts + manager error type.
+export type {
+  STTSession, STTTurn, STTPartial, STTFinal, STTError,
+  STTSessionState, STTSpeaker,
+} from "./types/stt.js";
+export { isTerminalSTTState, TERMINAL_STT_STATES } from "./types/stt.js";
+export { STTManager, STTManagerError } from "./stt/STTManager.js";
+export type { CreateSTTSessionInput } from "./stt/STTManager.js";
+
 // Messaging (fase 2) — Message contracts and manager error type.
 export type {
   Message,
@@ -105,6 +114,13 @@ export type {
   StartCallInput,
   StartCallResult,
   CallFlags,
+  StartSTTInput,
+  StartSTTResult,
+  StopSTTInput,
+  PushAudioChunkInput,
+  SimulateSTTPartialInput,
+  SimulateSTTFinalInput,
+  SimulateSTTErrorInput,
 } from "./core-api/types.js";
 
 // Errors that external code may want to catch

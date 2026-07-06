@@ -237,6 +237,12 @@ describe("Engine — component injection (fase 1.5)", () => {
     expect(engine.getMessageManager().list()).toEqual([]);
   });
 
+  it("exposes getSTTManager() with default empty state", () => {
+    const engine = makeEngine();
+    expect(engine.getSTTManager()).toBeDefined();
+    expect(engine.getSTTManager().listActiveSessions(asUUID("nope"))).toEqual([]);
+  });
+
   it("does NOT alter existing command behaviour when defaults are used", () => {
     const engine = makeEngine();
     const initiated = vi.fn();

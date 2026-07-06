@@ -15,6 +15,7 @@ import type { SessionManager } from "../session-manager/SessionManager.js";
 import type { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 import type { TurnPipelineManager } from "../pipeline/TurnPipelineManager.js";
 import type { MessageManager } from "../messaging/MessageManager.js";
+import type { STTManager } from "../stt/STTManager.js";
 
 /**
  * Fully-injectable component surface. Consumers may replace any of these
@@ -32,6 +33,7 @@ export interface EngineComponents {
   adapters: AdapterRegistry;
   turnPipelines: TurnPipelineManager;
   messages: MessageManager;
+  stt: STTManager;
 }
 
 /** Public dependency surface — backward-compatible with Fase 1's shape. */

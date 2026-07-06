@@ -16,6 +16,14 @@ import type { ConversationSession, LanguagePairUnresolvableReason } from "./conv
 import type { CallSession, CallState } from "./call.js";
 import type { TurnPipeline, TurnStage } from "./turn.js";
 import type { Message, MessageStatus } from "./message.js";
+import type {
+  STTError,
+  STTFinal,
+  STTPartial,
+  STTSession,
+  STTSessionState,
+  STTTurn,
+} from "./stt.js";
 
 /** Common metadata attached to every emitted event. */
 export type EventMeta = Readonly<{
@@ -108,6 +116,29 @@ export type MessageFailedEvent = {
   reason: string;
 };
 
+// ── STT (fase 3) ────────────────────────────────────────────────────────────
+
+export type STTSessionStartedEvent = { name: "stt.session.started"; session: STTSession };
+export type STTPartialEvent = {
+  name: "stt.partial";
+  session: STTSession;
+  turn: STTTurn;
+  partial: STTPartial;
+};
+export type STTFinalEvent = {
+  name: "stt.final";
+  session: STTSession;
+  turn: STTTurn;
+  final: STTFinal;
+};
+export type STTFailedEvent = {
+  name: "stt.failed";
+  session: STTSession;
+  error: STTError;
+  previousState: STTSessionState;
+};
+export type STTSessionEndedEvent = { name: "stt.session.ended"; session: STTSession };
+
 // ── Video / Interpreter toggles (Fase 1.6) ──────────────────────────────────
 
 export type VideoEnabledEvent  = { name: "video.enabled";  callId: UUID };
@@ -170,6 +201,11 @@ export type EngineEvent =
   | MessageDeliveredEvent
   | MessageReadEvent
   | MessageFailedEvent
+  | STTSessionStartedEvent
+  | STTPartialEvent
+  | STTFinalEvent
+  | STTFailedEvent
+  | STTSessionEndedEvent
   | VideoEnabledEvent
   | VideoDisabledEvent
   | InterpreterEnabledEvent

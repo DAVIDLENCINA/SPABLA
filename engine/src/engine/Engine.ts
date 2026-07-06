@@ -22,6 +22,7 @@ import { SessionManager, type CreateCallInput } from "../session-manager/Session
 import { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 import { TurnPipelineManager } from "../pipeline/TurnPipelineManager.js";
 import { MessageManager } from "../messaging/MessageManager.js";
+import { STTManager } from "../stt/STTManager.js";
 import { defaultNewId, type EngineDependencies } from "./types.js";
 
 export type { EngineComponents, EngineDependencies } from "./types.js";
@@ -37,6 +38,7 @@ export class Engine {
   private readonly adapters: AdapterRegistry;
   private readonly turnPipelines: TurnPipelineManager;
   private readonly messages: MessageManager;
+  private readonly stt: STTManager;
 
   constructor(deps: EngineDependencies = {}) {
     this.clock = deps.clock ?? systemClock();
@@ -51,12 +53,13 @@ export class Engine {
     this.adapters = deps.adapters ?? new AdapterRegistry();
     this.turnPipelines = deps.turnPipelines ?? new TurnPipelineManager(this.bus, this.clock);
     this.messages = deps.messages ?? new MessageManager(this.bus, this.clock);
+    this.stt = deps.stt ?? new STTManager(this.bus, this.clock, this.newId);
   }
 
-  /** Read-only accessor for the MessageManager. Used by the Core API layer. */
-  getMessageManager(): MessageManager {
-    return this.messages;
-  }
+  /** Read-only accessor for the MessageManager. */
+  getMessageManager(): MessageManager { return this.messages; }
+  /** Read-only accessor for the STTManager. */
+  getSTTManager(): STTManager { return this.stt; }
 
   /**
    * Read-only accessor for the AdapterRegistry so SDK consumers can register
