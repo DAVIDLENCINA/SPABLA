@@ -12,7 +12,6 @@ import type { AdapterRegistry } from "../adapter-registry/AdapterRegistry.js";
 import {
   isTerminalTTSRequestState,
   isTerminalTTSSessionState,
-  type TTSAdapter,
   type TTSSession,
   type TTSSessionState,
   type TTSSynthesisRequest,
@@ -132,7 +131,7 @@ export class TTSManager {
       return this.runtime.failRequest(requestId, "session-terminal",
         `session ${input.sessionId} is ${withCounter.state}`, cid);
     }
-    const adapter = this.adapters.get("tts") as TTSAdapter | undefined;
+    const adapter = this.adapters.get("tts");
     if (!adapter) {
       return this.runtime.failRequest(requestId, "no-adapter",
         "no TTSAdapter registered for kind 'tts'", cid);

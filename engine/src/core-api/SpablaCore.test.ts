@@ -1449,6 +1449,18 @@ describe("SpablaCore — startTTS", () => {
     core.startTTS({ callId, voice: VOICE });
     expect(started).toHaveBeenCalledTimes(1);
   });
+
+  it("propagates optional voice.rate and voice.pitch verbatim", () => {
+    const { core } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({
+      callId,
+      voice: { language: "en", voiceId: "alice", rate: 1.25, pitch: 0.9 },
+    });
+    const v = core.getTTSSession(sessionId)!.voice;
+    expect(v.rate).toBe(1.25);
+    expect(v.pitch).toBe(0.9);
+  });
 });
 
 describe("SpablaCore — stopTTS", () => {
@@ -1563,6 +1575,23 @@ describe("SpablaCore — requestSpeech", () => {
     expect(core.getTTSRequest(r1.requestId)?.state).toBe("completed");
     expect(core.getTTSRequest(r2.requestId)?.state).toBe("completed");
     expect(core.getTTSSession(sessionId)?.completedCount).toBe(2);
+  });
+
+  it("explicit language and voiceId override the session defaults", async () => {
+    const { core, adapter } = coreWithTts();
+    const callId = seedActiveCall(core);
+    const { sessionId } = core.startTTS({ callId, voice: VOICE });
+    const { requestId } = core.requestSpeech({
+      sessionId,
+      text: "hola",
+      language: "es",
+      voiceId: "bob",
+    });
+    await flushTts();
+    expect(core.getTTSRequest(requestId)?.language).toBe("es");
+    expect(core.getTTSRequest(requestId)?.voiceId).toBe("bob");
+    expect(adapter.calls[0]?.language).toBe("es");
+    expect(adapter.calls[0]?.voiceId).toBe("bob");
   });
 });
 
