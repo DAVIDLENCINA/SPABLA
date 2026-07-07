@@ -15,7 +15,11 @@ const TURN_STAGE_TRANSITIONS = buildTransitions<TurnStage>({
   created: ["capturing", "failed"],
   capturing: ["transcribing", "failed"],
   transcribing: ["translating", "failed"],
-  translating: ["synthesizing", "failed"],
+  // `translating → completed` added by ADR-001-FOUNDATION-EVOLUTION to
+  // close text turns that skip synthesis; the classical route
+  // `translating → synthesizing → completed` remains canonical for
+  // voice and text-with-TTS.
+  translating: ["synthesizing", "completed", "failed"],
   synthesizing: ["completed", "failed"],
   completed: [],
   failed: [],

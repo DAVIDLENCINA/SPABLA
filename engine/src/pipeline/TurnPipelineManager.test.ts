@@ -40,6 +40,36 @@ describe("TurnPipelineManager — create", () => {
     mgr.create(baseInput(), CID);
     expect(() => mgr.create(baseInput(), CID)).toThrow(TurnPipelineError);
   });
+
+  it("accepts initialStage 'transcribing' (voice arrangement, ADR-001)", () => {
+    const bus = new EventBus();
+    const mgr = new TurnPipelineManager(bus, clock());
+    const started = vi.fn();
+    bus.on("turn.started", started);
+    const t = mgr.create({ ...baseInput(), initialStage: "transcribing" }, CID);
+    expect(t.stage).toBe("transcribing");
+    expect(started.mock.calls[0]?.[0].turn.stage).toBe("transcribing");
+  });
+
+  it("accepts initialStage 'translating' (text arrangement, ADR-001)", () => {
+    const mgr = new TurnPipelineManager(new EventBus(), clock());
+    const t = mgr.create({ ...baseInput(), initialStage: "translating" }, CID);
+    expect(t.stage).toBe("translating");
+  });
+
+  it("rejects terminal initialStage 'completed'", () => {
+    const mgr = new TurnPipelineManager(new EventBus(), clock());
+    expect(() =>
+      mgr.create({ ...baseInput(), initialStage: "completed" }, CID),
+    ).toThrow(TurnPipelineError);
+  });
+
+  it("rejects terminal initialStage 'failed'", () => {
+    const mgr = new TurnPipelineManager(new EventBus(), clock());
+    expect(() =>
+      mgr.create({ ...baseInput(), initialStage: "failed" }, CID),
+    ).toThrow(TurnPipelineError);
+  });
 });
 
 describe("TurnPipelineManager — advance (happy path)", () => {
@@ -69,6 +99,18 @@ describe("TurnPipelineManager — advance (happy path)", () => {
     const after = mgr.advance(TURN_ID, "capturing", CID);
     expect(after).not.toBe(before);
     expect(Object.isFrozen(after)).toBe(true);
+  });
+
+  it("supports the text-without-TTS terminal route: translating → completed (ADR-001)", () => {
+    const bus = new EventBus();
+    const mgr = new TurnPipelineManager(bus, clock());
+    const completed = vi.fn();
+    bus.on("turn.completed", completed);
+    mgr.create({ ...baseInput(), initialStage: "translating" }, CID);
+    mgr.advance(TURN_ID, "completed", CID);
+    expect(completed).toHaveBeenCalledTimes(1);
+    expect(mgr.get(TURN_ID)?.stage).toBe("completed");
+    expect(mgr.get(TURN_ID)?.completedAt).toBeDefined();
   });
 });
 

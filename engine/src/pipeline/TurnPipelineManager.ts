@@ -36,6 +36,15 @@ export type CreateTurnInput = Readonly<{
   turnId: UUID;
   callSessionId: UUID;
   speaker: TurnSpeaker;
+  /**
+   * Optional. Stage in which the pipeline is born. Default: `"created"`
+   * (existing behaviour). MUST be non-terminal. Introduced by
+   * ADR-001-FOUNDATION-EVOLUTION so Fase 6 Pipeline Orchestrator can
+   * open turns directly in `transcribing` (voice) or `translating`
+   * (text) without a spurious `capturing → transcribing → translating`
+   * walk.
+   */
+  initialStage?: TurnStage;
 }>;
 
 export class TurnPipelineManager {
@@ -48,17 +57,28 @@ export class TurnPipelineManager {
     this.clock = clock;
   }
 
-  /** Create a fresh TurnPipeline in stage 'created' and emit turn.started. */
+  /**
+   * Create a fresh TurnPipeline and emit turn.started. Defaults to stage
+   * `"created"` (backward-compatible); accepts a non-terminal
+   * `initialStage` for callers (Fase 6 orchestrator) that need to open
+   * turns directly in `transcribing` or `translating`.
+   */
   create(input: CreateTurnInput, correlationId: CorrelationId): TurnPipeline {
     if (this.turns.has(input.turnId)) {
       throw new TurnPipelineError("duplicate-turnId", { turnId: input.turnId });
+    }
+    const initialStage: TurnStage = input.initialStage ?? "created";
+    if (isTerminalTurnStage(initialStage)) {
+      throw new TurnPipelineError("invalid-initial-stage", {
+        turnId: input.turnId, initialStage,
+      });
     }
     const now = this.clock.nowISO();
     const turn: TurnPipeline = Object.freeze({
       turnId: input.turnId,
       callSessionId: input.callSessionId,
       speaker: input.speaker,
-      stage: "created" as TurnStage,
+      stage: initialStage,
       createdAt: now,
       completedAt: undefined,
       failedAt: undefined,
