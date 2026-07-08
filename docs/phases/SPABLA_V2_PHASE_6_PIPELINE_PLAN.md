@@ -98,7 +98,7 @@ Adaptación entre dominios (única en el orchestrator): `STTFinal { turnId, text
 
 ## 5. Orden exacto de ejecución
 
-Regla de arranque: el orchestrator es el único autorizado a decidir el `initialStage` que pasa a `TurnPipelineManager.create()`. Foundation acepta cualquier valor no-terminal (§0, ADR-001-FOUNDATION-EVOLUTION); el orchestrator lo restringe a `transcribing` (voz) o `translating` (texto). `pipeline.turn.started` no lleva `initialStage`; se lee de `turn.stage`.
+Regla de arranque (fuente normativa: Doctrina §0): el orchestrator restringe el `initialStage` a `transcribing` (voz) o `translating` (texto) al invocar `TurnPipelineManager.create()`. `pipeline.turn.started` no lleva `initialStage`; se lee de `turn.stage`.
 
 **Turno de voz** — orchestrator abre con `initialStage: "transcribing"`: `stt.session.started` → `stt.partial`* → `stt.final` → `pipeline.turn.started(trigger: "voice")` → `translation.request.created` → `.dispatched` → `.completed` → `pipeline.turn.stage.changed(previous: transcribing)` → `tts.request.created` → `.dispatched` → `.chunk.generated`* → `.completed` → `pipeline.turn.stage.changed(previous: translating)` → `pipeline.turn.completed`. Ruta terminal: `transcribing → translating → synthesizing → completed`.
 
@@ -115,7 +115,7 @@ Bus síncrono; el orden listado es el observable estricto. Por `turnId` el orden
 - Texto sin TTS: inicial `translating`; `translating → completed | failed` (ADR-001-FOUNDATION-EVOLUTION).
 - `capturing` no se observa en Fase 6; se reserva para captura real futura (§17).
 
-`TurnPipelineManager` acepta cualquier `initialStage` no-terminal desde Foundation Evolution (ADR-001-FOUNDATION-EVOLUTION); la elección concreta es política del orchestrator (§0), no del manager. §21 garantiza cero cambios adicionales sobre Foundation Evolution en esa FSM.
+Habilitación normativa: Doctrina §0 + ADR-001-FOUNDATION-EVOLUTION. Enforzamiento: §16.5 (cero cambios adicionales sobre Foundation Evolution en esta FSM).
 
 ---
 
@@ -126,7 +126,7 @@ Bus síncrono; el orden listado es el observable estricto. Por `turnId` el orden
 3. `turnId` único de por vida; se propaga como `sourceTurnId` a Translation y linaje (`sourceTranslationRequestId`) a TTS.
 4. `pipeline.turn.completed` se emite tras una de dos rutas autorizadas: (a) voz/texto-con-TTS `synthesizing → completed` activado por `tts.completed`; (b) texto-sin-TTS `translating → completed` activado por `translation.completed`. La ruta la determina `trigger` + política de síntesis efectiva al abrir el turno.
 5. Nunca `requestSpeech` sin `translation.completed` previo con el mismo `sourceTranslationRequestId` (sólo rutas con TTS).
-6. `PipelineOrchestrator` no cachea estado autoritativo; estado vive en `TurnPipelineManager` + cada manager de dominio.
+6. Ver §16.3 (regla canónica sobre estado autoritativo del orchestrator).
 
 ---
 
