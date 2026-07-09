@@ -67,6 +67,11 @@ export { TurnPipelineManager, TurnPipelineError } from "./pipeline/TurnPipelineM
 export type { TurnPipeline, TurnStage, TurnSpeaker } from "./types/turn.js";
 export { isTerminalTurnStage, TERMINAL_TURN_STAGES } from "./types/turn.js";
 
+// Pipeline orchestrator (Fase 6) — types only; the class stays internal.
+export type {
+  PipelineTurnResult, PipelineTurnDurations, PipelineTurnTrigger,
+} from "./types/pipeline.js";
+
 // STT (fase 3) — contracts + manager error type.
 export type {
   STTSession, STTTurn, STTPartial, STTFinal, STTError,

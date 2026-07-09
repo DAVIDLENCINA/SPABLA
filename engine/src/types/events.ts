@@ -11,6 +11,7 @@ import type { LanguagePair } from "./language.js";
 import type { ConversationSession, LanguagePairUnresolvableReason } from "./conversation.js";
 import type { CallSession, CallState } from "./call.js";
 import type { TurnPipeline, TurnStage } from "./turn.js";
+import type { PipelineTurnResult, PipelineTurnTrigger } from "./pipeline.js";
 import type { Message, MessageStatus } from "./message.js";
 import type {
   STTError,
@@ -91,6 +92,37 @@ export type TurnCompletedEvent = {
 
 export type TurnFailedEvent = {
   name: "turn.failed";
+  turn: TurnPipeline;
+  stage: TurnStage;
+  reason: string;
+};
+
+// ── Pipeline orchestrator (fase 6) ──────────────────────────────────────────
+// Capa semántica del ciclo de vida del turno. La emite exclusivamente el
+// `PipelineOrchestrator` como agregado del turno completo. Convive con la
+// capa mecánica `turn.*` (que sigue emitiendo `TurnPipelineManager`). Ver
+// SPABLA_V2_PHASE_6_PIPELINE_PLAN.md §4.
+
+export type PipelineTurnStartedEvent = {
+  name: "pipeline.turn.started";
+  turn: TurnPipeline;
+  trigger: PipelineTurnTrigger;
+};
+
+export type PipelineTurnStageChangedEvent = {
+  name: "pipeline.turn.stage.changed";
+  turn: TurnPipeline;
+  previousStage: TurnStage;
+};
+
+export type PipelineTurnCompletedEvent = {
+  name: "pipeline.turn.completed";
+  turn: TurnPipeline;
+  result: PipelineTurnResult;
+};
+
+export type PipelineTurnFailedEvent = {
+  name: "pipeline.turn.failed";
   turn: TurnPipeline;
   stage: TurnStage;
   reason: string;
@@ -258,6 +290,10 @@ export type EngineEvent =
   | TurnStageChangedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
+  | PipelineTurnStartedEvent
+  | PipelineTurnStageChangedEvent
+  | PipelineTurnCompletedEvent
+  | PipelineTurnFailedEvent
   | MessageCreatedEvent
   | MessageSentEvent
   | MessageDeliveredEvent

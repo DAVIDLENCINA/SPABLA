@@ -634,12 +634,12 @@ describe("SpablaCore — STT encapsulation and compat", () => {
     expect(publicMethods.has("stt")).toBe(false);
   });
 
-  it("endCall does NOT auto-stop STT sessions (explicit in fase 3)", () => {
+  it("endCall auto-stops STT sessions via the PipelineOrchestrator (§14 fase 6)", () => {
     const core = makeCore();
     const callId = seedActiveCall(core);
     const { sessionId } = core.startSTT({ callId, speaker: "local" });
     core.endCall(callId);
-    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+    expect(core.getSTTSession(sessionId)?.state).toBe("completed");
   });
 
   it("sendMessage still works during an active STT session", () => {
@@ -1297,13 +1297,12 @@ describe("SpablaCore — Translation encapsulation + STT-manual bridge", () => {
     expect(methods.has("getTranslationManager")).toBe(false);
   });
 
-  it("endCall does NOT auto-stop translation sessions", () => {
+  it("endCall auto-stops translation sessions via the PipelineOrchestrator (§14 fase 6)", () => {
     const { core } = coreWithAdapter();
     const callId = seedActiveCall(core);
     const { sessionId } = core.startTranslation({ callId });
     core.endCall(callId);
-    // translation session is NOT auto-terminated
-    expect(core.getTranslationSession(sessionId)?.state).toBe("active");
+    expect(core.getTranslationSession(sessionId)?.state).toBe("completed");
   });
 
   it("manual STT + Translation: sourceTurnId preserved end-to-end", async () => {
@@ -1720,12 +1719,12 @@ describe("SpablaCore — TTS encapsulation + Translation-manual bridge", () => {
     expect(methods.has("getTTSManager")).toBe(false);
   });
 
-  it("endCall does NOT auto-stop TTS sessions", () => {
+  it("endCall auto-stops TTS sessions via the PipelineOrchestrator (§14 fase 6)", () => {
     const { core } = coreWithTts();
     const callId = seedActiveCall(core);
     const { sessionId } = core.startTTS({ callId, voice: VOICE });
     core.endCall(callId);
-    expect(core.getTTSSession(sessionId)?.state).toBe("active");
+    expect(core.getTTSSession(sessionId)?.state).toBe("completed");
   });
 
   it("stopTTS cancels via AbortSignal (adapter observable)", async () => {
@@ -1854,5 +1853,396 @@ describe("SpablaCore — Engine compatibility", () => {
     core.endCall(callId);
     // ringing → accepted → ended = 3 transitions, plus initial create emit
     expect(changed).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline orchestrator (fase 6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function flushPipe(cycles = 100): Promise<void> {
+  for (let i = 0; i < cycles; i++) await Promise.resolve();
+}
+function makeMT(): import("../types/adapters.js").MTAdapter {
+  return {
+    kind: "mt",
+    displayName: "fake-mt-6",
+    translate: async (r) => ({ translatedText: `[${r.to}] ${r.text}` }),
+  };
+}
+function makeTTS(): import("../types/adapters.js").TTSAdapter {
+  return {
+    kind: "tts",
+    displayName: "fake-tts-6",
+    synthesize: async function*() {
+      yield { seq: 0, audioBytes: new Uint8Array([7, 8, 9]), mimeType: "audio/wav", isFinal: true };
+    },
+  };
+}
+function seedActiveVoiceCall(core: SpablaCore, opts: { withTTS?: boolean } = {}) {
+  (core as unknown as { engine: { getAdapterRegistry(): { register: (k: string, a: unknown) => void } } })
+    .engine.getAdapterRegistry().register("mt", makeMT());
+  if (opts.withTTS !== false) {
+    (core as unknown as { engine: { getAdapterRegistry(): { register: (k: string, a: unknown) => void } } })
+      .engine.getAdapterRegistry().register("tts", makeTTS());
+  }
+  seedConversation(core);
+  const { callId } = core.startCall({ mode: "voice" });
+  core.acceptCall(callId);
+  const { sessionId: sttId } = core.startSTT({ callId, speaker: "local" });
+  const { sessionId: trId } = core.startTranslation({ callId });
+  let ttsId: ReturnType<typeof asUUID> | undefined;
+  if (opts.withTTS !== false) {
+    const r = core.startTTS({ callId, voice: { language: "en", voiceId: "alice" } });
+    ttsId = r.sessionId;
+  }
+  return { callId, sttId, trId, ttsId };
+}
+function fireVoice(core: SpablaCore, sttId: ReturnType<typeof asUUID>, text: string, language: "es" | "en" = "es"): void {
+  core.simulateSTTPartial({ sessionId: sttId, text });
+  core.simulateSTTFinal({ sessionId: sttId, text, language });
+}
+
+describe("SpablaCore — pipeline.* subscription surface (fase 6)", () => {
+  it("subscribe('pipeline.turn.started') delivers events and returns idempotent Unsubscribe", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const handler = vi.fn();
+    const off = core.subscribe("pipeline.turn.started", handler);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(handler).toHaveBeenCalledTimes(1);
+    off();
+    off(); // idempotent
+    fireVoice(core, sttId, "hi2");
+    await flushPipe();
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("subscribe('pipeline.turn.stage.changed') fires for each transition", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const changed = vi.fn();
+    core.subscribe("pipeline.turn.stage.changed", changed);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    // Voice route: transcribing→translating→synthesizing→completed = 3 transitions
+    expect(changed.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("subscribe('pipeline.turn.completed') carries the PipelineTurnResult payload", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(done.mock.calls[0]?.[0].result.translatedText).toBe("[en] hi");
+  });
+
+  it("subscribe('pipeline.turn.failed') carries stage and reason", async () => {
+    const core = makeCore();
+    // Register a failing MT adapter (must override the one from seedActiveVoiceCall)
+    seedConversation(core);
+    (core as unknown as { engine: { getAdapterRegistry(): { register: (k: string, a: unknown) => void } } })
+      .engine.getAdapterRegistry().register("mt", {
+        kind: "mt", displayName: "boom-mt",
+        translate: async () => { throw new Error("bang"); },
+      });
+    const { callId } = core.startCall({ mode: "voice" });
+    core.acceptCall(callId);
+    const { sessionId: sttId } = core.startSTT({ callId, speaker: "local" });
+    core.startTranslation({ callId });
+    const failed = vi.fn();
+    core.subscribe("pipeline.turn.failed", failed);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed.mock.calls[0]?.[0].reason).toBeDefined();
+  });
+
+  it("mechanical turn.* AND semantic pipeline.turn.* both fire for the same turnId", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const mech: string[] = [];
+    const sem: string[] = [];
+    core.subscribe("turn.started", (e) => mech.push(`mech:${e.turn.turnId}`));
+    core.subscribe("pipeline.turn.started", (e) => sem.push(`sem:${e.turn.turnId}`));
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(mech).toHaveLength(1);
+    expect(sem).toHaveLength(1);
+    expect(mech[0]?.split(":")[1]).toBe(sem[0]?.split(":")[1]);
+  });
+
+  it("pipeline.turn.* payload preserves the `trigger` field ('voice' | 'text')", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const started = vi.fn();
+    core.subscribe("pipeline.turn.started", started);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(started.mock.calls[0]?.[0].trigger).toBe("voice");
+    core.sendMessage({ text: "hola" });
+    await flushPipe();
+    expect(started.mock.calls[1]?.[0].trigger).toBe("text");
+  });
+});
+
+describe("SpablaCore — end-to-end voice pipeline (fase 6)", () => {
+  it("full voice turn: STT → Translation → TTS → pipeline.turn.completed", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const events: string[] = [];
+    core.subscribe("stt.final", () => events.push("stt.final"));
+    core.subscribe("translation.completed", () => events.push("translation.completed"));
+    core.subscribe("tts.completed", () => events.push("tts.completed"));
+    core.subscribe("pipeline.turn.completed", () => events.push("pipeline.turn.completed"));
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    for (const n of ["stt.final", "translation.completed", "tts.completed", "pipeline.turn.completed"]) {
+      expect(events.filter((e) => e === n)).toHaveLength(1);
+    }
+    // Causal ordering (each domain event precedes the semantic aggregate is
+    // guaranteed by the orchestrator, but the exact interleaving between
+    // tts.completed and pipeline.turn.completed depends on subscription order).
+    expect(events.indexOf("stt.final")).toBeLessThan(events.indexOf("translation.completed"));
+    expect(events.indexOf("translation.completed")).toBeLessThan(events.indexOf("pipeline.turn.completed"));
+  });
+
+  it("PipelineTurnResult.sourceText matches the STT final", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    fireVoice(core, sttId, "buenas tardes");
+    await flushPipe();
+    expect(done.mock.calls[0]?.[0].result.sourceText).toBe("buenas tardes");
+  });
+
+  it("PipelineTurnResult.translatedText matches the MT adapter output", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    fireVoice(core, sttId, "hola");
+    await flushPipe();
+    expect(done.mock.calls[0]?.[0].result.translatedText).toBe("[en] hola");
+  });
+
+  it("PipelineTurnResult.ttsChunkCount reflects the actual TTS output", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(done.mock.calls[0]?.[0].result.ttsChunkCount).toBe(1);
+    expect(done.mock.calls[0]?.[0].result.ttsTotalBytes).toBe(3);
+  });
+
+  it("PipelineTurnResult.durations.total >= 0 for a completed voice turn", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    expect(done.mock.calls[0]?.[0].result.durations.total).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("SpablaCore — end-to-end text pipeline (fase 6)", () => {
+  it("text-with-TTS completes through synthesizing", async () => {
+    const core = makeCore();
+    seedActiveVoiceCall(core);
+    const done = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    core.sendMessage({ text: "hola" });
+    await flushPipe();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(done.mock.calls[0]?.[0].result.ttsChunkCount).toBe(1);
+  });
+
+  it("text-without-TTS uses the ADR-001 route translating → completed", async () => {
+    const core = makeCore();
+    seedActiveVoiceCall(core, { withTTS: false });
+    const done = vi.fn();
+    const stageChanged = vi.fn();
+    core.subscribe("pipeline.turn.completed", done);
+    core.subscribe("pipeline.turn.stage.changed", stageChanged);
+    core.sendMessage({ text: "hola" });
+    await flushPipe();
+    expect(done).toHaveBeenCalledTimes(1);
+    expect(done.mock.calls[0]?.[0].result.ttsChunkCount).toBeUndefined();
+    // Exactly one stage transition (translating → completed) — no synthesizing.
+    expect(stageChanged.mock.calls[0]?.[0].previousStage).toBe("translating");
+  });
+
+  it("message.sent without an active translation session does NOT open a pipeline turn", async () => {
+    const core = makeCore();
+    // Seed a conversation but no call / no translation session.
+    seedConversation(core);
+    const started = vi.fn();
+    core.subscribe("pipeline.turn.started", started);
+    core.sendMessage({ text: "hola" });
+    expect(started).not.toHaveBeenCalled();
+  });
+});
+
+describe("SpablaCore — cero regresión Fases 1–5 y Foundation Evolution", () => {
+  it("Fase 1: participant.joined and languagePair.resolved still fire", () => {
+    const core = makeCore();
+    const joined = vi.fn();
+    const resolved = vi.fn();
+    core.subscribe("participant.joined", joined);
+    core.subscribe("languagePair.resolved", resolved);
+    seedConversation(core);
+    expect(joined).toHaveBeenCalledTimes(2);
+    expect(resolved).toHaveBeenCalledTimes(1);
+  });
+
+  it("Fase 2: sendMessage still emits message.created and message.sent", () => {
+    const core = makeCore();
+    seedConversation(core);
+    const created = vi.fn();
+    const sent = vi.fn();
+    core.subscribe("message.created", created);
+    core.subscribe("message.sent", sent);
+    core.sendMessage({ text: "hi" });
+    expect(created).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
+  it("Fase 3: STT session lifecycle still works via simulate*", () => {
+    const core = makeCore();
+    seedConversation(core);
+    const { callId } = core.startCall({ mode: "voice" });
+    core.acceptCall(callId);
+    const { sessionId } = core.startSTT({ callId, speaker: "local" });
+    expect(core.getSTTSession(sessionId)?.state).toBe("listening");
+    core.stopSTT({ sessionId });
+    expect(core.getSTTSession(sessionId)?.state).toBe("completed");
+  });
+
+  it("Fase 4: Translation without pipeline still works via requestTranslation", async () => {
+    const core = makeCore();
+    (core as unknown as { engine: { getAdapterRegistry(): { register: (k: string, a: unknown) => void } } })
+      .engine.getAdapterRegistry().register("mt", makeMT());
+    seedConversation(core);
+    const { callId } = core.startCall({ mode: "voice" });
+    core.acceptCall(callId);
+    const { sessionId } = core.startTranslation({ callId });
+    const { requestId } = core.requestTranslation({ sessionId, text: "hola", sourceLanguage: "es" });
+    await flushPipe();
+    expect(core.getTranslationRequest(requestId)?.state).toBe("completed");
+  });
+
+  it("Fase 5 + Foundation Evolution: TurnPipelineManager still accepts initialStage from ADR-001", () => {
+    const core = makeCore();
+    const mgr = (core as unknown as { engine: { getTurnPipelineManager(): {
+      create: (i: unknown, c: string) => { stage: string };
+    } } }).engine.getTurnPipelineManager();
+    const t = mgr.create(
+      {
+        turnId: asUUID("t-regression"), callSessionId: asUUID("c-regression"),
+        speaker: "local", initialStage: "translating",
+      },
+      "cid-1",
+    );
+    expect(t.stage).toBe("translating");
+  });
+});
+
+describe("SpablaCore — prohibiciones Fase 6", () => {
+  it("§16.7: SpablaCore.prototype does not expose PipelineOrchestrator", () => {
+    const methods = new Set(Object.getOwnPropertyNames(SpablaCore.prototype));
+    expect(methods.has("getPipelineOrchestrator")).toBe(false);
+    expect(methods.has("pipelineOrchestrator")).toBe(false);
+  });
+
+  it("§16.4: no module outside orchestrator invokes TurnPipelineManager.create() with initialStage", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const engineSrc = path.resolve(__dirname, "..");
+    const walk = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) out.push(...walk(p));
+        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) out.push(p);
+      }
+      return out;
+    };
+    const files = walk(engineSrc);
+    for (const f of files) {
+      if (f.includes("pipeline-orchestrator/")) continue;
+      if (f.endsWith("TurnPipelineManager.ts")) continue; // owns create()
+      const body = fs.readFileSync(f, "utf-8");
+      expect(body).not.toMatch(/initialStage:\s*"(transcribing|translating|created|capturing|synthesizing)"/);
+    }
+  });
+
+  it("§16.1 + §16.6: pipeline-orchestrator does not import providers or cross-domain managers as value", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const orchestratorDir = path.resolve(__dirname, "..", "pipeline-orchestrator");
+    const files = fs.readdirSync(orchestratorDir).filter((f: string) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+    for (const f of files) {
+      const body = fs.readFileSync(path.join(orchestratorDir, f), "utf-8");
+      // No value imports from stt/, translation/, tts/, messaging/ managers themselves.
+      expect(body).not.toMatch(/^import\s+\{[^}]*(STTManager|TranslationManager|TTSManager|MessageManager)[^}]*\}\s+from/m);
+      // No provider names in code strings.
+      expect(body).not.toMatch(/OpenAI|Deepgram|Anthropic|Google|Azure|ElevenLabs/i);
+    }
+  });
+
+  it("§16.5: FSM TurnStage transitions are unchanged from Foundation Evolution (spot-check)", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const fsm = fs.readFileSync(
+      path.resolve(__dirname, "..", "pipeline", "turn-stage-machine.ts"), "utf-8");
+    // Guaranteed post-Foundation-Evolution transitions (spot-check the critical rows).
+    expect(fsm).toMatch(/translating:\s*\[[^\]]*"synthesizing"[^\]]*"completed"[^\]]*"failed"[^\]]*\]/);
+    expect(fsm).toMatch(/synthesizing:\s*\[[^\]]*"completed"[^\]]*"failed"[^\]]*\]/);
+  });
+
+  it("§7 invariante 1: only orchestrator invokes advance/fail on TurnPipelineManager", () => {
+    const fs = require("fs");
+    const path = require("path");
+    const engineSrc = path.resolve(__dirname, "..");
+    const walk = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) out.push(...walk(p));
+        else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) out.push(p);
+      }
+      return out;
+    };
+    const files = walk(engineSrc);
+    for (const f of files) {
+      if (f.includes("pipeline-orchestrator/")) continue;
+      if (f.endsWith("TurnPipelineManager.ts")) continue;
+      const body = fs.readFileSync(f, "utf-8");
+      // No calls like turnPipelines.advance(...) or turnPipelines.fail(...) outside orchestrator.
+      expect(body).not.toMatch(/\.getTurnPipelineManager\(\)\.(advance|fail|create)\b/);
+    }
+  });
+
+  it("§7 invariante 6: orchestrator does not cache authoritative state (transient state clears at cleanup)", async () => {
+    const core = makeCore();
+    const { sttId } = seedActiveVoiceCall(core);
+    fireVoice(core, sttId, "hi");
+    await flushPipe();
+    // After completion, another turn using the same speaker starts from a clean slate:
+    // pipeline.turn.started fires again with a fresh turnId.
+    const started = vi.fn();
+    core.subscribe("pipeline.turn.started", started);
+    fireVoice(core, sttId, "hi2");
+    await flushPipe();
+    expect(started).toHaveBeenCalledTimes(1);
+    expect(started.mock.calls[0]?.[0].turn.turnId).toBeDefined();
   });
 });

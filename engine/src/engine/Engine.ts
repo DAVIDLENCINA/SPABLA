@@ -19,6 +19,7 @@ import { MessageManager } from "../messaging/MessageManager.js";
 import { STTManager } from "../stt/STTManager.js";
 import { TranslationManager } from "../translation/TranslationManager.js";
 import { TTSManager } from "../tts/TTSManager.js";
+import { PipelineOrchestrator } from "../pipeline-orchestrator/PipelineOrchestrator.js";
 import { defaultNewId, type EngineDependencies } from "./types.js";
 
 export type { EngineComponents, EngineDependencies } from "./types.js";
@@ -37,6 +38,7 @@ export class Engine {
   private readonly stt: STTManager;
   private readonly translation: TranslationManager;
   private readonly tts: TTSManager;
+  private readonly pipelineOrchestrator: PipelineOrchestrator;
 
   constructor(deps: EngineDependencies = {}) {
     this.clock = deps.clock ?? systemClock();
@@ -56,6 +58,11 @@ export class Engine {
       ?? new TranslationManager(this.bus, this.clock, this.newId, this.adapters);
     this.tts = deps.tts
       ?? new TTSManager(this.bus, this.clock, this.newId, this.adapters);
+    this.pipelineOrchestrator = deps.pipelineOrchestrator ?? new PipelineOrchestrator({
+      bus: this.bus, clock: this.clock, newId: this.newId,
+      stt: this.stt, translation: this.translation, tts: this.tts,
+      messages: this.messages, turns: this.turnPipelines,
+    });
   }
 
   /** Read-only manager accessors. Command surface remains the Engine itself. */
@@ -65,6 +72,7 @@ export class Engine {
   getTTSManager(): TTSManager { return this.tts; }
   getAdapterRegistry(): AdapterRegistry { return this.adapters; }
   getTurnPipelineManager(): TurnPipelineManager { return this.turnPipelines; }
+  getPipelineOrchestrator(): PipelineOrchestrator { return this.pipelineOrchestrator; }
 
   /** Public read-only subscription surface. */
   on<N extends EngineEventName>(name: N, handler: EventHandler<N>): Unsubscribe {
