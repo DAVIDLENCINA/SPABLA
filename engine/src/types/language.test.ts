@@ -61,7 +61,14 @@ describe("LanguagePair — helpers", () => {
   });
 
   it("recognizes every documented LangCode", () => {
-    const codes = ["es", "en", "fr", "de", "it", "pt", "ja", "zh", "ar", "ru"];
+    const codes = [
+      "af", "am", "ar", "bg", "bn", "ca", "cs", "da", "de", "el",
+      "en", "es", "et", "eu", "fa", "fi", "fr", "ga", "gl", "gu",
+      "he", "hi", "hr", "hu", "id", "is", "it", "ja", "km", "ko",
+      "lt", "lv", "mr", "ms", "mt", "ne", "nl", "no", "pl", "pt",
+      "ro", "ru", "sk", "sl", "sv", "sw", "ta", "te", "th", "tl",
+      "tr", "uk", "ur", "vi", "zh",
+    ];
     for (const c of codes) expect(isLangCode(c)).toBe(true);
   });
 
@@ -70,5 +77,42 @@ describe("LanguagePair — helpers", () => {
     expect(isLangCode(null)).toBe(false);
     expect(isLangCode(42)).toBe(false);
     expect(isLangCode(undefined)).toBe(false);
+  });
+
+  it("catalog size matches ADR-005 §5 (55 codes)", () => {
+    const catalog = [
+      "af", "am", "ar", "bg", "bn", "ca", "cs", "da", "de", "el",
+      "en", "es", "et", "eu", "fa", "fi", "fr", "ga", "gl", "gu",
+      "he", "hi", "hr", "hu", "id", "is", "it", "ja", "km", "ko",
+      "lt", "lv", "mr", "ms", "mt", "ne", "nl", "no", "pl", "pt",
+      "ro", "ru", "sk", "sl", "sv", "sw", "ta", "te", "th", "tl",
+      "tr", "uk", "ur", "vi", "zh",
+    ];
+    expect(catalog).toHaveLength(55);
+    for (const c of catalog) expect(isLangCode(c)).toBe(true);
+  });
+
+  it("LangCode union and SUPPORTED_LANG_CODES stay in sync (exhaustive iteration)", () => {
+    // SUPPORTED_LANG_CODES is not exported (regla ADR-004 §2 — sin ampliar
+    // superficie pública). We verify sync indirectly by iterating over all
+    // 2-letter combinations and asserting that exactly the ADR-005 §5
+    // catalog is recognized.
+    const alphabet = "abcdefghijklmnopqrstuvwxyz";
+    const recognized: string[] = [];
+    for (const a of alphabet) {
+      for (const b of alphabet) {
+        if (isLangCode(a + b)) recognized.push(a + b);
+      }
+    }
+    const expected = [
+      "af", "am", "ar", "bg", "bn", "ca", "cs", "da", "de", "el",
+      "en", "es", "et", "eu", "fa", "fi", "fr", "ga", "gl", "gu",
+      "he", "hi", "hr", "hu", "id", "is", "it", "ja", "km", "ko",
+      "lt", "lv", "mr", "ms", "mt", "ne", "nl", "no", "pl", "pt",
+      "ro", "ru", "sk", "sl", "sv", "sw", "ta", "te", "th", "tl",
+      "tr", "uk", "ur", "vi", "zh",
+    ].sort();
+    expect(recognized.sort()).toEqual(expected);
+    expect(recognized).toHaveLength(55);
   });
 });

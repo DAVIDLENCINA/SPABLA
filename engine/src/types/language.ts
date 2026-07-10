@@ -8,13 +8,30 @@
  * Consumers only receive LanguagePair via events. They never construct one.
  */
 
-/** ISO 639-1 language code supported by SPABLA. Closed enum for V2. */
+/**
+ * ISO 639-1 language code supported by SPABLA V2.
+ *
+ * First official catalog defined by ADR-005-LANGUAGE-CATALOG §5. The
+ * catalog is evolutive by design (ADR-005 §3, §4) and can be extended
+ * additively via subsequent ADRs. Regional variants may be introduced
+ * as BCP 47 identifiers through a specific ADR per ADR-005 §1.1,
+ * preserving the contract defined by ADR-004.
+ */
 export type LangCode =
-  | "es" | "en" | "fr" | "de" | "it" | "pt"
-  | "ja" | "zh" | "ar" | "ru";
+  | "af" | "am" | "ar" | "bg" | "bn" | "ca" | "cs" | "da" | "de" | "el"
+  | "en" | "es" | "et" | "eu" | "fa" | "fi" | "fr" | "ga" | "gl" | "gu"
+  | "he" | "hi" | "hr" | "hu" | "id" | "is" | "it" | "ja" | "km" | "ko"
+  | "lt" | "lv" | "mr" | "ms" | "mt" | "ne" | "nl" | "no" | "pl" | "pt"
+  | "ro" | "ru" | "sk" | "sl" | "sv" | "sw" | "ta" | "te" | "th" | "tl"
+  | "tr" | "uk" | "ur" | "vi" | "zh";
 
 const SUPPORTED_LANG_CODES: ReadonlySet<LangCode> = new Set<LangCode>([
-  "es", "en", "fr", "de", "it", "pt", "ja", "zh", "ar", "ru",
+  "af", "am", "ar", "bg", "bn", "ca", "cs", "da", "de", "el",
+  "en", "es", "et", "eu", "fa", "fi", "fr", "ga", "gl", "gu",
+  "he", "hi", "hr", "hu", "id", "is", "it", "ja", "km", "ko",
+  "lt", "lv", "mr", "ms", "mt", "ne", "nl", "no", "pl", "pt",
+  "ro", "ru", "sk", "sl", "sv", "sw", "ta", "te", "th", "tl",
+  "tr", "uk", "ur", "vi", "zh",
 ]);
 
 /** Runtime check that a raw string is a supported LangCode. */

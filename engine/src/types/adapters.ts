@@ -21,9 +21,58 @@ export type AdapterKind =
   | "signaling"
   | "supabase";
 
+/**
+ * Structural, static capabilities declared by an adapter.
+ *
+ * ADR-004 §2.5 rules:
+ *  - Empty by design. Any future key requires a specific ADR that
+ *    declares its semantics, default and authorized consumers.
+ *  - Extended exclusively by additive editing of this file. Declaration
+ *    merging from other modules or packages is prohibited.
+ *  - Describes ONLY structural and static capabilities. Prohibited
+ *    categories: runtime state, active sessions, current availability,
+ *    real-time metrics, observed latency, recent errors, active
+ *    language, mutable configuration, user data. Dynamic information
+ *    belongs to runtime, telemetry or session state — never to this
+ *    static contract.
+ */
+export interface AdapterCapabilities {}
+
 /** All adapters carry a discriminator for runtime narrowing. */
 export interface AdapterBase<K extends AdapterKind> {
   readonly kind: K;
+  /**
+   * Set of ISO 639-1 codes (ADR-005 §5) or BCP 47 identifiers
+   * (ADR-005 §1.1) that this adapter can process in its primary mode.
+   * **Canonical source of truth** for the adapter's language contract
+   * (ADR-004 §2.2, §2.3).
+   *
+   * Optional at the type level for backward compatibility (ADR-004
+   * §2.4). Real adapters registered from Fase 7 onward MUST implement
+   * this method.
+   */
+  getSupportedLanguages?(): ReadonlySet<LangCode>;
+  /**
+   * Optional query for a single language. If implemented, MUST derive
+   * from `getSupportedLanguages()` and remain semantically equivalent
+   * to `getSupportedLanguages().has(lang)` for every lang (ADR-004
+   * §2.3). Overrides are permitted only when a demonstrable
+   * optimization justifies them; any divergence invalidates the
+   * adapter for production.
+   *
+   * The runtime materialization of the default `supports(lang)` — for
+   * the case in which an adapter implements `getSupportedLanguages` but
+   * not `supports` — is deferred to the plan of real adapters (Fase 7)
+   * or the SDK plan (Fase 9), because a TypeScript interface cannot
+   * carry a default method implementation without exposing a second
+   * public surface (ADR-004 §2.3). Foundation guarantees the contract
+   * at the type and semantic level; the materialization pattern
+   * (abstract class, factory, mixin, etc.) is chosen by the fase that
+   * introduces the first production adapter.
+   */
+  supports?(lang: LangCode): boolean;
+  /** Structural, static capabilities declared by the adapter (ADR-004 §2.5). */
+  readonly capabilities?: AdapterCapabilities;
 }
 
 /** Speech-to-Text adapter. Concrete methods defined in later fases. */
