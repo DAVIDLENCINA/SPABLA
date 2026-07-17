@@ -2,7 +2,7 @@
 
 **Tipo**: Decisión (ADR).
 **Autor**: Jefe de Proyecto.
-**Estado**: BORRADOR — APTO PARA AUDITORÍA INDEPENDIENTE.
+**Estado**: APROBADO Y CONGELADO.
 **Fecha**: 2026-07-17.
 **Base**: `spabla-v2-phase-7-plan-2026-07-11` @ `9f08307`.
 **Depende de**: ADR-003, ADR-004, ADR-005, ADR-006, Plan Oficial de Fase 7 (congelado).
@@ -34,8 +34,8 @@ Se necesita una decisión arquitectónica mínima que permita al Hito 7.2 implem
 - su precedencia;
 - el comportamiento cuando no hay declaración;
 - el tratamiento de incoherencias entre declaraciones;
-- la autorización del dominio interno como consumidor derivador;
-- la adaptación mínima de la salvaguarda congelada en Foundation Evolution 2.
+- la autorización del dominio interno `engine/src/adapters/` como **materializador del default** `supports(lang)` — no como consumer — en la ubicación asignada por ADR-006 §1;
+- la forma canónica autorizada dentro del dominio interno para expresar la equivalencia semántica sin modificar Foundation Evolution 2, sin ampliar la lista blanca de la salvaguarda §2.7 y sin excepción alguna a `engine/src/types/*`.
 
 ---
 
@@ -120,7 +120,7 @@ Corolario: el resolver es puramente resolutorio, no validador.
 
 ---
 
-## §8. Consumidor autorizado
+## §8. Materializador autorizado del default
 
 Se autoriza expresamente al dominio interno
 
@@ -128,7 +128,7 @@ Se autoriza expresamente al dominio interno
 
 a derivar el soporte lingüístico desde `getSupportedLanguages()` cuando `supports(lang)` esté ausente, conforme al camino (b) de §5.
 
-Esta autorización es una **excepción controlada** a la salvaguarda introducida por Foundation Evolution 2 en `engine/src/types/adapters.test.ts` (test §2.7), y opera exclusivamente sobre el dominio interno de adapters.
+`engine/src/adapters/` es la **ubicación asignada por ADR-006 §1** para materializar el default runtime de `supports(lang)`. Esta materialización utiliza las **formas canónicas** definidas en §9.3 dentro del propio dominio y **no constituye ninguna excepción** a la salvaguarda §2.7 introducida por Foundation Evolution 2 en `engine/src/types/adapters.test.ts`. Foundation Evolution 2 permanece intacta: la salvaguarda §2.7 sigue vigente con su lista blanca original (`types/adapters.ts` + `types/adapters.test.ts`) sin ampliación ni modificación. La autorización opera exclusivamente sobre el dominio interno de adapters.
 
 La autorización **NO** se extiende a:
 
@@ -328,7 +328,7 @@ ADR-007 se considerará listo para congelación cuando:
 
 ## §15. Veredicto documental
 
-**BORRADOR — APTO PARA AUDITORÍA INDEPENDIENTE (V1.1 corregida).**
+**APROBADO Y CONGELADO (V1.1).**
 
 Justificación:
 - Deriva exclusivamente de ADR-003, ADR-004, ADR-005, ADR-006 y del Plan Oficial de Fase 7 congelado.
@@ -339,4 +339,4 @@ Justificación:
 - Autoriza al dominio interno como materializador del default con reglas anti-workaround recalibradas (§9.4) para distinguir la forma canónica auditable de la evasión ilegítima.
 - Alcance mínimo y auditable; fuera de alcance enumerado exhaustivamente en §11 e incluye ahora explícitamente `engine/src/types/*` y la salvaguarda §2.7.
 
-**Estado**: BORRADOR. Aún no APROBADO, aún no CONGELADO, aún no VINCULANTE. Requiere reauditoría independiente sobre la corrección V1.1 antes de considerar la congelación.
+**Estado**: APROBADO Y CONGELADO. ADR-007 V1.1 es decisión vinculante. Las decisiones §4–§9 son de aplicación obligatoria para el Hito 7.2 y hitos posteriores dentro de `engine/src/adapters/`. Cualquier modificación posterior de este ADR requiere una ADR de sustitución específica conforme al proceso de gobernanza vigente.
