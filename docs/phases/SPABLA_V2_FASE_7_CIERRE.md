@@ -133,10 +133,12 @@ Ninguna de estas capacidades queda declarada como implementada por Fase 7.
 - El Jefe de Proyecto aprobó expresamente ambos documentos (cierre + informe de auditoría) el 2026-07-18.
 - La publicación remota (`git push origin`) y la creación/publicación del tag `spabla-v2-phase-7-adapters-domain-2026-07-18` permanecen **pendientes de una autorización expresa separada** del Jefe de Proyecto. No se afirma que push ni tag se hayan ejecutado.
 
-## §14. Cierre Git futuro
+## §14. Cierre Git
 
-- El commit de cierre será el que contenga este documento aprobado y el informe de auditoría aprobado; su hash exacto no existe aún.
-- El tag `spabla-v2-phase-7-adapters-domain-2026-07-18` apuntará posteriormente a ese commit.
-- Los hashes definitivos (commit de cierre + tag) se consignarán en el reporte operativo final entregado al Jefe de Proyecto, sin modificar autorreferencialmente este documento tras su aprobación.
+- El commit documental inicial del cierre de Fase 7 es `099e85e21334ca583c99e3a52dbe46206315653f` (`docs(phase): close Fase 7 adapters domain V1.0`), que incorporó este documento y el informe de auditoría en su forma aprobada.
+- Esta corrección quirúrgica de consistencia se registrará en un commit documental posterior aislado, sin reescritura ni amend de `099e85e`.
+- El tag `spabla-v2-phase-7-adapters-domain-2026-07-18` (Release Standard §5) se creará como tag anotado sobre el nuevo HEAD correctivo, no sobre `099e85e`, para que apunte a la versión coherente del documento.
+- Los hashes definitivos del commit correctivo y del tag anotado se consignarán en el reporte operativo final entregado al Jefe de Proyecto y en el mensaje de anotación del propio tag, sin insertar en este documento placeholders ni SHAs todavía inexistentes.
+- La publicación remota (`git push origin`) y la creación/publicación del tag continúan pendientes de una autorización expresa separada del Jefe de Proyecto.
 
 Post-cierre habilita la planificación de fases posteriores (adapters concretos por proveedor, condicionados a resolución de ADR-006 B1; Fase 8 y Fase 9 según hoja de ruta).
