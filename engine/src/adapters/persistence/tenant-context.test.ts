@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { asUUID, asISOTimestamp } from "../../types/ids";
 import type { ActorId, TenantId } from "./port";
 
-import { verifyIdentityForTestFixture, type VerifiedIdentity } from "./identity";
+import { buildVerifiedIdentityFromTrustedBoundary, type VerifiedIdentity } from "./identity";
 import {
   buildTenantContext,
   isTenantContext,
@@ -23,7 +23,7 @@ const actorAlpha = asUUID("00000000-0000-0000-0000-00000000A1FA") as ActorId;
 const tenantAlpha = asUUID("00000000-0000-0000-0000-00000000A710") as TenantId;
 const tenantBeta = asUUID("00000000-0000-0000-0000-00000000B710") as TenantId;
 const issuedAt = asISOTimestamp("2026-07-23T10:00:00.000Z");
-const identity: VerifiedIdentity = verifyIdentityForTestFixture(actorAlpha, issuedAt);
+const identity: VerifiedIdentity = buildVerifiedIdentityFromTrustedBoundary(actorAlpha, issuedAt, "test_fixture");
 
 describe("adapters/persistence/tenant-context — Hito 8.1", () => {
   it("1. factory autorizada produce TenantContext estructural válido", () => {

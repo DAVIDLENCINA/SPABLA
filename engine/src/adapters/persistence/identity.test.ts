@@ -7,18 +7,17 @@ import { asUUID, asISOTimestamp } from "../../types/ids";
 import type { ActorId } from "./port";
 
 import {
-  verifyIdentityForTestFixture,
+  buildVerifiedIdentityFromTrustedBoundary,
   isVerifiedIdentity,
   identityInvalid,
-  TEST_FIXTURE_FACTORY_NAME,
   type VerifiedIdentity,
+  type VerifiedIdentitySource,
 } from "./identity";
 import { isPersistenceError } from "./errors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PERSISTENCE_DIR = path.resolve(__dirname);
 const IDENTITY_SRC_PATH = path.resolve(__dirname, "identity.ts");
 const ENGINE_BARREL_PATH = path.resolve(__dirname, "..", "..", "index.ts");
 const ADAPTERS_BARREL_PATH = path.resolve(__dirname, "..", "index.ts");
@@ -26,9 +25,16 @@ const ADAPTERS_BARREL_PATH = path.resolve(__dirname, "..", "index.ts");
 const actorAlpha = asUUID("00000000-0000-0000-0000-00000000A1FA") as ActorId;
 const issuedAtT0 = asISOTimestamp("2026-07-23T10:00:00.000Z");
 
+const build = (
+  actorId: ActorId,
+  issuedAt: typeof issuedAtT0,
+  source: VerifiedIdentitySource = "test_fixture",
+): VerifiedIdentity =>
+  buildVerifiedIdentityFromTrustedBoundary(actorId, issuedAt, source);
+
 describe("adapters/persistence/identity — Hito 8.1", () => {
-  it("1. factory autorizada produce VerifiedIdentity con brand", () => {
-    const identity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+  it("1. factory productiva construye VerifiedIdentity con brand", () => {
+    const identity = build(actorAlpha, issuedAtT0);
     expect(isVerifiedIdentity(identity)).toBe(true);
   });
 
@@ -36,30 +42,31 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
     const notBranded = {
       actorId: actorAlpha,
       issuedAt: issuedAtT0,
-      source: "test_fixture" as const,
+      source: "test_fixture",
     };
     expect(isVerifiedIdentity(notBranded)).toBe(false);
   });
 
   it("3. actorId se conserva sin mutación", () => {
-    const identity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+    const identity = build(actorAlpha, issuedAtT0);
     expect(identity.actorId).toBe(actorAlpha);
   });
 
   it("4. issuedAt se conserva sin mutación", () => {
-    const identity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+    const identity = build(actorAlpha, issuedAtT0);
     expect(identity.issuedAt).toBe(issuedAtT0);
   });
 
-  it("5. source es siempre 'test_fixture' desde esta factory", () => {
-    const identity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
-    expect(identity.source).toBe("test_fixture");
+  it("5. source se conserva tal cual lo entrega la frontera confiable", () => {
+    expect(build(actorAlpha, issuedAtT0, "supabase_auth_jwt").source).toBe("supabase_auth_jwt");
+    expect(build(actorAlpha, issuedAtT0, "backend_admin_service_role").source).toBe("backend_admin_service_role");
+    expect(build(actorAlpha, issuedAtT0, "test_fixture").source).toBe("test_fixture");
   });
 
   it("6. actorId vacío lanza PersistenceError({code:'identity_invalid'})", () => {
     let thrown: unknown = undefined;
     try {
-      verifyIdentityForTestFixture("" as ActorId, issuedAtT0);
+      build("" as ActorId, issuedAtT0);
     } catch (e) {
       thrown = e;
     }
@@ -73,12 +80,9 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
   it("7. issuedAt vacío lanza PersistenceError({code:'identity_invalid'})", () => {
     let thrown: unknown = undefined;
     try {
-      // Empty ISOTimestamp built via the Foundation coercion path with a
-      // subsequent runtime overwrite to the empty string. Zero forbidden
-      // casts.
       const empty = asISOTimestamp("placeholder");
       const emptyStr = String(empty).slice(0, 0);
-      verifyIdentityForTestFixture(actorAlpha, emptyStr as typeof empty);
+      build(actorAlpha, emptyStr as typeof empty);
     } catch (e) {
       thrown = e;
     }
@@ -88,20 +92,34 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
     }
   });
 
-  it("8. instancia congelada — Object.isFrozen === true", () => {
-    const identity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+  it("8. source fuera del closed union lanza identity_invalid", () => {
+    let thrown: unknown = undefined;
+    try {
+      const badSource = "arbitrary_source" as VerifiedIdentitySource;
+      build(actorAlpha, issuedAtT0, badSource);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(isPersistenceError(thrown)).toBe(true);
+    if (isPersistenceError(thrown)) {
+      expect(thrown.code).toBe("identity_invalid");
+    }
+  });
+
+  it("9. instancia congelada — Object.isFrozen === true", () => {
+    const identity = build(actorAlpha, issuedAtT0);
     expect(Object.isFrozen(identity)).toBe(true);
   });
 
-  it("9. dos identidades con mismos inputs son estructuralmente iguales", () => {
-    const a = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
-    const b = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+  it("10. dos identidades con mismos inputs son estructuralmente iguales", () => {
+    const a = build(actorAlpha, issuedAtT0);
+    const b = build(actorAlpha, issuedAtT0);
     expect(a.actorId).toBe(b.actorId);
     expect(a.issuedAt).toBe(b.issuedAt);
     expect(a.source).toBe(b.source);
   });
 
-  it("10. isVerifiedIdentity rechaza null, undefined, primitivos", () => {
+  it("11. isVerifiedIdentity rechaza null, undefined, primitivos", () => {
     expect(isVerifiedIdentity(null)).toBe(false);
     expect(isVerifiedIdentity(undefined)).toBe(false);
     expect(isVerifiedIdentity("string")).toBe(false);
@@ -109,37 +127,29 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
     expect(isVerifiedIdentity([])).toBe(false);
   });
 
-  it("11. identityInvalid retorna PersistenceError('identity_invalid')", () => {
+  it("12. identityInvalid retorna PersistenceError('identity_invalid')", () => {
     const err = identityInvalid("bad jwt");
     expect(err.code).toBe("identity_invalid");
     expect(err.message).toBe("bad jwt");
     expect(err.retryable).toBe(false);
   });
 
-  it("12. cero mención del legado prohibido en identity.ts productivo", () => {
+  it("13. cero mención del legado prohibido en identity.ts productivo", () => {
     const src = fs.readFileSync(IDENTITY_SRC_PATH, "utf-8");
-    // Legacy prohibited token (Plan Fase 8 V1.2 §5.2 rejects the client-side
-    // membership-verified boolean). Construct the literal at runtime so this
-    // test's own source does not contain it.
-    const legacyToken = "membership" + "Verified";
-    expect(src.includes(legacyToken)).toBe(false);
-  });
-
-  it("13. helper test-only sólo aparece en archivos *.test.ts bajo persistence/", () => {
-    const files = fs.readdirSync(PERSISTENCE_DIR);
-    const productiveHits: Array<string> = [];
-    for (const file of files) {
-      const full = path.join(PERSISTENCE_DIR, file);
-      if (!fs.statSync(full).isFile()) continue;
-      if (!file.endsWith(".ts")) continue;
-      if (file === "identity.ts") continue; // export site
-      const isTest = file.endsWith(".test.ts");
-      const src = fs.readFileSync(full, "utf-8");
-      if (src.includes(TEST_FIXTURE_FACTORY_NAME) && !isTest) {
-        productiveHits.push(file);
-      }
+    const legacyBoolean = "membership" + "Verified";
+    expect(src.includes(legacyBoolean)).toBe(false);
+    // No test-only-named factory exported from productive code.
+    const testOnlyFactoryName = "verify" + "IdentityForTestFixture";
+    expect(src.includes(testOnlyFactoryName)).toBe(false);
+    // No productive helper whose *name* reveals a test-only semantic.
+    const forbiddenSubstrings = [
+      "For" + "Test",
+      "Test" + "Only",
+      "Fixture" + "Factory",
+    ];
+    for (const s of forbiddenSubstrings) {
+      expect(src.includes(s)).toBe(false);
     }
-    expect(productiveHits).toEqual([]);
   });
 
   it("14. VerifiedIdentity NO se re-exporta desde barrels públicos", () => {
@@ -152,7 +162,7 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
   });
 
   it("15. mutación en instancia frozen no persiste", () => {
-    const identity: VerifiedIdentity = verifyIdentityForTestFixture(actorAlpha, issuedAtT0);
+    const identity: VerifiedIdentity = build(actorAlpha, issuedAtT0);
     const before = { a: identity.actorId, i: identity.issuedAt, s: identity.source };
     let didThrow = false;
     try {
@@ -164,5 +174,26 @@ describe("adapters/persistence/identity — Hito 8.1", () => {
     expect(identity.issuedAt).toBe(before.i);
     expect(identity.source).toBe(before.s);
     expect(didThrow || Object.isFrozen(identity)).toBe(true);
+  });
+
+  it("16. la única factory productiva es buildVerifiedIdentityFromTrustedBoundary", () => {
+    const src = fs.readFileSync(IDENTITY_SRC_PATH, "utf-8");
+    // Exactly one `export function` — the trusted-boundary factory. Any
+    // other productive factory would appear here.
+    const exportedFns = src.match(/^\s*export\s+function\s+([A-Za-z_][A-Za-z0-9_]*)/gm) ?? [];
+    const names = exportedFns.map((line) =>
+      line.replace(/^\s*export\s+function\s+/, "").trim(),
+    );
+    expect(names).toContain("buildVerifiedIdentityFromTrustedBoundary");
+    // No sibling factory that would create identities outside the trusted
+    // boundary contract; only guards and error helpers may co-exist.
+    const permitted = new Set<string>([
+      "buildVerifiedIdentityFromTrustedBoundary",
+      "isVerifiedIdentity",
+      "identityInvalid",
+    ]);
+    for (const n of names) {
+      expect(permitted.has(n)).toBe(true);
+    }
   });
 });

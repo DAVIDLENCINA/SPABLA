@@ -41,37 +41,51 @@ export type VerifiedIdentity = {
 };
 
 // ────────────────────────────────────────────────────────────────
-// Test-only fixture factory — Plan Fase 8 V1.2 §5.1.
-// Restricted BY CONVENTION to `*.test.ts` files. A static grep test in
-// `identity.test.ts` asserts that no productive file under
-// `engine/src/adapters/persistence/` imports this name outside tests.
-// The JWT and service-role factories will live in the concrete Supabase
-// adapter (Hito 8.3); this hito never touches JWT, RLS or network.
+// Trusted-boundary factory — Plan Fase 8 V1.2 §5.1.
+//
+// Provider-agnostic, productive factory. It is the ONLY sanctioned way
+// to materialise a `VerifiedIdentity` brand. It does NOT verify a JWT,
+// does NOT contact a JWKS, does NOT authorise the caller, and does NOT
+// take a client-supplied payload as proof of identity. Its precondition
+// is that a server-side trusted boundary (JWT-verifying adapter in Hito
+// 8.3, admin service-role backend, or a test harness) has ALREADY
+// verified the identity by whatever means its `source` denotes, and is
+// simply promoting the verified `(actorId, issuedAt, source)` tuple
+// into the brand-protected type consumed by the port.
+//
+// The runtime checks below are structural sanity guards (non-empty
+// strings, source ∈ closed union) — they never substitute for the
+// upstream verification. Any invalidity raises a typed
+// `PersistenceError({code:"identity_invalid"})`.
 // ────────────────────────────────────────────────────────────────
 
-export const TEST_FIXTURE_FACTORY_NAME = "verifyIdentityForTestFixture";
-
 /**
- * @internal Test-only. Promotes an already-known `ActorId` + `ISOTimestamp`
- * pair into a `VerifiedIdentity` labelled `source: "test_fixture"`.
- * Rejects empty strings so mistakes surface immediately. Throws a
- * structured `PersistenceError` (via `throwIdentityInvalid`) — never a
- * generic error.
+ * @internal Only invocable by a trusted server-side boundary that has
+ * already verified the identity through its `source`-specific mechanism.
+ * Callers that do not correspond to such a boundary MUST NOT invoke this
+ * factory. Never accepts a client-supplied payload as identity proof.
+ * Never imports a concrete provider SDK.
  */
-export function verifyIdentityForTestFixture(
+export function buildVerifiedIdentityFromTrustedBoundary(
   actorId: ActorId,
   issuedAt: ISOTimestamp,
+  source: VerifiedIdentitySource,
 ): VerifiedIdentity {
   if (typeof actorId !== "string" || actorId.length === 0) {
-    throw persistenceError("identity_invalid", "verifyIdentityForTestFixture: actorId must be non-empty");
+    throw persistenceError("identity_invalid", "buildVerifiedIdentityFromTrustedBoundary: actorId must be non-empty");
   }
   if (typeof issuedAt !== "string" || issuedAt.length === 0) {
-    throw persistenceError("identity_invalid", "verifyIdentityForTestFixture: issuedAt must be non-empty");
+    throw persistenceError("identity_invalid", "buildVerifiedIdentityFromTrustedBoundary: issuedAt must be non-empty");
+  }
+  if (source !== "supabase_auth_jwt"
+      && source !== "backend_admin_service_role"
+      && source !== "test_fixture") {
+    throw persistenceError("identity_invalid", "buildVerifiedIdentityFromTrustedBoundary: source not in closed union");
   }
   return Object.freeze({
     actorId,
     issuedAt,
-    source: "test_fixture" as const,
+    source,
     [verifiedIdentityBrand]: "VerifiedIdentity" as const,
   });
 }

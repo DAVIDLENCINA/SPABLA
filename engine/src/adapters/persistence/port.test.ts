@@ -20,7 +20,7 @@ import {
   makeMessageCursor,
   PERSISTENCE_PORT_OPERATIONS,
 } from "./port";
-import { verifyIdentityForTestFixture } from "./identity";
+import { buildVerifiedIdentityFromTrustedBoundary } from "./identity";
 import { buildTenantContext } from "./tenant-context";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -32,7 +32,7 @@ const ADAPTERS_BARREL_PATH = path.resolve(__dirname, "..", "index.ts");
 
 const tenantAlpha = asUUID("00000000-0000-0000-0000-00000000A710") as TenantId;
 const actorAlpha = asUUID("00000000-0000-0000-0000-00000000A1FA") as ActorId;
-const identity = verifyIdentityForTestFixture(actorAlpha, asISOTimestamp("2026-07-23T10:00:00.000Z"));
+const identity = buildVerifiedIdentityFromTrustedBoundary(actorAlpha, asISOTimestamp("2026-07-23T10:00:00.000Z"), "test_fixture");
 const ctx = buildTenantContext(identity, tenantAlpha);
 
 const convId = asUUID("00000000-0000-0000-0000-00000000CFE1") as ConversationId;

@@ -24,7 +24,7 @@ import type {
 import { makeMessageCursor } from "./port";
 
 import {
-  verifyIdentityForTestFixture,
+  buildVerifiedIdentityFromTrustedBoundary,
 } from "./identity";
 import { buildTenantContext } from "./tenant-context";
 import { persistenceError } from "./errors";
@@ -217,7 +217,7 @@ function makeProfile(): PersistenceConformanceProfile {
 const factories = {
   portFactory: (): PersistencePort => createInMemoryPort(),
   identityFactory: (actorId: ActorId, issuedAt: ISOTimestamp): VerifiedIdentity =>
-    verifyIdentityForTestFixture(actorId, issuedAt),
+    buildVerifiedIdentityFromTrustedBoundary(actorId, issuedAt, "test_fixture"),
   contextFactory: (identity: VerifiedIdentity, tenantId: TenantId): TenantContext =>
     buildTenantContext(identity, tenantId),
 };
