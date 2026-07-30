@@ -1,0 +1,91 @@
+# SPABLA V2 — CI workflow for Fase 8 Hito 8.2.
+#
+# Two jobs:
+#   * engine — TypeScript + Vitest suite. Fast, always required for `engine/**`.
+#   * integration — Supabase local stack (Docker on ubuntu-latest runner) with
+#     migrations applied from empty and SQL test suites executed against the
+#     local Postgres.
+#
+# Zero productive secrets used. Zero connection to any productive Supabase
+# project. The Supabase CLI is pinned to the exact version 2.110.0 (Plan
+# Fase 8 §7.4 M1nuevo, Plan Hito 8.2 V1.2 §12). Prohibited: `latest`.
+#
+# GITHUB_TOKEN uses minimum read-only permissions.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - "spabla-v2/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Job A — engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Vitest suite (>= 639 tests)
+        run: npx vitest run
+
+  integration:
+    name: Job B — Supabase integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Start Supabase local stack
+        run: supabase start
+
+      - name: Apply migration chain (empty -> baseline -> legacy -> reconciliation -> phase8 bootstrap)
+        run: bash scripts/ci/apply-migrations.sh
+
+      - name: Run SQL integration test suites
+        run: bash scripts/ci/run-integration-tests.sh
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup

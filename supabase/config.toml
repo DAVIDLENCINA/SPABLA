@@ -1,0 +1,79 @@
+# Supabase project configuration — SPABLA V2, Fase 8, Hito 8.2.
+# Governs the LOCAL Supabase stack managed by `supabase start` (Docker) and by
+# `supabase db reset --local` in CI (`.github/workflows/ci.yml`). This file
+# configures the PROJECT (auth, storage, edge, api, db); it does NOT pin the
+# Supabase CLI binary version (Plan Fase 8 §7.4 M1nuevo). The CLI version is
+# pinned exclusively in `.github/workflows/ci.yml` via
+# `supabase-community/setup-cli@v1` with `version: "2.110.0"`.
+#
+# Zero productive `project_id` remote linkage. Zero remote URL, password, or
+# token. Zero `NEXT_PUBLIC_*`. All reserved schemas match the productive
+# remote inventoried on 2026-07-29 (Postgres 17.6, extensions in `extensions`).
+
+project_id = "spabla-hito-8-2-local"
+
+[api]
+enabled = true
+port = 54321
+# `spabla_v2` is NOT exposed via PostgREST during Hito 8.2 (Plan Hito 8.2 §3.1,
+# §10; ADR-008 §17). `public` is the default schema Supabase exposes and covers
+# the V1 baseline. `graphql_public` matches the remote default and is required
+# by the Supabase local stack; it does not expose `spabla_v2`.
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# PostgreSQL major version. Remote runs 17.6; local stack matches so `SET TABLE`
+# semantics (Plan Hito 8.2 §5) and other PG17 features apply identically.
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[realtime]
+enabled = true
+# Realtime is enabled because the V1 baseline registers `public.messages` and
+# `public.call_signals` in the `supabase_realtime` publication (Plan Hito 8.2
+# §5). Zero `spabla_v2.*` table is added to that publication during Hito 8.2.
+
+[studio]
+enabled = false
+port = 54323
+
+[inbucket]
+enabled = false
+port = 54324
+
+[storage]
+enabled = false
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+
+[experimental]
+webhooks = { enabled = false }
