@@ -47,9 +47,8 @@ enabled = true
 enabled = false
 port = 54323
 
-[inbucket]
+[local_smtp]
 enabled = false
-port = 54324
 
 [storage]
 enabled = false
@@ -74,6 +73,3 @@ enabled = false
 
 [analytics]
 enabled = false
-
-[experimental]
-webhooks = { enabled = false }
