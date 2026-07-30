@@ -1,9 +1,9 @@
 # Plan de Hito 8.2 — Schema, migraciones, RLS, roles y CI
 
 **Tipo**: Plan de hito.
-**Versión**: V1.1.
+**Versión**: V1.2.
 **Fecha**: 2026-07-30.
-**Estado**: APROBADO Y CONGELADO — V1.1 (revisión técnica APTO el 2026-07-30).
+**Estado**: APROBADO Y CONGELADO — V1.2 (fe de erratas técnica del 2026-07-30).
 **Rama**: `spabla-v2/fase-8-persistence-multitenancy`.
 **HEAD base**: `f95ec68342dd897b53f29a26cf821176e2d2373a`.
 **Plan padre**: `docs/phases/SPABLA_V2_FASE_8_PLAN.md` V1.2 (APROBADO Y CONGELADO).
@@ -121,7 +121,7 @@ Contenido normativo — reproduce **exclusivamente** el estado remoto pre-legacy
 - Grants explícitos derivados del inventario remoto (no se depende de defaults del ejecutor local):
   - Sobre cada una de las seis tablas: `GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES, TRIGGER, TRUNCATE ON <t> TO postgres, anon, authenticated, service_role;`
   - Sobre ambas funciones: `GRANT EXECUTE ON FUNCTION public.is_participant(uuid) TO PUBLIC, anon, authenticated, service_role, postgres;` y análogo para `shares_conversation(uuid)`.
-- Publicación `supabase_realtime` con estado final **determinista** garantizado por la baseline: publicación existente, `publish = 'insert, update, delete, truncate'`, membresía exacta `{public.messages, public.call_signals}`, cero tabla `spabla_v2.*` presente. Procedimiento normativo (ADR-008 §11.2; PostgreSQL 17 no soporta `CREATE PUBLICATION ... IF NOT EXISTS` ni `ALTER PUBLICATION ... ADD TABLE IF NOT EXISTS`, por lo que ambos casos usan el patrón `DO $$ IF NOT EXISTS $$` contra `pg_publication` y `pg_publication_rel`):
+- Publicación `supabase_realtime` con estado final **determinista** garantizado por la baseline: publicación existente, `publish = 'insert, update, delete, truncate'`, membresía exacta `{public.messages, public.call_signals}`, cero tabla `spabla_v2.*` presente. Procedimiento normativo (ADR-008 §11.2; PostgreSQL 17 no soporta `CREATE PUBLICATION ... IF NOT EXISTS`, por lo que la creación usa el patrón `DO $$ IF NOT EXISTS $$` contra `pg_publication`; la membresía se fija de forma determinista mediante `ALTER PUBLICATION ... SET TABLE`, que según PostgreSQL 17 "will replace the list of tables/schemas in the publication with the specified list; the existing tables/schemas that were present in the publication will be removed" — remoción implícita de cualquier membresía adicional preexistente):
 
   ```sql
   -- 1) Asegurar existencia de la publicación (crear sólo si no existe)
@@ -136,39 +136,13 @@ Contenido normativo — reproduce **exclusivamente** el estado remoto pre-legacy
   ALTER PUBLICATION supabase_realtime
     SET (publish = 'insert, update, delete, truncate');
 
-  -- 3) Añadir cada tabla V1 sólo si aún no pertenece a la publicación
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_publication_rel pr
-      JOIN pg_publication p ON p.oid = pr.prpubid
-      JOIN pg_class c ON c.oid = pr.prrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE p.pubname = 'supabase_realtime'
-        AND n.nspname = 'public'
-        AND c.relname = 'messages'
-    ) THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
-    END IF;
-  END $$;
-
-  DO $$
-  BEGIN
-    IF NOT EXISTS (
-      SELECT 1 FROM pg_publication_rel pr
-      JOIN pg_publication p ON p.oid = pr.prpubid
-      JOIN pg_class c ON c.oid = pr.prrelid
-      JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE p.pubname = 'supabase_realtime'
-        AND n.nspname = 'public'
-        AND c.relname = 'call_signals'
-    ) THEN
-      ALTER PUBLICATION supabase_realtime ADD TABLE public.call_signals;
-    END IF;
-  END $$;
+  -- 3) Fijar la membresía exacta de la publicación (reemplaza la lista entera;
+  --    remueve cualquier tabla previamente presente que no esté aquí)
+  ALTER PUBLICATION supabase_realtime
+    SET TABLE public.messages, public.call_signals;
   ```
 
-  Cero `ADD TABLE` incondicional que pueda fallar por membresía preexistente. Cero adición de tablas `spabla_v2.*` a `supabase_realtime` durante todo el Hito 8.2 (§10).
+  `SET TABLE` es la operación clave: reemplaza la lista completa de tablas, garantizando el conjunto exacto `{public.messages, public.call_signals}` con independencia del estado previo de la publicación en el ejecutor (local, CI o remoto local). Cero `ADD TABLE` que pudiera dejar membresías adicionales preexistentes intactas. Cero adición de tablas `spabla_v2.*` a `supabase_realtime` durante todo el Hito 8.2 (§10).
 
 Fuente de verdad estructural: reporte de inventario remoto read-only ejecutado el 2026-07-29 sobre el proyecto vinculado (Q1–Q16). Fuente de verdad DDL de las dos funciones: consulta manual a `pg_get_functiondef` del Jefe de Proyecto (2026-07-30).
 
@@ -369,3 +343,4 @@ Sin rondas documentales redundantes. La aplicación al remoto queda fuera de est
   - **B1/B2/B5** (§13): reclasificados como bloqueo operativo de cierre, no de aprobación del plan.
   - **Timestamp baseline** (§5): identificado como sintético; formato Supabase válido; anterior a legacy; sin colisiones.
 - **Aprobación y congelación V1.1 (2026-07-30)**: revisión técnica única APTO. B3 y B4 resueltos. R2 cerrado normativamente mediante configuración y verificación deterministas de `supabase_realtime` (§5 procedimiento normativo `DO $$ IF NOT EXISTS $$` + `ALTER PUBLICATION ... SET (publish = 'insert, update, delete, truncate')` + adición condicional por comprobación contra `pg_publication_rel`; §11 test exige estado final exacto: cardinalidad 2, membresía exacta `{public.messages, public.call_signals}`, cero `spabla_v2` en la publicación). Docker/CI permanece exclusivamente como requisito operativo de cierre de la implementación.
+- **V1.2 — Fe de erratas técnica (2026-07-30)**: sustituida la adición condicional mediante `ADD TABLE` por `ALTER PUBLICATION supabase_realtime SET TABLE public.messages, public.call_signals`. La V1.1 podía conservar membresías adicionales preexistentes y, por tanto, no garantizaba el conjunto exacto exigido por §11. Con `SET TABLE`, PostgreSQL 17 reemplaza la lista completa de tablas de la publicación, eliminando cualquier membresía previa fuera del conjunto normativo; el estado final queda determinista con independencia del estado previo del ejecutor. **Defecto RESUELTO en V1.2.** Cero cambio en alcance, tablas V2, seguridad, cadena de migraciones, tests §11, criterios §15, contratos Hito 8.1, Plan Fase 8 ni ADR-008.
