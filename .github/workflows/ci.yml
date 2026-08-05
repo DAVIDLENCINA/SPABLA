@@ -86,6 +86,36 @@ jobs:
       - name: Run SQL integration test suites
         run: bash scripts/ci/run-integration-tests.sh
 
+      - name: Extract Supabase local env for TypeScript integration tests
+        run: |
+          set -euo pipefail
+          STATUS_JSON="$(supabase status -o json)"
+          URL="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["API_URL"])')"
+          ANON="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ANON_KEY"])')"
+          SERVICE="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["SERVICE_ROLE_KEY"])')"
+          echo "::add-mask::${ANON}"
+          echo "::add-mask::${SERVICE}"
+          {
+            echo "SPABLA_TEST_SUPABASE_URL=${URL}"
+            echo "SPABLA_TEST_SUPABASE_ANON_KEY=${ANON}"
+            echo "SPABLA_TEST_SUPABASE_SERVICE_ROLE_KEY=${SERVICE}"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Node.js 20 for integration tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Install engine dependencies
+        working-directory: engine
+        run: npm ci
+
+      - name: Run engine integration tests against local Supabase
+        working-directory: engine
+        run: npx vitest run src/adapters/persistence/supabase/supabase-persistence.integration.test.ts
+
       - name: Stop Supabase local stack
         if: always()
         run: supabase stop --no-backup
