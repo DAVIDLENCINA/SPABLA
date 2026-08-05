@@ -114,7 +114,10 @@ jobs:
 
       - name: Run engine integration tests against local Supabase
         working-directory: engine
-        run: npx vitest run "src/adapters/persistence/**/*.integration.test.ts"
+        run: |
+          npx vitest run \
+            src/adapters/persistence/supabase/supabase-persistence.integration.test.ts \
+            src/adapters/persistence/usage/usage-emitter.integration.test.ts
 
       - name: Stop Supabase local stack
         if: always()
