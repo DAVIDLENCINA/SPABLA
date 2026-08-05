@@ -1,12 +1,12 @@
 # Plan de Hito 8.2 — Schema, migraciones, RLS, roles y CI
 
 **Tipo**: Plan de hito.
-**Versión**: V1.2.
+**Versión**: V1.3.
 **Fecha**: 2026-07-30.
-**Estado**: APROBADO Y CONGELADO — V1.2 (fe de erratas técnica del 2026-07-30).
+**Estado**: APROBADO Y CONGELADO — V1.3 (fe de erratas técnica del 2026-08-05).
 **Rama**: `spabla-v2/fase-8-persistence-multitenancy`.
 **HEAD base**: `f95ec68342dd897b53f29a26cf821176e2d2373a`.
-**Plan padre**: `docs/phases/SPABLA_V2_FASE_8_PLAN.md` V1.2 (APROBADO Y CONGELADO).
+**Plan padre**: `docs/phases/SPABLA_V2_FASE_8_PLAN.md` V1.3 (APROBADO Y CONGELADO).
 **ADR base**: `docs/decisions/ADR-008-STORAGE-AND-MULTI-TENANCY.md` V1.3 (APROBADA Y CONGELADA).
 **Contratos de partida**: Hito 8.1 congelado en `engine/src/adapters/persistence/` (commit `639c159`).
 **Estándares transversales**: `docs/standards/SPABLA_V2_CODE_STANDARD.md`, `docs/standards/SPABLA_V2_RELEASE_STANDARD.md`.
@@ -262,7 +262,7 @@ Tests de integración TypeScript del adaptador **no** se incluyen en Hito 8.2 (p
 Archivo: `.github/workflows/ci.yml`.
 
 - **Trigger**: `push` a `spabla-v2/**`, `pull_request` a `main`.
-- **Job A — engine**: Node 20; `cd engine && npm ci && npx tsc --noEmit && npx vitest run`. Suite mínima esperada: 639 (basal Hito 8.1). Tiempo esperado <2 min. Timeout 15 min.
+- **Job A — engine**: Node 24; `cd engine && npm ci && npx tsc --noEmit && npx vitest run`. Suite mínima esperada: 639 (basal Hito 8.1). Tiempo esperado <2 min. Timeout 15 min.
 - **Job B — integración**: entorno PostgreSQL/Supabase efímero levantado por Supabase CLI. Versión CLI fijada exactamente en el workflow mediante `supabase-community/setup-cli@v1` con `version: "2.110.0"` (u otro mecanismo con versión exacta reproducible); **prohibido `latest`**. Reporta `supabase --version` como primer paso del job. Ejecuta `supabase start`, health check, `supabase db reset --local` (aplica la cadena completa desde vacío), crea usuarios/JWT reales con Supabase Auth Admin API local, ejecuta `supabase/tests/v1_baseline_smoke.test.sql` y `supabase/tests/rls_bootstrap.test.sql`, cleanup. Contraseñas efímeras; cero secretos reales. Cero conexión al remoto productivo. Tiempo esperado <10 min. Timeout 15 min.
 - **Requerido para merge**:
   - Job A: en cualquier cambio bajo `engine/**`.
@@ -344,3 +344,4 @@ Sin rondas documentales redundantes. La aplicación al remoto queda fuera de est
   - **Timestamp baseline** (§5): identificado como sintético; formato Supabase válido; anterior a legacy; sin colisiones.
 - **Aprobación y congelación V1.1 (2026-07-30)**: revisión técnica única APTO. B3 y B4 resueltos. R2 cerrado normativamente mediante configuración y verificación deterministas de `supabase_realtime` (§5 procedimiento normativo `DO $$ IF NOT EXISTS $$` + `ALTER PUBLICATION ... SET (publish = 'insert, update, delete, truncate')` + adición condicional por comprobación contra `pg_publication_rel`; §11 test exige estado final exacto: cardinalidad 2, membresía exacta `{public.messages, public.call_signals}`, cero `spabla_v2` en la publicación). Docker/CI permanece exclusivamente como requisito operativo de cierre de la implementación.
 - **V1.2 — Fe de erratas técnica (2026-07-30)**: sustituida la adición condicional mediante `ADD TABLE` por `ALTER PUBLICATION supabase_realtime SET TABLE public.messages, public.call_signals`. La V1.1 podía conservar membresías adicionales preexistentes y, por tanto, no garantizaba el conjunto exacto exigido por §11. Con `SET TABLE`, PostgreSQL 17 reemplaza la lista completa de tablas de la publicación, eliminando cualquier membresía previa fuera del conjunto normativo; el estado final queda determinista con independencia del estado previo del ejecutor. **Defecto RESUELTO en V1.2.** Cero cambio en alcance, tablas V2, seguridad, cadena de migraciones, tests §11, criterios §15, contratos Hito 8.1, Plan Fase 8 ni ADR-008.
+- **V1.3 — Fe de erratas técnica (2026-08-05)**: baseline de ejecución actualizado en §12 (CI Job A) de Node 20 (EOL 2026-04-30) a Node 24 LTS, en coherencia con Plan Fase 8 V1.3. Cero cambio arquitectónico, funcional o de alcance. Cero modificación de RLS, migraciones, criterios de aceptación, contratos Hito 8.1 ni historial anterior. Autorizada por el Jefe de Proyecto para eliminar la contradicción normativa detectada durante la implementación del Hito 8.3.
