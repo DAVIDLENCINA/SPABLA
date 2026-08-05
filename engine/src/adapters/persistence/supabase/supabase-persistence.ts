@@ -1,0 +1,496 @@
+/**
+ * SPABLA Engine — SupabasePersistence (Fase 8 · Hito 8.3).
+ *
+ * Productive adapter that implements the five operations of
+ * `PersistencePort` against Supabase (`spabla_v2` schema + `admin_append_usage`
+ * SECURITY DEFINER function). This is the ONLY module in the engine that is
+ * allowed to import `@supabase/supabase-js` (Plan Fase 8 V1.2 §10.4).
+ *
+ * Construction model:
+ *  - The adapter is a plain class with an explicit constructor. Zero global
+ *    singleton, zero mutable module state, zero direct `process.env`
+ *    reads. Every capability required to operate is passed in explicitly by
+ *    the caller (harness E2E or trusted server-side backend).
+ *  - `authenticated` — Supabase client already carrying the actor's JWT
+ *    (`sub` === `TenantContext.identity.actorId`). It runs under RLS as the
+ *    Supabase role `authenticated`. Used for `saveConversation`,
+ *    `loadConversation`, `saveMessage`, `listMessages`.
+ *  - `privileged` — optional Supabase client built with the `service_role`
+ *    credential, inject exclusively in trusted server-side contexts. Used
+ *    only to invoke the `spabla_v2.admin_append_usage` SECURITY DEFINER
+ *    function from `appendUsage`. Zero grants to `authenticated`/`anon` on
+ *    the ledger prevent any bypass (Plan Fase 8 §7.1ter).
+ *
+ * Identity coherence (Plan Fase 8 §5.1 A2nuevo + §10.4):
+ *  - Before executing any tenant-scoped operation, the adapter verifies
+ *    that `TenantContext.identity.actorId === auth.uid()` observed by the
+ *    authenticated client. Divergence produces `identity_invalid` before
+ *    any DB write occurs. The actual `auth.uid()` is queried once per
+ *    adapter instance via `authenticated.auth.getUser()` and cached; the
+ *    caller is responsible for building a fresh adapter when the JWT
+ *    rotates.
+ *
+ * @internal Not part of the public engine surface. MUST NOT be re-exported
+ * from `engine/src/index.ts` nor from `engine/src/adapters/index.ts`
+ * (Plan Fase 8 §16.1, Plan Hito 8.2 §9).
+ */
+
+import type {
+  PostgrestError,
+  SupabaseClient,
+} from "@supabase/supabase-js";
+
+import type {
+  ActorId,
+  ConversationId,
+  ConversationRecord,
+  MessageCursor,
+  MessagePage,
+  MessagePageRequest,
+  MessageRecord,
+  PersistencePort,
+  UsageEntry,
+} from "../port";
+import { makeMessageCursor } from "../port";
+import type { TenantContext } from "../tenant-context";
+import {
+  persistenceError,
+  persistenceErrorWithRetry,
+  type PersistenceError,
+} from "../errors";
+import { asUUID, asISOTimestamp } from "../../../types/ids";
+import { isLangCode, type LangCode } from "../../../types/language";
+
+const MAX_PAGE_LIMIT = 500;
+
+const MESSAGE_COLUMNS =
+  "id,tenant_id,conversation_id,sender_id,text,language,created_at" as const;
+
+type ConversationRow = {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly created_at: string;
+  readonly created_by: string;
+  readonly language: string;
+};
+
+type MessageRow = {
+  readonly id: string;
+  readonly tenant_id: string;
+  readonly conversation_id: string;
+  readonly sender_id: string;
+  readonly text: string;
+  readonly language: string;
+  readonly created_at: string;
+};
+
+export type SupabasePersistenceCapabilities = {
+  /** Supabase client carrying the actor's JWT (`authenticated` role). */
+  readonly authenticated: SupabaseClient;
+  /**
+   * Optional Supabase client with `service_role` capability. Required to
+   * invoke `appendUsage`. If absent, `appendUsage` fails closed with
+   * `unauthorized` without attempting any write.
+   */
+  readonly privileged?: SupabaseClient | null;
+};
+
+export class SupabasePersistence implements PersistencePort {
+  private readonly authenticated: SupabaseClient;
+  private readonly privileged: SupabaseClient | null;
+  private cachedActorId: ActorId | null = null;
+  private identityProbe: Promise<ActorId> | null = null;
+
+  constructor(capabilities: SupabasePersistenceCapabilities) {
+    if (!capabilities || typeof capabilities !== "object") {
+      throw persistenceError(
+        "unauthorized",
+        "SupabasePersistence: capabilities object required",
+      );
+    }
+    if (!capabilities.authenticated) {
+      throw persistenceError(
+        "unauthorized",
+        "SupabasePersistence: authenticated client required",
+      );
+    }
+    this.authenticated = capabilities.authenticated;
+    this.privileged = capabilities.privileged ?? null;
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // saveConversation — INSERT under RLS with idempotent semantics.
+  // ────────────────────────────────────────────────────────────────
+  async saveConversation(
+    ctx: TenantContext,
+    record: ConversationRecord,
+  ): Promise<void> {
+    await this.assertIdentity(ctx);
+    if (record.tenantId !== ctx.tenantId) {
+      throw persistenceError(
+        "tenant_context_invalid",
+        "saveConversation: record.tenantId does not match TenantContext",
+      );
+    }
+    const existing = await this.fetchConversationRow(ctx, record.conversationId);
+    if (existing !== null) {
+      if (this.conversationEquals(existing, record)) {
+        return;
+      }
+      throw persistenceError(
+        "conflict",
+        "saveConversation: existing conversation differs on normative fields",
+      );
+    }
+    const { error } = await this.authenticated
+      .schema("spabla_v2")
+      .from("conversations")
+      .insert({
+        id: record.conversationId,
+        tenant_id: record.tenantId,
+        created_by: record.createdBy,
+        language: record.language,
+        created_at: record.createdAt,
+      });
+    if (error) {
+      throw this.translatePostgrestError(error);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // loadConversation — SELECT under RLS; null on unknown/foreign.
+  // ────────────────────────────────────────────────────────────────
+  async loadConversation(
+    ctx: TenantContext,
+    conversationId: ConversationId,
+  ): Promise<ConversationRecord | null> {
+    await this.assertIdentity(ctx);
+    const row = await this.fetchConversationRow(ctx, conversationId);
+    if (row === null) {
+      return null;
+    }
+    return {
+      tenantId: asUUID(row.tenant_id),
+      conversationId: asUUID(row.id),
+      createdAt: asISOTimestamp(row.created_at),
+      createdBy: asUUID(row.created_by),
+      language: this.narrowLangCode(row.language),
+    };
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // saveMessage — semantic idempotency (§10.5).
+  // ────────────────────────────────────────────────────────────────
+  async saveMessage(
+    ctx: TenantContext,
+    record: MessageRecord,
+  ): Promise<void> {
+    await this.assertIdentity(ctx);
+    if (record.tenantId !== ctx.tenantId) {
+      throw persistenceError(
+        "tenant_context_invalid",
+        "saveMessage: record.tenantId does not match TenantContext",
+      );
+    }
+    const existing = await this.fetchMessageRow(ctx, record.messageId);
+    if (existing !== null) {
+      if (this.messageEquals(existing, record)) {
+        return;
+      }
+      throw persistenceError(
+        "conflict",
+        "saveMessage: existing message differs on normative fields",
+      );
+    }
+    const { error } = await this.authenticated
+      .schema("spabla_v2")
+      .from("messages")
+      .insert({
+        id: record.messageId,
+        tenant_id: record.tenantId,
+        conversation_id: record.conversationId,
+        sender_id: record.senderId,
+        text: record.text,
+        language: record.language,
+        created_at: record.createdAt,
+      });
+    if (error) {
+      // Concurrent identical insert: another writer won the race → return the
+      // canonical row semantically. Only escalate on true content divergence.
+      const raced = await this.fetchMessageRow(ctx, record.messageId);
+      if (raced !== null && this.messageEquals(raced, record)) {
+        return;
+      }
+      throw this.translatePostgrestError(error);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // listMessages — cursor-paginated, total-stable order (§10.6).
+  // ────────────────────────────────────────────────────────────────
+  async listMessages(
+    ctx: TenantContext,
+    request: MessagePageRequest,
+  ): Promise<MessagePage> {
+    await this.assertIdentity(ctx);
+    if (!Number.isInteger(request.limit) || request.limit <= 0 || request.limit > MAX_PAGE_LIMIT) {
+      throw persistenceError(
+        "unauthorized",
+        `listMessages: limit must be integer in (0, ${MAX_PAGE_LIMIT}]`,
+      );
+    }
+    if (request.cursor !== null) {
+      const anchor = await this.fetchMessageRow(ctx, request.cursor.messageId);
+      if (anchor === null || anchor.conversation_id !== request.conversationId) {
+        throw persistenceError(
+          "not_found",
+          "listMessages: cursor does not belong to the requested conversation",
+        );
+      }
+    }
+    let query = this.authenticated
+      .schema("spabla_v2")
+      .from("messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("tenant_id", ctx.tenantId)
+      .eq("conversation_id", request.conversationId)
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
+      .limit(request.limit + 1);
+    if (request.cursor !== null) {
+      // (created_at, id) > (cursor.createdAt, cursor.messageId), lexicographic.
+      const cursor = request.cursor;
+      query = query.or(
+        `created_at.gt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.gt.${cursor.messageId})`,
+      );
+    }
+    const { data, error } = await query;
+    if (error) {
+      throw this.translatePostgrestError(error);
+    }
+    const rows = (data ?? []) as ReadonlyArray<MessageRow>;
+    const hasMore = rows.length > request.limit;
+    const pageRows = hasMore ? rows.slice(0, request.limit) : rows;
+    const items = pageRows.map((row) => this.rowToMessageRecord(row));
+    let nextCursor: MessageCursor | null = null;
+    if (hasMore) {
+      const last = pageRows[pageRows.length - 1];
+      if (last !== undefined) {
+        nextCursor = makeMessageCursor(
+          asISOTimestamp(last.created_at),
+          asUUID(last.id),
+        );
+      }
+    }
+    return { items, nextCursor };
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // appendUsage — sole path to `usage_ledger`; requires `service_role`
+  // capability + delegates to `spabla_v2.admin_append_usage` (§7.1ter).
+  // ────────────────────────────────────────────────────────────────
+  async appendUsage(ctx: TenantContext, entry: UsageEntry): Promise<void> {
+    await this.assertIdentity(ctx);
+    if (entry.tenantId !== ctx.tenantId) {
+      throw persistenceError(
+        "tenant_context_invalid",
+        "appendUsage: entry.tenantId does not match TenantContext",
+      );
+    }
+    if (this.privileged === null) {
+      throw persistenceError(
+        "unauthorized",
+        "appendUsage: privileged capability required",
+      );
+    }
+    const { error } = await this.privileged.schema("spabla_v2").rpc("admin_append_usage", {
+      p_tenant_id: entry.tenantId,
+      p_actor_id: ctx.identity.actorId,
+      p_source: entry.source,
+      p_metric_kind: entry.metricKind,
+      p_quantity: entry.quantity,
+      p_unit: entry.unit,
+      p_idempotency_key: entry.idempotencyKey,
+      p_correlation_id: entry.correlationId,
+      p_entry_kind: entry.entryKind,
+      p_occurred_at: entry.occurredAt,
+      p_require_membership: true,
+    });
+    if (error) {
+      throw this.translatePostgrestError(error);
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────
+  // Private helpers
+  // ────────────────────────────────────────────────────────────────
+
+  private async assertIdentity(ctx: TenantContext): Promise<void> {
+    if (this.cachedActorId === null) {
+      if (this.identityProbe === null) {
+        this.identityProbe = this.probeAuthenticatedActor();
+      }
+      try {
+        this.cachedActorId = await this.identityProbe;
+      } catch (err) {
+        this.identityProbe = null;
+        throw err;
+      }
+    }
+    if (ctx.identity.actorId !== this.cachedActorId) {
+      throw persistenceError(
+        "identity_invalid",
+        "identity mismatch: TenantContext.actorId differs from authenticated auth.uid()",
+      );
+    }
+  }
+
+  private async probeAuthenticatedActor(): Promise<ActorId> {
+    const { data, error } = await this.authenticated.auth.getUser();
+    if (error) {
+      throw persistenceError(
+        "identity_invalid",
+        "identity probe: authenticated client has no valid session",
+      );
+    }
+    const uid = data?.user?.id;
+    if (typeof uid !== "string" || uid.length === 0) {
+      throw persistenceError(
+        "identity_invalid",
+        "identity probe: authenticated session missing user id",
+      );
+    }
+    return asUUID(uid);
+  }
+
+  private async fetchConversationRow(
+    ctx: TenantContext,
+    conversationId: ConversationId,
+  ): Promise<ConversationRow | null> {
+    const { data, error } = await this.authenticated
+      .schema("spabla_v2")
+      .from("conversations")
+      .select("id,tenant_id,created_at,created_by,language")
+      .eq("tenant_id", ctx.tenantId)
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (error) {
+      throw this.translatePostgrestError(error);
+    }
+    if (data === null || data === undefined) {
+      return null;
+    }
+    return data as ConversationRow;
+  }
+
+  private async fetchMessageRow(
+    ctx: TenantContext,
+    messageId: string,
+  ): Promise<MessageRow | null> {
+    const { data, error } = await this.authenticated
+      .schema("spabla_v2")
+      .from("messages")
+      .select(MESSAGE_COLUMNS)
+      .eq("tenant_id", ctx.tenantId)
+      .eq("id", messageId)
+      .maybeSingle();
+    if (error) {
+      throw this.translatePostgrestError(error);
+    }
+    if (data === null || data === undefined) {
+      return null;
+    }
+    return data as MessageRow;
+  }
+
+  private rowToMessageRecord(row: MessageRow): MessageRecord {
+    return {
+      tenantId: asUUID(row.tenant_id),
+      conversationId: asUUID(row.conversation_id),
+      messageId: asUUID(row.id),
+      senderId: asUUID(row.sender_id),
+      text: row.text,
+      language: this.narrowLangCode(row.language),
+      createdAt: asISOTimestamp(row.created_at),
+    };
+  }
+
+  private narrowLangCode(raw: string): LangCode {
+    if (!isLangCode(raw)) {
+      throw persistenceError(
+        "constraint_violation",
+        "row.language is not a recognised LangCode",
+      );
+    }
+    return raw;
+  }
+
+  private conversationEquals(
+    row: ConversationRow,
+    record: ConversationRecord,
+  ): boolean {
+    return (
+      row.tenant_id === record.tenantId
+      && row.id === record.conversationId
+      && row.created_by === record.createdBy
+      && row.language === record.language
+      && row.created_at === record.createdAt
+    );
+  }
+
+  private messageEquals(row: MessageRow, record: MessageRecord): boolean {
+    return (
+      row.tenant_id === record.tenantId
+      && row.id === record.messageId
+      && row.conversation_id === record.conversationId
+      && row.sender_id === record.senderId
+      && row.text === record.text
+      && row.language === record.language
+      && row.created_at === record.createdAt
+    );
+  }
+
+  private translatePostgrestError(error: PostgrestError): PersistenceError {
+    const code = typeof error.code === "string" ? error.code : "";
+    // PostgreSQL SQLSTATE codes we care about.
+    if (code === "23505") {
+      return persistenceError("conflict", "unique_violation");
+    }
+    if (code === "23503") {
+      return persistenceError("constraint_violation", "foreign_key_violation");
+    }
+    if (code === "23514") {
+      return persistenceError("constraint_violation", "check_violation");
+    }
+    if (code === "42501") {
+      return persistenceError("unauthorized", "insufficient_privilege");
+    }
+    // PostgREST convention: "PGRST116" = "The result contains 0 rows" (used
+    // when a `single()` returns nothing). We map it to `not_found`.
+    if (code === "PGRST116") {
+      return persistenceError("not_found", "no rows");
+    }
+    // Network / transient errors surface as objects without `code` from
+    // PostgREST but with `message`. Any unrecognised transport-layer symptom
+    // is treated as `unavailable` and retryable.
+    const message = typeof error.message === "string" ? error.message : "";
+    const transient =
+      message.startsWith("fetch failed")
+      || message.startsWith("network")
+      || message.startsWith("timeout")
+      || message.includes("ECONNRESET")
+      || message.includes("ETIMEDOUT")
+      || message.includes("503")
+      || message.includes("504");
+    if (transient) {
+      return persistenceErrorWithRetry(
+        "unavailable",
+        "transport unavailable",
+        true,
+      );
+    }
+    // Fallback: opaque database error surfaced as constraint_violation with
+    // zero leak of internal messages.
+    return persistenceError("constraint_violation", "database error");
+  }
+}
