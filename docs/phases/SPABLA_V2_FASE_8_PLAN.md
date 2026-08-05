@@ -1,9 +1,9 @@
 # Plan de Fase 8 — Persistencia productiva y multi-tenancy
 
 **Tipo**: Plan de fase.
-**Versión**: V1.2.
+**Versión**: V1.3.
 **Fecha**: 2026-07-23.
-**Estado**: APROBADO Y CONGELADO — V1.2 (2026-07-23).
+**Estado**: APROBADO Y CONGELADO — V1.3 (fe de erratas técnica del 2026-08-05).
 **Rama**: `spabla-v2/fase-8-persistence-multitenancy`.
 **HEAD base**: `5b312c93322dd73aeaf3bd4bcde7f85783681e66`.
 **ADR base**: `spabla-v2-adr-008-storage-multi-tenancy-2026-07-20` (ADR-008 V1.3 APROBADA Y CONGELADA).
@@ -549,7 +549,7 @@ La interfaz pública de administración queda fuera de Fase 8.
 `.github/workflows/ci.yml`:
 
 - **Trigger**: `push` a `spabla-v2/**`, `pull_request` a `main`.
-- **Job A — engine**: Node 20; `cd engine && npm ci && npx tsc --noEmit && npx vitest run`. Tiempo esperado <2 min.
+- **Job A — engine**: Node 24; `cd engine && npm ci && npx tsc --noEmit && npx vitest run`. Tiempo esperado <2 min.
 - **Job B — integration**: instala Supabase CLI con versión pinneada mediante `supabase-community/setup-cli@v1` con parámetro `version` exacto (u otro mecanismo con versión exacta reproducible); prohibido `latest`; reporta `supabase --version` en el job; `supabase start`; health check; `supabase db reset` (aplica migraciones); crea usuarios/JWT reales; ejecuta suite SQL RLS + suite integración adaptador; cleanup. Tiempo esperado <10 min. Contraseñas efímeras; cero secretos reales.
 - **Requerido para merge**:
   - Job A: en todos los cambios de `engine/**`.
@@ -917,3 +917,4 @@ Cero ADR adicional salvo decisión arquitectónica nueva demostrada.
   - **M2nuevo** (§9.5): firma completa `admin_deactivate_membership(tenant_id UUID, actor_id UUID)` con semántica definida (localiza PK, `is_active = FALSE`, idempotente, audita).
 - **Decisión central preservada**: PostgreSQL vía Supabase + puerto interno provider-agnostic. Sin cambios en Foundation, ADRs previas, Fase 7, `SpablaCore`, `SpablaCoreConfig`, Managers, barrels públicos.
 - **Aprobación y congelación V1.2 (2026-07-23)**: comprobación final satisfactoria. C1/C2, A1–A4, M1–M6 y los cinco hallazgos finales (C1nuevo, A1nuevo, A2nuevo, M1nuevo, M2nuevo) resueltos. Hardening adicional del `usage_ledger` (§7.1ter + §9.4 + §9.5 `admin_append_usage` + §9.8 + §9.9 + §10.4 + §10.7 + §11.3 + §11.4): cero escritura directa desde `authenticated` (cero policy INSERT/UPDATE/DELETE ordinaria); única lectura autorizada `usage_ledger_select` con predicado de membresía activa; `appendUsage` exclusivamente server-side vía `admin_append_usage` SECURITY DEFINER invocada por backend confiable con `service_role`; credencial privilegiada nunca en cliente/`NEXT_PUBLIC_*`. Plan autorizado para implementación inmediata del Hito 8.1.
+- **V1.3 — Fe de erratas técnica (2026-08-05)**: baseline de ejecución actualizado en §9.7 de Node 20 (EOL 2026-04-30) a Node 24 LTS. Cero cambio arquitectónico, funcional o de alcance. Cero modificación de RLS, migraciones, contratos, criterios de aceptación ni historial anterior. Autorizada por el Jefe de Proyecto para eliminar la contradicción normativa detectada durante la implementación del Hito 8.3.
