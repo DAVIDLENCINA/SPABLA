@@ -48,10 +48,10 @@ import type { PersistenceError } from "../errors";
 import { asISOTimestamp, asUUID } from "../../../types/ids";
 import type { LangCode } from "../../../types/language";
 
-const URL = process.env.SPABLA_TEST_SUPABASE_URL ?? "";
+const SUPABASE_URL = process.env.SPABLA_TEST_SUPABASE_URL ?? "";
 const ANON = process.env.SPABLA_TEST_SUPABASE_ANON_KEY ?? "";
 const SERVICE = process.env.SPABLA_TEST_SUPABASE_SERVICE_ROLE_KEY ?? "";
-const ENABLED = URL !== "" && ANON !== "" && SERVICE !== "";
+const ENABLED = SUPABASE_URL !== "" && ANON !== "" && SERVICE !== "";
 
 const ES: LangCode = "es";
 const EN: LangCode = "en";
@@ -64,7 +64,7 @@ type Actor = {
 };
 
 async function signIn(email: string, password: string): Promise<{ id: string; jwt: string }> {
-  const anonClient = createClient(URL, ANON, { auth: { persistSession: false } });
+  const anonClient = createClient(SUPABASE_URL, ANON, { auth: { persistSession: false } });
   const { data, error } = await anonClient.auth.signInWithPassword({ email, password });
   if (error || !data.session || !data.user) {
     throw new Error(`signIn failed for ${email}: ${error?.message ?? "no session"}`);
@@ -73,14 +73,14 @@ async function signIn(email: string, password: string): Promise<{ id: string; jw
 }
 
 function authClient(jwt: string): SupabaseClient {
-  return createClient(URL, ANON, {
+  return createClient(SUPABASE_URL, ANON, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${jwt}` } },
   });
 }
 
 function privileged(): SupabaseClient {
-  return createClient(URL, SERVICE, {
+  return createClient(SUPABASE_URL, SERVICE, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -550,7 +550,7 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
   test("service unavailable is normalised to code:unavailable retryable:true", async () => {
     // Build a client whose fetch always throws a transport error.
     const failingFetch = () => Promise.reject(new Error("fetch failed: ENOTFOUND"));
-    const broken = createClient(URL, ANON, {
+    const broken = createClient(SUPABASE_URL, ANON, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: {
         fetch: failingFetch as unknown as typeof fetch,
@@ -577,7 +577,7 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
         return new Response("Service Unavailable 503", { status: 503, statusText: "Service Unavailable" });
       }) as unknown as typeof fetch;
     })();
-    const broken = createClient(URL, ANON, {
+    const broken = createClient(SUPABASE_URL, ANON, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: {
         fetch: oneShot503,

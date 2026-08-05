@@ -85,6 +85,18 @@ function isValidUuid(raw: string): boolean {
   return UUID_STRICT_RE.test(raw);
 }
 
+// Semantic timestamp equality. Postgres normalises `TIMESTAMPTZ` on the wire
+// (e.g. `2026-08-05T10:00:00.000Z` may come back as `2026-08-05T10:00:00+00:00`),
+// so string comparison of `created_at` is not stable across insert/read. We
+// compare the underlying instant via `Date.parse`, requiring both operands to
+// parse to finite numbers and to represent the same absolute point in time.
+function sameInstant(a: string, b: string): boolean {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (!Number.isFinite(ta) || !Number.isFinite(tb)) return false;
+  return ta === tb;
+}
+
 type ConversationRow = {
   readonly id: string;
   readonly tenant_id: string;
@@ -465,7 +477,7 @@ export class SupabasePersistence implements PersistencePort {
       && row.id === record.conversationId
       && row.created_by === record.createdBy
       && row.language === record.language
-      && row.created_at === record.createdAt
+      && sameInstant(row.created_at, record.createdAt)
     );
   }
 
@@ -477,7 +489,7 @@ export class SupabasePersistence implements PersistencePort {
       && row.sender_id === record.senderId
       && row.text === record.text
       && row.language === record.language
-      && row.created_at === record.createdAt
+      && sameInstant(row.created_at, record.createdAt)
     );
   }
 
