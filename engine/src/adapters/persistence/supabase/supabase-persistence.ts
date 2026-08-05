@@ -66,6 +66,25 @@ const MAX_PAGE_LIMIT = 500;
 const MESSAGE_COLUMNS =
   "id,tenant_id,conversation_id,sender_id,text,language,created_at" as const;
 
+// Strict runtime validation for cursor components before interpolating into
+// PostgREST `.or(...)` filters. TypeScript brands are compile-time only; a
+// hostile caller could bypass them with `as MessageCursor`. These regexes
+// reject any character sequence that could inject PostgREST operators.
+const ISO_8601_STRICT_RE =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/;
+const UUID_STRICT_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidIsoTimestamp(raw: string): boolean {
+  if (!ISO_8601_STRICT_RE.test(raw)) return false;
+  const t = Date.parse(raw);
+  return Number.isFinite(t);
+}
+
+function isValidUuid(raw: string): boolean {
+  return UUID_STRICT_RE.test(raw);
+}
+
 type ConversationRow = {
   readonly id: string;
   readonly tenant_id: string;
@@ -98,8 +117,6 @@ export type SupabasePersistenceCapabilities = {
 export class SupabasePersistence implements PersistencePort {
   private readonly authenticated: SupabaseClient;
   private readonly privileged: SupabaseClient | null;
-  private cachedActorId: ActorId | null = null;
-  private identityProbe: Promise<ActorId> | null = null;
 
   constructor(capabilities: SupabasePersistenceCapabilities) {
     if (!capabilities || typeof capabilities !== "object") {
@@ -235,12 +252,31 @@ export class SupabasePersistence implements PersistencePort {
     await this.assertIdentity(ctx);
     if (!Number.isInteger(request.limit) || request.limit <= 0 || request.limit > MAX_PAGE_LIMIT) {
       throw persistenceError(
-        "unauthorized",
+        "constraint_violation",
         `listMessages: limit must be integer in (0, ${MAX_PAGE_LIMIT}]`,
       );
     }
+    if (typeof request.conversationId !== "string" || !isValidUuid(request.conversationId)) {
+      throw persistenceError(
+        "constraint_violation",
+        "listMessages: conversationId is not a valid UUID",
+      );
+    }
+    let cursorCreatedAt: string | null = null;
+    let cursorMessageId: string | null = null;
     if (request.cursor !== null) {
-      const anchor = await this.fetchMessageRow(ctx, request.cursor.messageId);
+      const rawCa = request.cursor.createdAt as unknown;
+      const rawMid = request.cursor.messageId as unknown;
+      if (typeof rawCa !== "string" || !isValidIsoTimestamp(rawCa)
+       || typeof rawMid !== "string" || !isValidUuid(rawMid)) {
+        throw persistenceError(
+          "constraint_violation",
+          "listMessages: cursor is malformed",
+        );
+      }
+      cursorCreatedAt = rawCa;
+      cursorMessageId = rawMid;
+      const anchor = await this.fetchMessageRow(ctx, cursorMessageId);
       if (anchor === null || anchor.conversation_id !== request.conversationId) {
         throw persistenceError(
           "not_found",
@@ -257,11 +293,12 @@ export class SupabasePersistence implements PersistencePort {
       .order("created_at", { ascending: true })
       .order("id", { ascending: true })
       .limit(request.limit + 1);
-    if (request.cursor !== null) {
+    if (cursorCreatedAt !== null && cursorMessageId !== null) {
       // (created_at, id) > (cursor.createdAt, cursor.messageId), lexicographic.
-      const cursor = request.cursor;
+      // Both components are already validated with strict regexes above; no
+      // PostgREST metacharacter can reach this interpolation.
       query = query.or(
-        `created_at.gt.${cursor.createdAt},and(created_at.eq.${cursor.createdAt},id.gt.${cursor.messageId})`,
+        `created_at.gt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.gt.${cursorMessageId})`,
       );
     }
     const { data, error } = await query;
@@ -326,18 +363,12 @@ export class SupabasePersistence implements PersistencePort {
   // ────────────────────────────────────────────────────────────────
 
   private async assertIdentity(ctx: TenantContext): Promise<void> {
-    if (this.cachedActorId === null) {
-      if (this.identityProbe === null) {
-        this.identityProbe = this.probeAuthenticatedActor();
-      }
-      try {
-        this.cachedActorId = await this.identityProbe;
-      } catch (err) {
-        this.identityProbe = null;
-        throw err;
-      }
-    }
-    if (ctx.identity.actorId !== this.cachedActorId) {
+    // No caching. Each public operation probes the authenticated session
+    // (Plan Fase 8 §5.1 A2nuevo, §10.4). A rotated JWT or a re-instantiated
+    // client observed by the same adapter cannot silently reuse a stale
+    // identity — the check runs before every SELECT/INSERT/RPC.
+    const observed = await this.probeAuthenticatedActor();
+    if (ctx.identity.actorId !== observed) {
       throw persistenceError(
         "identity_invalid",
         "identity mismatch: TenantContext.actorId differs from authenticated auth.uid()",
