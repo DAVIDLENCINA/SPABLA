@@ -549,7 +549,7 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
 
   test("service unavailable is normalised to code:unavailable retryable:true", async () => {
     // Build a client whose fetch always throws a transport error.
-    const failingFetch = () => Promise.reject(new Error("fetch failed: ENOTFOUND"));
+    const failingFetch = () => Promise.reject(new Error("fetch failed: ENOTFOUND supabase.example"));
     const broken = createClient(SUPABASE_URL, ANON, {
       auth: { persistSession: false, autoRefreshToken: false },
       global: {
@@ -560,21 +560,32 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
     const adapter = new SupabasePersistence({ authenticated: broken, privileged: admin });
     const ctx = ctxOf(actorA, tenantA);
     const err = await pgIsError(adapter.loadConversation(ctx, asUUID(randomUUID())));
-    // The failing fetch surfaces before assertIdentity finishes; both paths
-    // must normalise to identity_invalid or unavailable. Accept either as
-    // long as it is one of the closed codes and never leaks the raw message.
-    expect(["unavailable", "identity_invalid"]).toContain(err.code);
-    if (err.code === "unavailable") expect(err.retryable).toBe(true);
-    expect(err.message).not.toMatch(/ENOTFOUND/);
+    expect(err.code).toBe("unavailable");
+    expect(err.retryable).toBe(true);
+    // The opaque message must not leak transport details or credentials.
+    for (const forbidden of [
+      "ENOTFOUND",
+      "Service Unavailable",
+      "supabase.example",
+      "Bearer",
+      "Authorization",
+      "JWT",
+      "token",
+      actorA.jwt,
+    ]) {
+      expect(err.message).not.toContain(forbidden);
+    }
   });
 
   test("transient 503 response normalises to code:unavailable retryable:true", async () => {
-    // Simulate a transient 503 via a stub fetch.
-    let attempt = 0;
+    // Simulate a transient 503 via a stub fetch. The 503 body contains
+    // sensitive-looking strings that must never surface in err.message.
     const oneShot503 = ((): typeof fetch => {
       return (async () => {
-        attempt += 1;
-        return new Response("Service Unavailable 503", { status: 503, statusText: "Service Unavailable" });
+        return new Response(
+          "Service Unavailable 503 — Bearer leaked-token-payload JWT=abc.def.ghi",
+          { status: 503, statusText: "Service Unavailable" },
+        );
       }) as unknown as typeof fetch;
     })();
     const broken = createClient(SUPABASE_URL, ANON, {
@@ -587,10 +598,38 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
     const adapter = new SupabasePersistence({ authenticated: broken, privileged: admin });
     const ctx = ctxOf(actorA, tenantA);
     const err = await pgIsError(adapter.loadConversation(ctx, asUUID(randomUUID())));
-    expect(attempt).toBeGreaterThan(0);
-    expect(["unavailable", "identity_invalid"]).toContain(err.code);
-    if (err.code === "unavailable") expect(err.retryable).toBe(true);
-    expect(err.message).not.toMatch(/Service Unavailable|Bearer|Authorization/);
+    expect(err.code).toBe("unavailable");
+    expect(err.retryable).toBe(true);
+    for (const forbidden of [
+      "Service Unavailable",
+      "leaked-token-payload",
+      "Bearer",
+      "Authorization",
+      "JWT",
+      "token",
+      "abc.def.ghi",
+      actorA.jwt,
+      SUPABASE_URL,
+    ]) {
+      expect(err.message).not.toContain(forbidden);
+    }
+  });
+
+  test("invalid JWT / no session normalises to code:identity_invalid retryable:false", async () => {
+    // Build an authenticated client with a JWT that Supabase Auth will
+    // reject with 401. `auth.getUser()` must return an auth error, not a
+    // transport failure. The adapter must classify this as identity, not
+    // unavailable.
+    const bogusJwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDAifQ.invalid-signature";
+    const client = authClient(bogusJwt);
+    const adapter = new SupabasePersistence({ authenticated: client, privileged: admin });
+    const ctx = ctxOf(actorA, tenantA);
+    const err = await pgIsError(adapter.loadConversation(ctx, asUUID(randomUUID())));
+    expect(err.code).toBe("identity_invalid");
+    expect(err.retryable).toBe(false);
+    for (const forbidden of [bogusJwt, "Bearer", "Authorization", SUPABASE_URL]) {
+      expect(err.message).not.toContain(forbidden);
+    }
   });
 
   test("two identical concurrent saveMessage inserts both resolve without duplication", async () => {

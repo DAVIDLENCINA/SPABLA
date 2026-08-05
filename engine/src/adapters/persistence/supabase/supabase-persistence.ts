@@ -97,6 +97,48 @@ function sameInstant(a: string, b: string): boolean {
   return ta === tb;
 }
 
+// Distinguish transport failures from actual authentication failures when
+// probing `authenticated.auth.getUser()`. Any HTTP 5xx, network error,
+// timeout, DNS failure or synchronous transport throw normalises to
+// `unavailable` (retryable). Only genuine credential problems (401/403,
+// malformed JWT, missing session) normalise to `identity_invalid`. In both
+// paths the outgoing message is opaque — the raw error text is discarded
+// so it cannot leak URLs, tokens, headers or body content.
+function translateAuthTransportOrIdentity(raw: unknown): PersistenceError {
+  const anyErr = raw as {
+    status?: number;
+    name?: string;
+    message?: string;
+  } | null | undefined;
+  const status = typeof anyErr?.status === "number" ? anyErr.status : 0;
+  const name = typeof anyErr?.name === "string" ? anyErr.name : "";
+  const rawMessage = typeof anyErr?.message === "string" ? anyErr.message : "";
+  const lower = rawMessage.toLowerCase();
+  const transportName =
+    name === "AuthRetryableFetchError" || name === "FetchError" || name === "TypeError";
+  const transportStatus = status === 0 || status >= 500;
+  const transportMessage =
+    lower.startsWith("fetch failed")
+    || lower.includes("enotfound")
+    || lower.includes("econnreset")
+    || lower.includes("econnrefused")
+    || lower.includes("etimedout")
+    || lower.startsWith("network")
+    || lower.includes("timeout")
+    || lower.includes("socket hang up");
+  if (transportName || transportStatus || transportMessage) {
+    return persistenceErrorWithRetry(
+      "unavailable",
+      "authentication service unavailable",
+      true,
+    );
+  }
+  return persistenceError(
+    "identity_invalid",
+    "authenticated client has no valid session",
+  );
+}
+
 type ConversationRow = {
   readonly id: string;
   readonly tenant_id: string;
@@ -389,14 +431,18 @@ export class SupabasePersistence implements PersistencePort {
   }
 
   private async probeAuthenticatedActor(): Promise<ActorId> {
-    const { data, error } = await this.authenticated.auth.getUser();
-    if (error) {
-      throw persistenceError(
-        "identity_invalid",
-        "identity probe: authenticated client has no valid session",
-      );
+    let response: Awaited<ReturnType<SupabaseClient["auth"]["getUser"]>>;
+    try {
+      response = await this.authenticated.auth.getUser();
+    } catch (raw) {
+      // Transport threw synchronously before returning an object; this is
+      // never authentication — always infrastructure.
+      throw translateAuthTransportOrIdentity(raw);
     }
-    const uid = data?.user?.id;
+    if (response.error) {
+      throw translateAuthTransportOrIdentity(response.error);
+    }
+    const uid = response.data?.user?.id;
     if (typeof uid !== "string" || uid.length === 0) {
       throw persistenceError(
         "identity_invalid",
