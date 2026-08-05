@@ -15,11 +15,14 @@ project_id = "spabla-hito-8-2-local"
 [api]
 enabled = true
 port = 54321
-# `spabla_v2` is NOT exposed via PostgREST during Hito 8.2 (Plan Hito 8.2 §3.1,
-# §10; ADR-008 §17). `public` is the default schema Supabase exposes and covers
-# the V1 baseline. `graphql_public` matches the remote default and is required
-# by the Supabase local stack; it does not expose `spabla_v2`.
-schemas = ["public", "graphql_public"]
+# Hito 8.2 kept `spabla_v2` unexposed while the schema was being validated.
+# Hito 8.3 requires the productive `SupabasePersistence` adapter (Plan Fase 8
+# V1.3 §10.4) to reach `spabla_v2` via PostgREST under RLS with the
+# `authenticated` JWT of each actor. Exposing the schema in the LOCAL config
+# is the hito-8.3 gate anticipated by Plan Hito 8.2 §10 ("el acceso productivo
+# a `spabla_v2` se decidirá en el hito del adaptador con RLS y grants ya
+# verificados"). The remote productive project is not affected by this file.
+schemas = ["public", "graphql_public", "spabla_v2"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 
