@@ -503,7 +503,12 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
     // admin_append_usage raises SQLSTATE 42501 (insufficient_privilege) when
     // membership is missing/inactive; the adapter maps that to `unauthorized`.
     expect(err.code).toBe("unauthorized");
-    expect(await countLedgerRows(tenantA, `hito_8_4_no_mship_${suiteId}`, "")).toBe(0);
+    // No write must have reached the ledger for this source.
+    const { count } = await admin.schema("spabla_v2").from("usage_ledger")
+      .select("id", { count: "exact", head: true })
+      .eq("tenant_id", tenantA)
+      .eq("source", `hito_8_4_no_mship_${suiteId}`);
+    expect(count).toBe(0);
   });
 
   test("membership deactivated between two emits: second emit fails, first row persists", async () => {

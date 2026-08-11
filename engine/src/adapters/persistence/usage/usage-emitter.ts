@@ -19,9 +19,9 @@
  *    closed codes from Hito 8.1.
  *
  * Trust boundary:
- *  - The emitter never sees `service_role` or any credential material.
+ *  - The emitter never sees any privileged credential material.
  *  - Actual write authority lives inside the injected `PersistencePort`
- *    (typically `SupabasePersistence` with a privileged Supabase client);
+ *    (typically the productive adapter with a privileged capability);
  *    the emitter just delegates.
  *
  * @internal Not part of the public engine surface. MUST NOT be re-exported
