@@ -4,7 +4,9 @@
 **Autor**: Jefe de Proyecto.
 **Versión**: V1.1.
 **Fecha**: 2026-08-11.
-**Estado**: PROPUESTO PARA APROBACIÓN DE DIRECCIÓN.
+**Estado**: APROBADO Y CONGELADO.
+**Fecha de aprobación**: 2026-08-11.
+**Aprobado por**: Dirección.
 **Rama documental**: `docs/fase-9-thirteen-languages-plan`.
 **Rama de trabajo prevista para implementación**: pendiente de asignación por Dirección; no se anticipa numeración de hito.
 **HEAD base**: `1de1e37ffe70c248efe93e3faa8ce7d9f00333e1` (`spabla-v2/fase-9-visible-conversation`).
@@ -771,9 +773,18 @@ Cada una de estas deudas y observaciones tendrá su propio artefacto documental 
 ## §37. Estado de aprobación
 
 - **V1.0 — 2026-08-11**: PROPUESTO PARA APROBACIÓN DE DIRECCIÓN.
-- **V1.1 — 2026-08-11**: PROPUESTO PARA APROBACIÓN DE DIRECCIÓN. (Este documento.)
-- El documento es inmutable mientras permanece en V1.1 salvo por la aprobación de Dirección, que lo puede pasar a `APROBADO Y CONGELADO` sin cambios materiales.
-- Cualquier modificación material posterior exige nueva versión (V1.2, V2.0, etc.) y trazabilidad de cambios.
+- **V1.1 — 2026-08-11**: PROPUESTO PARA APROBACIÓN DE DIRECCIÓN.
+- **V1.1 — 2026-08-11: APROBADO Y CONGELADO POR DIRECCIÓN.** (Estado vigente de este documento.)
+
+Consecuencias operativas de la aprobación:
+
+- El documento queda **inmutable en su contenido material** desde este momento. Cualquier modificación material posterior exige nueva versión (V1.2, V2.0, etc.) con historial explícito en §0 y trazabilidad de cambios.
+- La **implementación queda autorizable únicamente mediante una orden operativa posterior** de Dirección. Este commit de aprobación **no autoriza** por sí solo:
+  - el inicio de tareas LANG13-01…07,
+  - la creación de la rama de trabajo de implementación,
+  - la promoción a la rama de fase `spabla-v2/fase-9-visible-conversation`,
+  - la promoción a `main`,
+  - la apertura arbitraria de un nuevo hito.
 - Este Plan queda subordinado a ADR-005 y a los principios de ADR-003, ADR-004; nunca los sobrescribe.
 
 ---
