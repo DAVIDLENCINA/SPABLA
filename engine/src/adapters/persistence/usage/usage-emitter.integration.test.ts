@@ -241,47 +241,75 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
     expect(await countLedgerRows(tenantA, source, key)).toBe(1);
   });
 
-  test("conflicting retry (same key, different quantity) surfaces from admin_append_usage", async () => {
-    // Note: `admin_append_usage` returns silently for identical retries and
-    // is CHECK-constrained by structural fields. In the current design the
-    // uniqueness gate is `(tenant_id, source, idempotency_key)`, so two
-    // rows with the same key but different quantities cannot both be
-    // inserted; the second call receives the existing row's id — this is
-    // the semantics implemented in Hito 8.2 §9.5 `admin_append_usage`.
-    // The port therefore returns `void` in both cases. This test documents
-    // that the emitter does not attempt to detect divergence itself; the
-    // divergence between quantity 1 and quantity 2 is silently absorbed by
-    // the same key, and only the first quantity survives.
+  test("conflicting retry (same key, different quantity) raises code:conflict and leaves the first row intact", async () => {
     const emitter = buildEmitter(actorA);
     const ctx = ctxOf(actorA, tenantA);
     const key = randomUUID();
-    const source = `hito_8_4_second_wins_${suiteId}`;
+    const source = `hito_8_4_conflict_${suiteId}`;
+    const occurredAt = asISOTimestamp("2026-08-05T18:03:00.000Z");
     await emitter.emit(ctx, {
       metricKind: "turns",
       quantity: 1,
       unit: "turns",
-      occurredAt: asISOTimestamp("2026-08-05T18:03:00.000Z"),
+      occurredAt,
       source,
       idempotencyKey: asUUID(key),
       entryKind: "normal",
       correlationId: null,
     });
-    await emitter.emit(ctx, {
+    const err = await catchPersistenceError(emitter.emit(ctx, {
       metricKind: "turns",
       quantity: 2,
       unit: "turns",
-      occurredAt: asISOTimestamp("2026-08-05T18:03:00.000Z"),
+      occurredAt,
       source,
       idempotencyKey: asUUID(key),
       entryKind: "normal",
       correlationId: null,
-    });
+    }));
+    expect(err.code).toBe("conflict");
+    expect(err.retryable).toBe(false);
+    // Opaque message: no payload, URL, JWT, token or SQL identifiers leaked.
+    for (const forbidden of ["quantity", "usage_ledger", "SELECT", "INSERT", "Bearer", "Authorization", SUPABASE_URL, actorA.jwt]) {
+      expect(err.message).not.toContain(forbidden);
+    }
+    // First row survived intact.
     const { data } = await admin.schema("spabla_v2").from("usage_ledger")
-      .select("quantity")
+      .select("quantity, entry_kind")
       .eq("tenant_id", tenantA).eq("source", source).eq("idempotency_key", key)
       .maybeSingle();
     expect(await countLedgerRows(tenantA, source, key)).toBe(1);
     expect(data?.quantity).toBe(1);
+    expect(data?.entry_kind).toBe("normal");
+  });
+
+  test("concurrent divergent emits: one wins, at least one surfaces code:conflict, only one row persists", async () => {
+    const emitter = buildEmitter(actorA);
+    const ctx = ctxOf(actorA, tenantA);
+    const key = randomUUID();
+    const source = `hito_8_4_concurrent_divergent_${suiteId}`;
+    const occurredAt = asISOTimestamp("2026-08-05T18:03:30.000Z");
+    const attempts = [1, 2, 3].map((q) => emitter.emit(ctx, {
+      metricKind: "turns",
+      quantity: q,
+      unit: "turns",
+      occurredAt,
+      source,
+      idempotencyKey: asUUID(key),
+      entryKind: "normal",
+      correlationId: null,
+    }));
+    const results = await Promise.allSettled(attempts);
+    const fulfilled = results.filter((r) => r.status === "fulfilled").length;
+    const rejected = results.filter((r) => r.status === "rejected");
+    expect(fulfilled).toBeGreaterThanOrEqual(1);
+    expect(rejected.length).toBeGreaterThanOrEqual(1);
+    for (const r of rejected) {
+      const reason = (r as PromiseRejectedResult).reason as PersistenceError;
+      expect(reason.code).toBe("conflict");
+      expect(reason.retryable).toBe(false);
+    }
+    expect(await countLedgerRows(tenantA, source, key)).toBe(1);
   });
 
   test("concurrent emits with the same key resolve to a single row via DB UNIQUE", async () => {
