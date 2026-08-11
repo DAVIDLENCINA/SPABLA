@@ -37,4 +37,8 @@ echo "[run-integration-tests] applying rls_bootstrap.test.sql"
 psql --no-psqlrc --set ON_ERROR_STOP=1 \
      -f supabase/tests/rls_bootstrap.test.sql
 
+echo "[run-integration-tests] applying purge_ledger.test.sql"
+psql --no-psqlrc --set ON_ERROR_STOP=1 \
+     -f supabase/tests/purge_ledger.test.sql
+
 echo "[run-integration-tests] SUITES OK"

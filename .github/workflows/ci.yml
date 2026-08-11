@@ -122,3 +122,64 @@ jobs:
       - name: Stop Supabase local stack
         if: always()
         run: supabase stop --no-backup
+
+  restore-drill:
+    name: Job C — phase-8 restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install PostgreSQL 17 client (psql, pg_dump)
+        run: |
+          set -euo pipefail
+          # postgresql-client-17 is available on the Ubuntu runner via the
+          # PGDG APT repository already configured by the setup-node action's
+          # base image; if not, add it.
+          if ! psql --version 2>/dev/null | grep -qE '\b17\.'; then
+            sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+            wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-client-17
+          fi
+          psql --version
+          pg_dump --version
+
+      - name: Start Supabase local stack (source)
+        run: supabase start
+
+      - name: Apply migration chain to source database
+        run: bash scripts/ci/apply-migrations.sh
+
+      - name: Run restore drill (dump source → restore in independent target → verify)
+        run: bash scripts/ci/restore-drill.sh
+
+      - name: Upload drill artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-8-restore-drill
+          path: ${{ runner.temp }}/phase8-drill-report.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup
