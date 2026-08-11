@@ -131,6 +131,16 @@ pg_dump \
   -f "${DUMP_PATH}" \
   "${SRC_URL}"
 
+# Sanitize statements that require cross-role privileges the restoring
+# `postgres` user does not hold in the target cluster. These come from the
+# source Supabase image bootstrap (default privileges granted to internal
+# roles such as `supabase_admin`, `supabase_auth_admin`, etc.) and are not
+# relevant to the multi-tenant surface we validate on the target.
+sed -i \
+  -e 's|^ALTER DEFAULT PRIVILEGES FOR ROLE|-- (restore-drill sanitized) &|' \
+  -e 's|^SET SESSION AUTHORIZATION|-- (restore-drill sanitized) &|' \
+  "${DUMP_PATH}"
+
 DUMP_BYTES=$(wc -c < "${DUMP_PATH}" | tr -d ' ')
 DUMP_SHA=$(sha256sum "${DUMP_PATH}" | awk '{print $1}')
 
