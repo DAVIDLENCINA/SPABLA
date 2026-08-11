@@ -234,16 +234,18 @@ TGT_ADMIN_FN=$(psql_tgt -c "
 
 {
   echo "== Structural (target) =="
-  echo "  spabla_v2 tables:     ${TGT_SCHEMA_TABLES} (expected 5)"
+  # Fase 8 shipped five tables in spabla_v2; Fase 9.1.1 added
+  # message_translations so the productive baseline is now six.
+  echo "  spabla_v2 tables:     ${TGT_SCHEMA_TABLES} (expected 6)"
   echo "  V1 public tables:     ${TGT_V1_TABLES} (expected 6)"
   echo "  spabla_v2 policies:   ${TGT_POLICIES}"
-  echo "  ENABLE+FORCE RLS:     ${TGT_RLS_OK} of 5 spabla_v2 tables"
+  echo "  ENABLE+FORCE RLS:     ${TGT_RLS_OK} of 6 spabla_v2 tables"
   echo "  admin_* functions:    ${TGT_ADMIN_FN} of 5"
   echo ""
 } >> "${REPORT_PATH}"
 
-if [ "${TGT_SCHEMA_TABLES}" != "5" ] || [ "${TGT_V1_TABLES}" != "6" ] \
-   || [ "${TGT_RLS_OK}" != "5" ] || [ "${TGT_ADMIN_FN}" != "5" ]; then
+if [ "${TGT_SCHEMA_TABLES}" != "6" ] || [ "${TGT_V1_TABLES}" != "6" ] \
+   || [ "${TGT_RLS_OK}" != "6" ] || [ "${TGT_ADMIN_FN}" != "5" ]; then
   log "FATAL: structural mismatch after restore"
   exit 1
 fi
