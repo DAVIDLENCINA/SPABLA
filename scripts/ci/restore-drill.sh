@@ -153,6 +153,12 @@ PGDATABASE="${SOURCE_DB}" psql --no-psqlrc --set ON_ERROR_STOP=1 \
   -c "DROP DATABASE IF EXISTS ${TARGET_DB}" \
   -c "CREATE DATABASE ${TARGET_DB} TEMPLATE template0 OWNER postgres"
 
+# `template0` still ships an empty `public` schema; the schema-only dump we
+# just produced contains `CREATE SCHEMA public;` and would collide. Drop
+# the default schema so the dump can recreate it verbatim.
+PGDATABASE="${TARGET_DB}" psql --no-psqlrc --set ON_ERROR_STOP=1 \
+  -c "DROP SCHEMA IF EXISTS public CASCADE"
+
 # ---------------------------------------------------------------------
 # 4. Restore the dump into the target
 # ---------------------------------------------------------------------

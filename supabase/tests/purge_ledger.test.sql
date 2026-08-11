@@ -236,6 +236,13 @@ END $$;
 -- ────────────────────────────────────────────────────────────────
 BEGIN;
 RESET ROLE;
+-- Delete memberships first to respect the FK from tenant_memberships to
+-- tenants (bootstrap FK `tenant_memberships_tenant_id_fkey`).
+DELETE FROM spabla_v2.tenant_memberships
+ WHERE tenant_id IN (
+    '90000000-0000-0000-0000-00000000000a'::uuid,
+    '90000000-0000-0000-0000-00000000000b'::uuid
+ );
 DELETE FROM spabla_v2.tenants
  WHERE id IN (
     '90000000-0000-0000-0000-00000000000a'::uuid,
