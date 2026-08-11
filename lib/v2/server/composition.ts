@@ -112,6 +112,13 @@ export type RequestScopedPersistence = {
   readonly persistence: SupabasePersistence;
   readonly tenantContext: TenantContext;
   readonly actor: VerifiedActor;
+  /**
+   * The authenticated Supabase client bound to the caller's JWT.
+   * Exposed for other request-scoped adapters that also run under RLS
+   * (e.g. `SupabaseTranslationStore`). Do NOT return this to the
+   * browser or use it for privileged operations.
+   */
+  readonly authenticated: SupabaseClient;
 };
 
 /**
@@ -136,5 +143,5 @@ export async function buildRequestScopedPersistence(input: {
   const tenantContext = buildTenantContext(identity, asUUID(input.tenantId) as TenantId);
   const authenticated = buildAuthenticatedClient(token);
   const persistence = new SupabasePersistence({ authenticated });
-  return { persistence, tenantContext, actor };
+  return { persistence, tenantContext, actor, authenticated };
 }

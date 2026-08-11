@@ -20,9 +20,15 @@ import {
   buildRequestScopedPersistence,
   Fase9RequestError,
 } from "@/lib/v2/server/composition";
-import { translateText } from "@/lib/v2/server/translate";
+import {
+  buildTranslationStore,
+  getProcessSingleFlight,
+  openAIProviderForTranslationStore,
+  CURRENT_TRANSLATION_VERSION,
+} from "@/lib/v2/server/translation-runtime";
 import { asISOTimestamp, asUUID } from "@engine/types/ids";
 import { isLangCode } from "@engine/types/language";
+import { resolveTranslatedMessages } from "@engine/adapters/translation-store/resolve-translated-messages";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -86,40 +92,26 @@ export async function GET(req: NextRequest) {
     return mapCompositionError(err);
   }
 
-  let page;
+  let result;
   try {
-    page = await scope.persistence.listMessages(scope.tenantContext, {
-      conversationId: asUUID(conversationId),
-      limit: PAGE_SIZE,
-      cursor: null,
+    const translationStore = buildTranslationStore({ authenticated: scope.authenticated });
+    result = await resolveTranslatedMessages({
+      persistence: scope.persistence,
+      translationStore,
+      translate: openAIProviderForTranslationStore,
+      tenantContext: scope.tenantContext,
+      conversationId,
+      targetLanguage: targetLang,
+      translationVersion: CURRENT_TRANSLATION_VERSION,
+      pageLimit: PAGE_SIZE,
+      singleFlight: getProcessSingleFlight(),
     });
   } catch (err) {
     return mapPersistenceError(err);
   }
 
-  const translated = await Promise.all(
-    page.items.map(async (msg) => {
-      const outcome = await translateText({
-        text: msg.text,
-        from: msg.language,
-        to: targetLang,
-      });
-      return {
-        messageId: msg.messageId,
-        senderId: msg.senderId,
-        originalText: msg.text,
-        originalLanguage: msg.language,
-        targetLanguage: targetLang,
-        translation: outcome.ok ? outcome.translation : null,
-        translationError: outcome.ok ? null : outcome.reason,
-        translationPassthrough: outcome.ok ? outcome.passthrough : false,
-        createdAt: msg.createdAt,
-      };
-    }),
-  );
-
   return NextResponse.json(
-    { items: translated, actorId: scope.actor.actorId },
+    { items: result.items, actorId: result.actorId },
     { status: 200 },
   );
 }
