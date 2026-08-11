@@ -11,10 +11,12 @@
  * (JWT + TenantContext + PersistencePort).
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 
 import { createPollingRunner } from "@engine/utils/polling";
+import { initialLanguagesFor } from "@engine/utils/initial-languages";
+import { isLangCode, type LangCode } from "@engine/types/language";
 
 type Message = {
   readonly messageId: string;
@@ -95,8 +97,10 @@ export default function VisibleConversationPage() {
 
   const [tenantId, setTenantId] = useState<string>("");
   const [conversationId, setConversationId] = useState<string>("");
-  const [myLanguage, setMyLanguage] = useState<string>("es");
-  const [targetLanguage, setTargetLanguage] = useState<string>("en");
+  // D1: both default to the same language; `initialLanguagesFor` overrides
+  // them to the seeded actor's language when a session is recognised.
+  const [myLanguage, setMyLanguage] = useState<LangCode>("es");
+  const [targetLanguage, setTargetLanguage] = useState<LangCode>("es");
 
   const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
   const [pollError, setPollError] = useState<string | null>(null);
@@ -138,17 +142,31 @@ export default function VisibleConversationPage() {
     setSendError(null);
   }, [sessionUserId]);
 
-  // When we recognise the signed-in user as one of the seeded actors, pre-select their preferred language.
+  // D1 fix (Hito 9.1.1): apply the seeded default (myLanguage === targetLanguage)
+  // ONCE per actor change. A manual selection made during the session survives
+  // subsequent effect re-runs; only signing out or switching actor re-arms the
+  // default. Reloading the page with the same actor still re-arms because a
+  // fresh mount starts with `lastSeenActorRef.current = null`.
+  const lastSeenActorRef = useRef<string | null>(null);
   useEffect(() => {
     if (!session || !seed) return;
-    if (session.user.id === seed.actorA.actorId) {
-      setMyLanguage(seed.actorA.language);
-      setTargetLanguage(seed.actorB.language);
-    } else if (session.user.id === seed.actorB.actorId) {
-      setMyLanguage(seed.actorB.language);
-      setTargetLanguage(seed.actorA.language);
-    }
+    const currentActor = session.user.id;
+    if (lastSeenActorRef.current === currentActor) return;
+    const pair = initialLanguagesFor(currentActor, seed);
+    if (pair === null) return;
+    lastSeenActorRef.current = currentActor;
+    setMyLanguage(pair.myLanguage);
+    setTargetLanguage(pair.targetLanguage);
   }, [session, seed]);
+
+  const onMyLanguageChange = useCallback((next: string) => {
+    if (!isLangCode(next)) return;
+    setMyLanguage(next);
+  }, []);
+  const onTargetLanguageChange = useCallback((next: string) => {
+    if (!isLangCode(next)) return;
+    setTargetLanguage(next);
+  }, []);
 
   const canOperate = useMemo(
     () => Boolean(session && tenantId && conversationId && targetLanguage),
@@ -375,7 +393,7 @@ export default function VisibleConversationPage() {
         <div style={{ display: "flex", gap: "1rem", fontSize: "0.9rem" }}>
           <label>
             Yo escribo en{" "}
-            <select value={myLanguage} onChange={(e) => setMyLanguage(e.target.value)}>
+            <select value={myLanguage} onChange={(e) => onMyLanguageChange(e.target.value)}>
               {LANGUAGE_OPTIONS.map((l) => (
                 <option key={l.code} value={l.code}>{l.label}</option>
               ))}
@@ -383,7 +401,7 @@ export default function VisibleConversationPage() {
           </label>
           <label>
             Ver traducciones en{" "}
-            <select value={targetLanguage} onChange={(e) => setTargetLanguage(e.target.value)}>
+            <select value={targetLanguage} onChange={(e) => onTargetLanguageChange(e.target.value)}>
               {LANGUAGE_OPTIONS.map((l) => (
                 <option key={l.code} value={l.code}>{l.label}</option>
               ))}
