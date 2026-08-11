@@ -269,12 +269,12 @@ export default function VisibleConversationPage() {
   return (
     <main style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
       <h1 style={{ fontSize: "1.6rem", marginBottom: "0.25rem" }}>SPABLA V2 · Fase 9 · Chat traducido</h1>
-      <p style={{ color: "#666", fontSize: "0.9rem", marginTop: 0 }}>
+      <p style={{ color: "#334155", fontSize: "0.9rem", marginTop: 0 }}>
         Escribe en tu idioma, tu contertulio lo verá en el suyo. Persistencia
         en <code>spabla_v2</code>, traducción vía servidor.
       </p>
 
-      <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
+      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Contexto</h2>
         {!seed && (
           <button onClick={runSeed} disabled={seedBusy} style={{ padding: "0.5rem 0.75rem" }}>
@@ -282,7 +282,7 @@ export default function VisibleConversationPage() {
           </button>
         )}
         {seed && (
-          <div style={{ display: "grid", gap: "0.25rem", fontSize: "0.85rem", color: "#333" }}>
+          <div style={{ display: "grid", gap: "0.25rem", fontSize: "0.85rem", color: "#1e293b" }}>
             <div>tenant: <code>{seed.tenantId}</code></div>
             <div>conversación: <code>{seed.conversationId}</code></div>
             <div>
@@ -296,10 +296,10 @@ export default function VisibleConversationPage() {
             </button>
           </div>
         )}
-        {seedError && <p style={{ color: "#b00", fontSize: "0.85rem" }}>Error de seed: {seedError}</p>}
+        {seedError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error de seed: {seedError}</p>}
       </section>
 
-      <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
+      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Sesión</h2>
         {!session && (
           <div style={{ display: "grid", gap: "0.5rem" }}>
@@ -338,7 +338,7 @@ export default function VisibleConversationPage() {
                 </button>
               </div>
             )}
-            {signInError && <p style={{ color: "#b00", fontSize: "0.85rem" }}>{signInError}</p>}
+            {signInError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>{signInError}</p>}
           </div>
         )}
         {session && (
@@ -351,7 +351,7 @@ export default function VisibleConversationPage() {
         )}
       </section>
 
-      <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
+      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Idiomas</h2>
         <div style={{ display: "flex", gap: "1rem", fontSize: "0.9rem" }}>
           <label>
@@ -373,26 +373,26 @@ export default function VisibleConversationPage() {
         </div>
       </section>
 
-      <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem", minHeight: 240 }}>
+      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem", minHeight: 240 }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Conversación</h2>
-        {!canOperate && <p style={{ color: "#666", fontSize: "0.9rem" }}>Inicia sesión y carga el contexto para conversar.</p>}
-        {pollError && <p style={{ color: "#b00", fontSize: "0.85rem" }}>Polling: {pollError}</p>}
+        {!canOperate && <p style={{ color: "#334155", fontSize: "0.9rem" }}>Inicia sesión y carga el contexto para conversar.</p>}
+        {pollError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Polling: {pollError}</p>}
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "0.6rem" }}>
           {messages.map((m) => (
-            <li key={m.messageId} style={{ borderLeft: "3px solid #4c8", paddingLeft: "0.6rem" }}>
-              <div style={{ fontSize: "0.78rem", color: "#666" }}>
+            <li key={m.messageId} style={{ borderLeft: "3px solid #059669", paddingLeft: "0.6rem" }}>
+              <div style={{ fontSize: "0.78rem", color: "#475569" }}>
                 {m.senderId === session?.user.id ? "Yo" : m.senderId}
                 {" · "}{formatTime(m.createdAt)}
               </div>
-              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem" }}>
-                <strong style={{ color: "#333" }}>[{m.originalLanguage}]</strong> {m.originalText}
+              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: "#0f172a" }}>
+                <strong style={{ color: "#0f172a" }}>[{m.originalLanguage}]</strong> {m.originalText}
               </div>
-              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: m.translation ? "#0a5" : "#b00" }}>
+              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: m.translation ? "#047857" : "#b91c1c" }}>
                 {m.translation !== null && (
                   <>
                     <strong>[{m.targetLanguage}]</strong> {m.translation}
                     {m.translationPassthrough && (
-                      <span style={{ color: "#888" }}> · sin traducción (mismo idioma)</span>
+                      <span style={{ color: "#64748b" }}> · sin traducción (mismo idioma)</span>
                     )}
                   </>
                 )}
@@ -405,7 +405,7 @@ export default function VisibleConversationPage() {
         </ul>
       </section>
 
-      <section style={{ border: "1px solid #ddd", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
+      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Enviar mensaje</h2>
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input
@@ -426,7 +426,7 @@ export default function VisibleConversationPage() {
             {sending ? "Enviando…" : "Enviar"}
           </button>
         </div>
-        {sendError && <p style={{ color: "#b00", fontSize: "0.85rem" }}>Error al enviar: {sendError}</p>}
+        {sendError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error al enviar: {sendError}</p>}
       </section>
     </main>
   );
