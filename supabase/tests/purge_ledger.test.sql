@@ -228,10 +228,14 @@ BEGIN
 END $$;
 
 -- ────────────────────────────────────────────────────────────────
--- 7. Cleanup so this suite is re-runnable inside the same DB.
+-- 7. Cleanup so this suite is re-runnable inside the same DB. Runs as
+--    the connecting superuser (`postgres`): DELETE on `spabla_v2.tenants`
+--    is not granted to `service_role` by the bootstrap (Plan Fase 8 §7.5
+--    matrix), which is exactly the restrictive posture we want, so the
+--    cleanup uses the direct DB role instead.
 -- ────────────────────────────────────────────────────────────────
 BEGIN;
-SET LOCAL ROLE service_role;
+RESET ROLE;
 DELETE FROM spabla_v2.tenants
  WHERE id IN (
     '90000000-0000-0000-0000-00000000000a'::uuid,

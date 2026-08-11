@@ -114,8 +114,15 @@ SOURCE_LEDGER=$(psql_src -c "SELECT count(*) FROM spabla_v2.usage_ledger")
 log "dumping schema-only from source"
 
 SRC_URL="postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${SOURCE_DB}"
+# `--no-owner` drops `SET ROLE supabase_admin;` and `ALTER ... OWNER TO
+# supabase_admin;` statements the source cluster produces for objects it
+# provisions internally; the restoring role (`postgres` in the target)
+# cannot impersonate `supabase_admin` and would abort otherwise. We keep
+# ACLs (`GRANT`/`REVOKE`) so the ACL matrix in the target reflects the
+# bootstrap posture verbatim.
 pg_dump \
   --schema-only \
+  --no-owner \
   --no-comments \
   --schema=public \
   --schema=spabla_v2 \
