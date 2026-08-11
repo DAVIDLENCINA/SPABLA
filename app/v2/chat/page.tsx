@@ -16,6 +16,10 @@ import { createClient, type Session, type SupabaseClient } from "@supabase/supab
 
 import { createPollingRunner } from "@engine/utils/polling";
 import { initialLanguagesFor } from "@engine/utils/initial-languages";
+import {
+  classifyPollingResponse,
+  SESSION_EXPIRED_MESSAGE,
+} from "@engine/utils/polling-response-classifier";
 import { isLangCode, type LangCode } from "@engine/types/language";
 
 type Message = {
@@ -104,6 +108,11 @@ export default function VisibleConversationPage() {
 
   const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [sessionExpired, setSessionExpired] = useState<boolean>(false);
+  // Immediate short-circuit for in-flight polling ticks that started
+  // before the runner cleanup fired. Once true, `fetchMessages`
+  // returns early and never re-uses the invalid token.
+  const sessionExpiredRef = useRef<boolean>(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -140,6 +149,12 @@ export default function VisibleConversationPage() {
     setMessages([]);
     setPollError(null);
     setSendError(null);
+    if (sessionUserId !== null) {
+      // A fresh, valid session invalidates any prior expiry notice and
+      // re-arms the polling loop.
+      sessionExpiredRef.current = false;
+      setSessionExpired(false);
+    }
   }, [sessionUserId]);
 
   // D1 fix (Hito 9.1.1): apply the seeded default (myLanguage === targetLanguage)
@@ -175,6 +190,7 @@ export default function VisibleConversationPage() {
 
   const fetchMessages = useCallback(async () => {
     if (!supabase || !session) return;
+    if (sessionExpiredRef.current) return;
     const token = session.access_token;
     try {
       const res = await fetch(
@@ -185,12 +201,29 @@ export default function VisibleConversationPage() {
           cache: "no-store",
         },
       );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setPollError(body.error ?? `poll_status_${res.status}`);
+      const body = (await res.json().catch(() => ({}))) as { error?: string; items?: ReadonlyArray<Message>; actorId?: string };
+      const action = classifyPollingResponse({ status: res.status }, body);
+      if (action.kind === "expire") {
+        // Session expiry is the ONLY case where the polling loop is
+        // torn down and the user forced back to sign-in. The `ref`
+        // short-circuits any in-flight tick that might still be
+        // queued behind this response; setting `session = null`
+        // causes `canOperate` to flip and the effect's cleanup
+        // cancels the runner. Local sign-out — never global — clears
+        // the invalid token from Supabase's own storage.
+        sessionExpiredRef.current = true;
+        setSessionExpired(true);
+        setPollError(null);
+        setMessages([]);
+        setSession(null);
+        void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
         return;
       }
-      const body = (await res.json()) as { items: ReadonlyArray<Message>; actorId?: string };
+      if (action.kind === "surface") {
+        setPollError(action.pollError);
+        return;
+      }
+      const items = Array.isArray(body.items) ? body.items : [];
       // Guard against a late response from an obsolete session: drop the
       // payload if the server-verified actorId no longer matches the
       // current client-side session. This complements the runner-level
@@ -198,7 +231,7 @@ export default function VisibleConversationPage() {
       if (body.actorId !== undefined && body.actorId !== session.user.id) {
         return;
       }
-      setMessages(body.items);
+      setMessages(items);
       setPollError(null);
     } catch {
       setPollError("poll_network");
@@ -262,8 +295,12 @@ export default function VisibleConversationPage() {
     // `scope: "local"` clears only THIS tab's session; other browsers
     // authenticated as the same actor are left alone. The auth listener
     // then propagates `session = null`, which triggers the state reset
-    // effect and unmounts the polling runner.
+    // effect and unmounts the polling runner. A manual sign-out clears
+    // the expiry notice too — it is a user-initiated action, not a
+    // recovery from an invalidated JWT.
     await supabase.auth.signOut({ scope: "local" });
+    sessionExpiredRef.current = false;
+    setSessionExpired(false);
     setSession(null);
     setMessages([]);
     setPollError(null);
@@ -338,6 +375,22 @@ export default function VisibleConversationPage() {
 
       <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
         <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Sesión</h2>
+        {!session && sessionExpired && (
+          <p
+            role="alert"
+            style={{
+              margin: "0 0 0.5rem",
+              padding: "0.5rem 0.65rem",
+              border: "1px solid #f59e0b",
+              background: "#fef3c7",
+              color: "#78350f",
+              borderRadius: 6,
+              fontSize: "0.9rem",
+            }}
+          >
+            {SESSION_EXPIRED_MESSAGE}
+          </p>
+        )}
         {!session && (
           <div style={{ display: "grid", gap: "0.5rem" }}>
             <input
@@ -400,7 +453,7 @@ export default function VisibleConversationPage() {
             </select>
           </label>
           <label>
-            Ver traducciones en{" "}
+            Leer mensajes en{" "}
             <select value={targetLanguage} onChange={(e) => onTargetLanguageChange(e.target.value)}>
               {LANGUAGE_OPTIONS.map((l) => (
                 <option key={l.code} value={l.code}>{l.label}</option>
