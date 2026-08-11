@@ -117,6 +117,7 @@ jobs:
         run: |
           npx vitest run \
             src/adapters/persistence/supabase/supabase-persistence.integration.test.ts \
+            src/adapters/persistence/supabase/fase9-visible-conversation.integration.test.ts \
             src/adapters/persistence/usage/usage-emitter.integration.test.ts
 
       - name: Stop Supabase local stack
