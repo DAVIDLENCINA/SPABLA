@@ -11,8 +11,10 @@
  * (JWT + TenantContext + PersistencePort).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+
+import { createPollingRunner } from "@engine/utils/polling";
 
 type Message = {
   readonly messageId: string;
@@ -126,6 +128,16 @@ export default function VisibleConversationPage() {
     };
   }, [supabase]);
 
+  // Reset per-session view state whenever the authenticated user changes
+  // (including sign-out → sign-in-as-different-actor). Prevents a stale
+  // "unauthorized" banner from surviving a fresh session.
+  const sessionUserId = session?.user.id ?? null;
+  useEffect(() => {
+    setMessages([]);
+    setPollError(null);
+    setSendError(null);
+  }, [sessionUserId]);
+
   // When we recognise the signed-in user as one of the seeded actors, pre-select their preferred language.
   useEffect(() => {
     if (!session || !seed) return;
@@ -142,9 +154,6 @@ export default function VisibleConversationPage() {
     () => Boolean(session && tenantId && conversationId && targetLanguage),
     [session, tenantId, conversationId, targetLanguage],
   );
-
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelledRef = useRef(false);
 
   const fetchMessages = useCallback(async () => {
     if (!supabase || !session) return;
@@ -163,7 +172,14 @@ export default function VisibleConversationPage() {
         setPollError(body.error ?? `poll_status_${res.status}`);
         return;
       }
-      const body = (await res.json()) as { items: ReadonlyArray<Message> };
+      const body = (await res.json()) as { items: ReadonlyArray<Message>; actorId?: string };
+      // Guard against a late response from an obsolete session: drop the
+      // payload if the server-verified actorId no longer matches the
+      // current client-side session. This complements the runner-level
+      // cancellation and eliminates any residual UI flicker.
+      if (body.actorId !== undefined && body.actorId !== session.user.id) {
+        return;
+      }
       setMessages(body.items);
       setPollError(null);
     } catch {
@@ -172,18 +188,14 @@ export default function VisibleConversationPage() {
   }, [supabase, session, tenantId, conversationId, targetLanguage]);
 
   useEffect(() => {
-    cancelledRef.current = false;
     if (!canOperate) return;
-    const loop = async () => {
-      await fetchMessages();
-      if (cancelledRef.current) return;
-      pollTimer.current = setTimeout(loop, POLL_INTERVAL_MS);
-    };
-    void loop();
-    return () => {
-      cancelledRef.current = true;
-      if (pollTimer.current) clearTimeout(pollTimer.current);
-    };
+    // A fresh runner per effect instance owns its own cancellation flag.
+    // When `fetchMessages` changes (new session, new tenant, new target
+    // language) the previous runner is cancelled and CANNOT enqueue any
+    // further ticks — the leaked-loop path that caused stale-JWT 401s on
+    // Safari after sign-out / sign-in is closed at its root.
+    const runner = createPollingRunner(fetchMessages, { intervalMs: POLL_INTERVAL_MS });
+    return () => runner.cancel();
   }, [canOperate, fetchMessages]);
 
   const runSeed = useCallback(async () => {
@@ -229,8 +241,15 @@ export default function VisibleConversationPage() {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    await supabase.auth.signOut();
+    // `scope: "local"` clears only THIS tab's session; other browsers
+    // authenticated as the same actor are left alone. The auth listener
+    // then propagates `session = null`, which triggers the state reset
+    // effect and unmounts the polling runner.
+    await supabase.auth.signOut({ scope: "local" });
+    setSession(null);
     setMessages([]);
+    setPollError(null);
+    setSendError(null);
   }, [supabase]);
 
   const sendMessage = useCallback(async () => {
