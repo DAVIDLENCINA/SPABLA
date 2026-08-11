@@ -8,8 +8,8 @@
  *
  * Construction:
  *  - Zero global singleton, zero mutable module state, zero direct
- *    `process.env` reads, zero `@supabase/supabase-js` import, zero JWT
- *    knowledge. The persistence port is injected explicitly.
+ *    environment reads, zero provider SDK import, zero JWT knowledge.
+ *    The persistence port is injected explicitly.
  *  - The emitter never selects a tenant on behalf of the caller. Every
  *    operation receives a `TenantContext`; `tenantId` comes from
  *    `ctx.tenantId`, `actorId` from `ctx.identity.actorId`.
