@@ -45,3 +45,4 @@ next-env.d.ts
 
 # supabase — CLI-managed local state (linked-project ref, pooler URL, versions)
 supabase/.temp/
+supabase/.branches/
