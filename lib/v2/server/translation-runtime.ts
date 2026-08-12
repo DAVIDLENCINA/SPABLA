@@ -28,7 +28,13 @@ import { translateText } from "./translate";
 // Bumped when the pipeline (model, prompt, post-processing) changes so
 // old rows in `spabla_v2.message_translations` become inactive without
 // being dropped. A future hito may expose this via env.
-export const CURRENT_TRANSLATION_VERSION = "v1" as const;
+//
+// LANG13-04 · Plan V1.1 §18: bumped from "v1" to "v2" atomically with
+// the hardened multilingual prompt introduced in
+// `lib/v2/server/translate.ts` (§17). Filas `v1` en
+// `spabla_v2.message_translations` permanecen inmutables (§19); sólo
+// los mensajes consultados vuelven a traducirse bajo `v2`.
+export const CURRENT_TRANSLATION_VERSION = "v2" as const;
 
 const singleFlightSingleton: SingleFlightMap = createSingleFlight();
 

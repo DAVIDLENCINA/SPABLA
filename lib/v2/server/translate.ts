@@ -6,22 +6,65 @@
  * Rate-limit and retry policy are the caller's responsibility for now
  * (Fase 9 §3 defers Realtime/outbox). Fakes are permitted in tests only,
  * via `overrideProviderForTests`.
+ *
+ * LANG13-04 (Plan V1.1 §16, §17): the language-name map covers the 13
+ * activated codes with the canonical names required by the provider,
+ * and the system prompt is hardened for multilingual quality
+ * (preservation of URLs/mentions/emojis/numbers/proper-names/line-breaks,
+ * anti-transliteration, output-only). The corresponding bump of
+ * `CURRENT_TRANSLATION_VERSION` to `"v2"` lives in the same commit
+ * inside `lib/v2/server/translation-runtime.ts` (Plan V1.1 §18, §31 R8).
  */
 
 import "server-only";
 
+// LANG13-04 · Plan V1.1 §16. Names sent to the provider MUST be these
+// canonical English strings, with the specific refinements for `ar`
+// ("Modern Standard Arabic") and `zh` ("Simplified Chinese") that
+// prevent regional-dialect drift or traditional/simplified ambiguity.
+// LangCode values outside this map keep the fallback of §16.2 (raw
+// ISO 639-1 code as the name).
 const LANGUAGE_NAMES: Record<string, string> = {
-  es: "Spanish",
-  en: "English",
-  fr: "French",
+  ar: "Modern Standard Arabic",
+  ca: "Catalan",
   de: "German",
+  en: "English",
+  es: "Spanish",
+  fr: "French",
+  hi: "Hindi",
   it: "Italian",
-  pt: "Portuguese",
   ja: "Japanese",
-  zh: "Chinese",
-  ar: "Arabic",
+  ko: "Korean",
+  pt: "Portuguese",
   ru: "Russian",
+  zh: "Simplified Chinese",
 };
+
+// LANG13-04 · Plan V1.1 §17. Hardened multilingual prompt. Bump of
+// `CURRENT_TRANSLATION_VERSION` to `"v2"` accompanies this constant
+// in the same atomic commit (§18, §31 R8). Do not diverge the two —
+// changing this prompt without a fresh `translationVersion` would
+// corrupt the coherence of `spabla_v2.message_translations`.
+const SYSTEM_PROMPT_TEMPLATE: string =
+  "You are a professional translator. Translate the user's message from {sourceLanguage} to {targetLanguage}.\n\n"
+  + "Preserve URLs, @mentions, emojis, numbers, proper names, line breaks and paragraph structure. "
+  + "Do not transliterate: use the natural writing system of the target language.\n\n"
+  + "Return only the translated text, with no preamble, explanation or quotation marks.";
+
+export function buildSystemPrompt(sourceLanguage: string, targetLanguage: string): string {
+  return SYSTEM_PROMPT_TEMPLATE
+    .replace("{sourceLanguage}", sourceLanguage)
+    .replace("{targetLanguage}", targetLanguage);
+}
+
+export function getLanguageNameForProvider(code: string): string {
+  // Plan V1.1 §16.2: unknown codes fall through to the raw ISO 639-1
+  // string. Plan V1.1 §16.5: never emit the ISO code without going
+  // through this map — enforced by the fact that this function IS the
+  // map lookup and both `sourceLang` / `targetLang` inside
+  // `openAIProvider` route through it.
+  return LANGUAGE_NAMES[code] ?? code;
+}
 
 const MAX_TEXT_LENGTH = 1000;
 
@@ -51,8 +94,8 @@ async function openAIProvider(input: TranslationInput): Promise<string> {
   if (!apiKey || apiKey.length === 0) {
     throw new Error("openai_key_missing");
   }
-  const sourceLang = LANGUAGE_NAMES[input.from] ?? input.from;
-  const targetLang = LANGUAGE_NAMES[input.to] ?? input.to;
+  const sourceLang = getLanguageNameForProvider(input.from);
+  const targetLang = getLanguageNameForProvider(input.to);
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -66,7 +109,7 @@ async function openAIProvider(input: TranslationInput): Promise<string> {
       messages: [
         {
           role: "system",
-          content: `You are a translator. Translate the user's message from ${sourceLang} to ${targetLang}. Return only the translated text, nothing else.`,
+          content: buildSystemPrompt(sourceLang, targetLang),
         },
         { role: "user", content: input.text },
       ],
