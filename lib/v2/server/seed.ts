@@ -15,11 +15,18 @@ import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import type { LangCode } from "@engine/types/language";
+
+// LANG13-02 · Plan V1.1 §3.6, §23, §25: el tipo del idioma sembrado
+// admite cualquier `LangCode` del catálogo técnico (55 códigos
+// ISO 639-1 congelados por ADR-005). Los datos sembrados (actorA en
+// `es`, actorB en `en`) permanecen sin cambio: el ensanche es
+// puramente aditivo sobre el tipo.
 export type SeedActor = {
   readonly actorId: string;
   readonly email: string;
   readonly password: string;
-  readonly language: "es" | "en";
+  readonly language: LangCode;
 };
 
 export type SeedResult = {
