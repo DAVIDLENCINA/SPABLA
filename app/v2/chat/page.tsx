@@ -41,13 +41,24 @@ type SeedResponse = {
   readonly actorB: { readonly actorId: string; readonly email: string; readonly password: string; readonly language: "es" | "en" };
 };
 
+// LANG13-02 · Activación de 13 idiomas en el selector del chat.
+// Orden de producto obligatorio fijado por Plan V1.1 §14 (APROBADO Y
+// CONGELADO). NO reordenar alfabéticamente. Etiquetas visibles en la
+// lengua propia de cada idioma (§8, regla de coherencia 1).
 const LANGUAGE_OPTIONS: ReadonlyArray<{ readonly code: string; readonly label: string }> = [
   { code: "es", label: "Español" },
+  { code: "ca", label: "Català" },
   { code: "en", label: "English" },
   { code: "fr", label: "Français" },
   { code: "de", label: "Deutsch" },
   { code: "it", label: "Italiano" },
   { code: "pt", label: "Português" },
+  { code: "zh", label: "中文（简体）" },
+  { code: "ja", label: "日本語" },
+  { code: "ko", label: "한국어" },
+  { code: "ar", label: "العربية" },
+  { code: "hi", label: "हिन्दी" },
+  { code: "ru", label: "Русский" },
 ];
 
 const POLL_INTERVAL_MS = 1500;

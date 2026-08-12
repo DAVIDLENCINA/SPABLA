@@ -161,43 +161,84 @@ describe("LANG13-03 · Global LTR posture is preserved", () => {
   });
 });
 
-describe("LANG13-03 · LANGUAGE_OPTIONS still holds the 6 pre-LANG13-02 codes", () => {
-  // Guardrail: LANG13-02 has NOT started. The visible selector must
-  // still expose exactly the six codes shipped by Hito 9.1 (es, en,
-  // fr, de, it, pt). Any drift here signals accidental activation.
-  test("es, en, fr, de, it, pt are present in LANGUAGE_OPTIONS", () => {
-    const src = readOrThrow(CHAT_PAGE);
-    // The entries appear as `{ code: "xx", label: "..." }` in an array.
-    for (const code of ["es", "en", "fr", "de", "it", "pt"] as const) {
-      expect(src).toMatch(new RegExp(`code:\\s*"${code}"`));
+describe("LANG13-02 · LANGUAGE_OPTIONS activates the 13 approved languages in Plan §14 order", () => {
+  // Load the activated block once for the whole group. All assertions
+  // read from the same textual source so drift in any dimension —
+  // presence, order, label, count, duplicates — surfaces immediately.
+  const src = readOrThrow(CHAT_PAGE);
+  const blockMatch = src.match(
+    /const LANGUAGE_OPTIONS[\s\S]*?=\s*\[([\s\S]*?)\];/,
+  );
+
+  // Extract entries as an ordered array of `{ code, label }`.
+  // The parser deliberately tolerates whitespace between fields but
+  // NOT the field order, and never re-sorts — so a manual
+  // alphabetical reshuffle in the source is caught by the order tests.
+  const entryPattern = /\{\s*code:\s*"([^"]+)"\s*,\s*label:\s*"([^"]+)"\s*\}/g;
+  type Entry = { readonly code: string; readonly label: string };
+  const parsedEntries: ReadonlyArray<Entry> = (() => {
+    if (!blockMatch) return [];
+    const inside = blockMatch[1] ?? "";
+    const out: Array<Entry> = [];
+    for (const m of inside.matchAll(entryPattern)) {
+      out.push({ code: m[1] ?? "", label: m[2] ?? "" });
     }
+    return out;
+  })();
+
+  // Fixture: exact contract from Plan V1.1 §8 + §14, byte-identical.
+  const PLAN_ORDER: ReadonlyArray<Entry> = [
+    { code: "es", label: "Español" },
+    { code: "ca", label: "Català" },
+    { code: "en", label: "English" },
+    { code: "fr", label: "Français" },
+    { code: "de", label: "Deutsch" },
+    { code: "it", label: "Italiano" },
+    { code: "pt", label: "Português" },
+    { code: "zh", label: "中文（简体）" },
+    { code: "ja", label: "日本語" },
+    { code: "ko", label: "한국어" },
+    { code: "ar", label: "العربية" },
+    { code: "hi", label: "हिन्दी" },
+    { code: "ru", label: "Русский" },
+  ];
+
+  test("LANGUAGE_OPTIONS block is well-formed and locatable", () => {
+    expect(blockMatch, "LANGUAGE_OPTIONS declaration not found").not.toBeNull();
+    expect(parsedEntries.length, "no entries parsed from LANGUAGE_OPTIONS").toBeGreaterThan(0);
   });
 
-  test("ar, ca, hi, ja, ko, ru, zh are NOT yet present in LANGUAGE_OPTIONS (activation happens in LANG13-02)", () => {
-    const src = readOrThrow(CHAT_PAGE);
-    // Locate the LANGUAGE_OPTIONS block precisely.
-    const match = src.match(
-      /const LANGUAGE_OPTIONS[\s\S]*?=\s*\[[\s\S]*?\];/,
-    );
-    expect(match, "LANGUAGE_OPTIONS block not found").not.toBeNull();
-    const block = match ? match[0] : "";
-    for (const code of ["ar", "ca", "hi", "ja", "ko", "ru", "zh"] as const) {
-      expect(
-        block.match(new RegExp(`code:\\s*"${code}"`)),
-        `LANGUAGE_OPTIONS activated '${code}' before LANG13-02`,
-      ).toBeNull();
-    }
+  test("LANGUAGE_OPTIONS holds exactly 13 entries", () => {
+    expect(parsedEntries).toHaveLength(13);
   });
 
-  test("LANGUAGE_OPTIONS holds exactly 6 entries (count `{ code: \"...\" ,`)", () => {
-    const src = readOrThrow(CHAT_PAGE);
-    const match = src.match(
-      /const LANGUAGE_OPTIONS[\s\S]*?=\s*\[([\s\S]*?)\];/,
-    );
-    expect(match, "LANGUAGE_OPTIONS block not found").not.toBeNull();
-    const block = match ? match[1] : "";
-    const entries = block.match(/code:\s*"[a-z]+"/g) ?? [];
-    expect(entries).toHaveLength(6);
+  test("every code appears exactly once (no duplicates)", () => {
+    const codes = parsedEntries.map((e) => e.code);
+    expect(new Set(codes).size).toBe(codes.length);
+  });
+
+  test("codes match Plan V1.1 §14 product order (never reorder alphabetically)", () => {
+    expect(parsedEntries.map((e) => e.code)).toEqual(PLAN_ORDER.map((e) => e.code));
+  });
+
+  test("each label is the exact native-script string from Plan V1.1 §8", () => {
+    expect(parsedEntries.map((e) => e.label)).toEqual(PLAN_ORDER.map((e) => e.label));
+  });
+
+  test.each(PLAN_ORDER.map((e, i) => ({ order: i + 1, code: e.code, label: e.label })))(
+    "position $order → code '$code' with label '$label' (byte-exact)",
+    ({ order, code, label }) => {
+      const entry = parsedEntries[order - 1];
+      expect(entry?.code).toBe(code);
+      expect(entry?.label).toBe(label);
+    },
+  );
+
+  test("no code appears outside the approved 13", () => {
+    const APPROVED = new Set(PLAN_ORDER.map((e) => e.code));
+    for (const entry of parsedEntries) {
+      expect(APPROVED.has(entry.code), `unauthorised code '${entry.code}' in LANGUAGE_OPTIONS`).toBe(true);
+    }
   });
 });
 
