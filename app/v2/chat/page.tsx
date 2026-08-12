@@ -475,12 +475,14 @@ export default function VisibleConversationPage() {
                 {" · "}{formatTime(m.createdAt)}
               </div>
               <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: "#0f172a" }}>
-                <strong style={{ color: "#0f172a" }}>[{m.originalLanguage}]</strong> {m.originalText}
+                <strong style={{ color: "#0f172a" }}>[{m.originalLanguage}]</strong>{" "}
+                <span lang={m.originalLanguage} dir="auto">{m.originalText}</span>
               </div>
               <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: m.translation ? "#047857" : "#b91c1c" }}>
                 {m.translation !== null && (
                   <>
-                    <strong>[{m.targetLanguage}]</strong> {m.translation}
+                    <strong>[{m.targetLanguage}]</strong>{" "}
+                    <span lang={m.targetLanguage} dir="auto">{m.translation}</span>
                     {m.translationPassthrough && (
                       <span style={{ color: "#64748b" }}> · sin traducción (mismo idioma)</span>
                     )}
