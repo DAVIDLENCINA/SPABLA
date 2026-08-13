@@ -439,12 +439,36 @@ export default function VisibleConversationPage() {
       )}
 
       {/*
-        Timeline inline · Hito 9.2.2.
+        Timeline inline · Hito 9.2.2 (fix compactación 9.2.2b).
         Se mantiene aquí (no en un componente hijo) para preservar los
         contratos LANG13-03 sobre los <span lang={...} dir="auto"> —
         engine/src/utils/chat-message-semantics.test.ts los localiza
         exclusivamente en este fichero.
+
+        Compactación del estado sin sesión: cuando `!canOperate`, la
+        sección no reserva `minHeight` de timeline; su altura la
+        determina el contenido (hint humano). Con sesión sin mensajes
+        se reserva una altura moderada (160px). Con mensajes se
+        preserva el minHeight original (280px) para no colapsar la
+        primera burbuja.
       */}
+      {!canOperate ? (
+        <section
+          aria-label="Historial de mensajes"
+          style={{
+            marginTop: "0.75rem",
+            padding: "2.25rem 1rem",
+            background: "#F8FAFC",
+            border: "1px solid #E2E8F0",
+            borderRadius: 10,
+            color: "#475569",
+            fontSize: "0.9rem",
+            textAlign: "center",
+          }}
+        >
+          Inicia sesión para ver la conversación.
+        </section>
+      ) : (
       <section
         aria-label="Historial de mensajes"
         style={{
@@ -453,7 +477,7 @@ export default function VisibleConversationPage() {
           background: "#F8FAFC",
           border: "1px solid #E2E8F0",
           borderRadius: 10,
-          minHeight: 280,
+          minHeight: messages.length === 0 ? 160 : 280,
           display: "flex",
           flexDirection: "column",
           gap: "0.35rem",
@@ -475,13 +499,8 @@ export default function VisibleConversationPage() {
             {humanizePollError(pollError)}
           </p>
         )}
-        {!canOperate && messages.length === 0 && (
-          <p style={{ padding: "2rem 1rem", textAlign: "center", color: "#475569", fontSize: "0.9rem", margin: 0 }}>
-            Inicia sesión para ver la conversación.
-          </p>
-        )}
-        {canOperate && messages.length === 0 && (
-          <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "#475569" }} aria-live="polite">
+        {messages.length === 0 && (
+          <div style={{ padding: "1.75rem 1rem", textAlign: "center", color: "#475569" }} aria-live="polite">
             <p style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: "#0B0F19" }}>Aún no hay mensajes.</p>
             <p style={{ margin: "0.4rem 0 0", fontSize: "0.9rem", color: "#64748B" }}>
               Escribe el primero para comenzar la conversación.
@@ -552,6 +571,7 @@ export default function VisibleConversationPage() {
           </ul>
         )}
       </section>
+      )}
 
       {session && (
         <MessageComposer
