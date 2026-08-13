@@ -22,6 +22,12 @@ import {
 } from "@engine/utils/polling-response-classifier";
 import { isLangCode, type LangCode } from "@engine/types/language";
 
+// Hito 9.2.1 · Componentes presentacionales del primer shell visual.
+// Sin lógica: envuelven contenedores y aplican identidad SPABLA.
+import { AppHeader } from "./components/AppHeader";
+import { ChatPageFrame } from "./components/ChatPageFrame";
+import { ChatSection } from "./components/ChatSection";
+
 type Message = {
   readonly messageId: string;
   readonly senderId: string;
@@ -352,15 +358,14 @@ export default function VisibleConversationPage() {
   }, [session, draft, tenantId, conversationId, myLanguage, fetchMessages]);
 
   return (
-    <main style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem", fontFamily: "system-ui, sans-serif" }}>
+    <ChatPageFrame header={<AppHeader />}>
       <h1 style={{ fontSize: "1.6rem", marginBottom: "0.25rem" }}>SPABLA V2 · Fase 9 · Chat traducido</h1>
       <p style={{ color: "#334155", fontSize: "0.9rem", marginTop: 0 }}>
         Escribe en tu idioma, tu contertulio lo verá en el suyo. Persistencia
         en <code>spabla_v2</code>, traducción vía servidor.
       </p>
 
-      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Contexto</h2>
+      <ChatSection title="Contexto">
         {!seed && (
           <button onClick={runSeed} disabled={seedBusy} style={{ padding: "0.5rem 0.75rem" }}>
             {seedBusy ? "Cargando…" : "Cargar contexto de demo (crea usuarios y conversación)"}
@@ -382,10 +387,9 @@ export default function VisibleConversationPage() {
           </div>
         )}
         {seedError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error de seed: {seedError}</p>}
-      </section>
+      </ChatSection>
 
-      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Sesión</h2>
+      <ChatSection title="Sesión">
         {!session && sessionExpired && (
           <p
             role="alert"
@@ -450,10 +454,9 @@ export default function VisibleConversationPage() {
             <button onClick={signOut} style={{ padding: "0.35rem 0.65rem" }}>Cerrar sesión</button>
           </div>
         )}
-      </section>
+      </ChatSection>
 
-      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Idiomas</h2>
+      <ChatSection title="Idiomas">
         <div style={{ display: "flex", gap: "1rem", fontSize: "0.9rem" }}>
           <label>
             Yo escribo en{" "}
@@ -472,10 +475,9 @@ export default function VisibleConversationPage() {
             </select>
           </label>
         </div>
-      </section>
+      </ChatSection>
 
-      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem", minHeight: 240 }}>
-        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Conversación</h2>
+      <ChatSection title="Conversación" minHeight={240}>
         {!canOperate && <p style={{ color: "#334155", fontSize: "0.9rem" }}>Inicia sesión y carga el contexto para conversar.</p>}
         {pollError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Polling: {pollError}</p>}
         <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "0.6rem" }}>
@@ -506,10 +508,9 @@ export default function VisibleConversationPage() {
             </li>
           ))}
         </ul>
-      </section>
+      </ChatSection>
 
-      <section style={{ border: "1px solid #cbd5e1", background: "#ffffff", borderRadius: 8, padding: "0.75rem 1rem", marginTop: "1rem" }}>
-        <h2 style={{ fontSize: "1rem", margin: "0 0 0.5rem" }}>Enviar mensaje</h2>
+      <ChatSection title="Enviar mensaje">
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <input
             type="text"
@@ -530,7 +531,7 @@ export default function VisibleConversationPage() {
           </button>
         </div>
         {sendError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error al enviar: {sendError}</p>}
-      </section>
-    </main>
+      </ChatSection>
+    </ChatPageFrame>
   );
 }
