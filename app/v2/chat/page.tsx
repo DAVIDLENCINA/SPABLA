@@ -22,11 +22,24 @@ import {
 } from "@engine/utils/polling-response-classifier";
 import { isLangCode, type LangCode } from "@engine/types/language";
 
-// Hito 9.2.1 · Componentes presentacionales del primer shell visual.
-// Sin lógica: envuelven contenedores y aplican identidad SPABLA.
+// Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
 import { ChatPageFrame } from "./components/ChatPageFrame";
-import { ChatSection } from "./components/ChatSection";
+
+// Hito 9.2.2 · Interfaz real de conversación.
+// Componentes presentacionales que reciben datos + callbacks por props.
+// El timeline de mensajes y su estado vacío permanecen inline en
+// `page.tsx` (bajo el return) para preservar los contratos LANG13-03
+// (`<span lang={m.originalLanguage} dir="auto">{m.originalText}</span>`
+// y su análogo para la traducción) locked en `engine/src/utils/
+// chat-message-semantics.test.ts`. La lógica productiva (auth, seed,
+// polling, envío, traducción) permanece en este mismo `page.tsx` sin
+// cambios semánticos.
+import { ConversationHeader } from "./components/ConversationHeader";
+import { LanguageControls } from "./components/LanguageControls";
+import { MessageComposer } from "./components/MessageComposer";
+import { SessionArea } from "./components/SessionArea";
+import { DeveloperPanel } from "./components/DeveloperPanel";
 
 type Message = {
   readonly messageId: string;
@@ -67,6 +80,15 @@ const LANGUAGE_OPTIONS: ReadonlyArray<{ readonly code: string; readonly label: s
   { code: "ru", label: "Русский" },
 ];
 
+// Hito 9.2.2 · Etiqueta humana para un código ISO — se usa en la
+// cabecera de conversación y en el placeholder del compositor para no
+// exponer códigos técnicos en la interfaz visible. Fallback al código
+// en mayúsculas si el idioma no está en `LANGUAGE_OPTIONS` (esta rama
+// no debería alcanzarse dado el guard `isLangCode` río arriba).
+function labelOf(code: string): string {
+  return LANGUAGE_OPTIONS.find((l) => l.code === code)?.label ?? code.toUpperCase();
+}
+
 const POLL_INTERVAL_MS = 1500;
 
 function useSupabaseClient(): SupabaseClient | null {
@@ -96,11 +118,35 @@ function randomMessageId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+// Hito 9.2.2 · Formato compacto de hora HH:MM para las burbujas.
 function formatTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleTimeString();
+    return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } catch {
-    return iso;
+    return "";
+  }
+}
+
+// Hito 9.2.2 · Mapa código → texto humano para errores de polling.
+function humanizePollError(code: string): string {
+  if (code === "poll_network") return "Sin conexión. Reintentaremos automáticamente.";
+  return "Hemos tenido un problema para leer los mensajes. Reintentaremos.";
+}
+
+// Hito 9.2.2 · Mapa código → texto humano para razones del proveedor
+// (LANG13-06 dejó el bloqueo `provider_budget_exhausted` clasificado
+// como `provider_error` genérico; aquí lo diferenciamos si llegase).
+function humanizeTranslationError(code: string | null): string {
+  switch (code) {
+    case "provider_unavailable":
+      return "El servicio de traducción no responde. Reintentaremos.";
+    case "empty":
+      return "El mensaje está vacío.";
+    case "too_long":
+      return "El mensaje es demasiado largo para traducirse.";
+    case "provider_error":
+    default:
+      return "No pudimos traducir este mensaje.";
   }
 }
 
@@ -359,179 +405,176 @@ export default function VisibleConversationPage() {
 
   return (
     <ChatPageFrame header={<AppHeader />}>
-      <h1 style={{ fontSize: "1.6rem", marginBottom: "0.25rem" }}>SPABLA V2 · Fase 9 · Chat traducido</h1>
-      <p style={{ color: "#334155", fontSize: "0.9rem", marginTop: 0 }}>
-        Escribe en tu idioma, tu contertulio lo verá en el suyo. Persistencia
-        en <code>spabla_v2</code>, traducción vía servidor.
-      </p>
+      <ConversationHeader
+        authenticatedEmail={session?.user.email ?? null}
+        myLanguageLabel={labelOf(myLanguage)}
+        targetLanguageLabel={labelOf(targetLanguage)}
+        onSignOut={session ? signOut : undefined}
+      />
 
-      <ChatSection title="Contexto">
-        {!seed && (
-          <button onClick={runSeed} disabled={seedBusy} style={{ padding: "0.5rem 0.75rem" }}>
-            {seedBusy ? "Cargando…" : "Cargar contexto de demo (crea usuarios y conversación)"}
-          </button>
-        )}
-        {seed && (
-          <div style={{ display: "grid", gap: "0.25rem", fontSize: "0.85rem", color: "#1e293b" }}>
-            <div>tenant: <code>{seed.tenantId}</code></div>
-            <div>conversación: <code>{seed.conversationId}</code></div>
-            <div>
-              actorA: <code>{seed.actorA.email}</code> · <code>{seed.actorA.password}</code> (idioma {seed.actorA.language})
-            </div>
-            <div>
-              actorB: <code>{seed.actorB.email}</code> · <code>{seed.actorB.password}</code> (idioma {seed.actorB.language})
-            </div>
-            <button onClick={runSeed} disabled={seedBusy} style={{ marginTop: "0.35rem", padding: "0.35rem 0.75rem", width: "fit-content" }}>
-              {seedBusy ? "Actualizando…" : "Regenerar demo"}
-            </button>
-          </div>
-        )}
-        {seedError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error de seed: {seedError}</p>}
-      </ChatSection>
+      {!session && (
+        <SessionArea
+          sessionExpired={sessionExpired}
+          sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
+          signInEmail={signInEmail}
+          signInPassword={signInPassword}
+          onSignInEmailChange={setSignInEmail}
+          onSignInPasswordChange={setSignInPassword}
+          signInError={signInError}
+          signInBusy={signInBusy}
+          onSignIn={() => { void signIn(); }}
+        />
+      )}
 
-      <ChatSection title="Sesión">
-        {!session && sessionExpired && (
+      {session && (
+        <LanguageControls
+          options={LANGUAGE_OPTIONS}
+          myLanguage={myLanguage}
+          targetLanguage={targetLanguage}
+          onMyLanguageChange={onMyLanguageChange}
+          onTargetLanguageChange={onTargetLanguageChange}
+          writeCaption="Yo escribo en"
+          readCaption="Leer mensajes en"
+        />
+      )}
+
+      {/*
+        Timeline inline · Hito 9.2.2.
+        Se mantiene aquí (no en un componente hijo) para preservar los
+        contratos LANG13-03 sobre los <span lang={...} dir="auto"> —
+        engine/src/utils/chat-message-semantics.test.ts los localiza
+        exclusivamente en este fichero.
+      */}
+      <section
+        aria-label="Historial de mensajes"
+        style={{
+          marginTop: "0.75rem",
+          padding: "0.75rem 1rem",
+          background: "#F8FAFC",
+          border: "1px solid #E2E8F0",
+          borderRadius: 10,
+          minHeight: 280,
+          display: "flex",
+          flexDirection: "column",
+          gap: "0.35rem",
+        }}
+      >
+        {pollError !== null && (
           <p
-            role="alert"
+            role="status"
             style={{
-              margin: "0 0 0.5rem",
-              padding: "0.5rem 0.65rem",
-              border: "1px solid #f59e0b",
-              background: "#fef3c7",
-              color: "#78350f",
+              margin: "0 0 0.35rem",
+              padding: "0.4rem 0.6rem",
+              fontSize: "0.8rem",
+              color: "#FF6B7A",
+              background: "rgba(255, 107, 122, 0.08)",
+              border: "1px solid #FF6B7A",
               borderRadius: 6,
-              fontSize: "0.9rem",
             }}
           >
-            {SESSION_EXPIRED_MESSAGE}
+            {humanizePollError(pollError)}
           </p>
         )}
-        {!session && (
-          <div style={{ display: "grid", gap: "0.5rem" }}>
-            <input
-              type="email"
-              placeholder="email"
-              value={signInEmail}
-              onChange={(e) => setSignInEmail(e.target.value)}
-              style={{ padding: "0.4rem", fontSize: "0.9rem" }}
-            />
-            <input
-              type="password"
-              placeholder="contraseña"
-              value={signInPassword}
-              onChange={(e) => setSignInPassword(e.target.value)}
-              style={{ padding: "0.4rem", fontSize: "0.9rem" }}
-            />
-            <button onClick={() => signIn()} disabled={signInBusy} style={{ padding: "0.5rem" }}>
-              {signInBusy ? "Entrando…" : "Iniciar sesión"}
-            </button>
-            {seed && (
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                <button
-                  onClick={() => signIn(seed.actorA.email, seed.actorA.password)}
-                  disabled={signInBusy}
-                  style={{ padding: "0.35rem 0.65rem" }}
-                >
-                  Entrar como actorA (ES)
-                </button>
-                <button
-                  onClick={() => signIn(seed.actorB.email, seed.actorB.password)}
-                  disabled={signInBusy}
-                  style={{ padding: "0.35rem 0.65rem" }}
-                >
-                  Entrar como actorB (EN)
-                </button>
-              </div>
-            )}
-            {signInError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>{signInError}</p>}
+        {!canOperate && messages.length === 0 && (
+          <p style={{ padding: "2rem 1rem", textAlign: "center", color: "#475569", fontSize: "0.9rem", margin: 0 }}>
+            Inicia sesión para ver la conversación.
+          </p>
+        )}
+        {canOperate && messages.length === 0 && (
+          <div style={{ padding: "2.5rem 1rem", textAlign: "center", color: "#475569" }} aria-live="polite">
+            <p style={{ margin: 0, fontSize: "1rem", fontWeight: 600, color: "#0B0F19" }}>Aún no hay mensajes.</p>
+            <p style={{ margin: "0.4rem 0 0", fontSize: "0.9rem", color: "#64748B" }}>
+              Escribe el primero para comenzar la conversación.
+            </p>
           </div>
         )}
-        {session && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
-            <div style={{ fontSize: "0.9rem" }}>
-              Autenticado como <code>{session.user.email ?? session.user.id}</code>
-            </div>
-            <button onClick={signOut} style={{ padding: "0.35rem 0.65rem" }}>Cerrar sesión</button>
-          </div>
-        )}
-      </ChatSection>
-
-      <ChatSection title="Idiomas">
-        <div style={{ display: "flex", gap: "1rem", fontSize: "0.9rem" }}>
-          <label>
-            Yo escribo en{" "}
-            <select value={myLanguage} onChange={(e) => onMyLanguageChange(e.target.value)}>
-              {LANGUAGE_OPTIONS.map((l) => (
-                <option key={l.code} value={l.code}>{l.label}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Leer mensajes en{" "}
-            <select value={targetLanguage} onChange={(e) => onTargetLanguageChange(e.target.value)}>
-              {LANGUAGE_OPTIONS.map((l) => (
-                <option key={l.code} value={l.code}>{l.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </ChatSection>
-
-      <ChatSection title="Conversación" minHeight={240}>
-        {!canOperate && <p style={{ color: "#334155", fontSize: "0.9rem" }}>Inicia sesión y carga el contexto para conversar.</p>}
-        {pollError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Polling: {pollError}</p>}
-        <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "0.6rem" }}>
-          {messages.map((m) => (
-            <li key={m.messageId} style={{ borderLeft: "3px solid #059669", paddingLeft: "0.6rem" }}>
-              <div style={{ fontSize: "0.78rem", color: "#475569" }}>
-                {m.senderId === session?.user.id ? "Yo" : m.senderId}
-                {" · "}{formatTime(m.createdAt)}
-              </div>
-              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: "#0f172a" }}>
-                <strong style={{ color: "#0f172a" }}>[{m.originalLanguage}]</strong>{" "}
-                <span lang={m.originalLanguage} dir="auto">{m.originalText}</span>
-              </div>
-              <div style={{ marginTop: "0.15rem", fontSize: "0.95rem", color: m.translation ? "#047857" : "#b91c1c" }}>
-                {m.translation !== null && (
-                  <>
-                    <strong>[{m.targetLanguage}]</strong>{" "}
-                    <span lang={m.targetLanguage} dir="auto">{m.translation}</span>
-                    {m.translationPassthrough && (
-                      <span style={{ color: "#64748b" }}> · sin traducción (mismo idioma)</span>
+        {messages.length > 0 && (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: "0.3rem", minWidth: 0 }}>
+            {messages.map((m) => {
+              const isOwn = m.senderId === session?.user.id;
+              const showTranslation = m.translation !== null && !m.translationPassthrough;
+              const hasError = m.translation === null && m.translationError !== null;
+              return (
+                <li
+                  key={m.messageId}
+                  style={{
+                    display: "flex",
+                    justifyContent: isOwn ? "flex-end" : "flex-start",
+                    padding: "0.15rem 0",
+                  }}
+                  aria-label={isOwn ? "Mensaje enviado" : "Mensaje recibido"}
+                >
+                  <div
+                    style={{
+                      maxWidth: "min(560px, 82%)",
+                      padding: "0.65rem 0.85rem",
+                      borderRadius: 12,
+                      background: isOwn ? "rgba(30, 199, 255, 0.12)" : "#FFFFFF",
+                      border: isOwn ? "1px solid rgba(30, 199, 255, 0.35)" : "1px solid #E2E8F0",
+                      color: "#0B0F19",
+                      minWidth: 0,
+                      wordBreak: "break-word",
+                      overflowWrap: "anywhere",
+                      whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    <div style={{ fontSize: "0.95rem", lineHeight: 1.4, color: "#0B0F19" }}>
+                      <span lang={m.originalLanguage} dir="auto">{m.originalText}</span>
+                    </div>
+                    {showTranslation && (
+                      <div style={{ marginTop: "0.4rem", paddingTop: "0.4rem", borderTop: "1px dashed #E2E8F0" }}>
+                        <div style={{ fontSize: "0.88rem", lineHeight: 1.4, color: "#334155" }}>
+                          <span lang={m.targetLanguage} dir="auto">{m.translation}</span>
+                        </div>
+                      </div>
                     )}
-                  </>
-                )}
-                {m.translation === null && (
-                  <>Error de traducción: {m.translationError ?? "desconocido"}</>
-                )}
-              </div>
-            </li>
-          ))}
-        </ul>
-      </ChatSection>
+                    {hasError && (
+                      <div style={{ marginTop: "0.4rem", fontSize: "0.8rem", color: "#FF6B7A" }} role="status">
+                        {humanizeTranslationError(m.translationError)}
+                      </div>
+                    )}
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: isOwn ? "flex-end" : "flex-start",
+                        gap: "0.4rem",
+                        marginTop: "0.35rem",
+                        fontSize: "0.72rem",
+                        color: "#64748B",
+                      }}
+                    >
+                      <time dateTime={m.createdAt}>{formatTime(m.createdAt)}</time>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
-      <ChatSection title="Enviar mensaje">
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <input
-            type="text"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Escribe en ${myLanguage.toUpperCase()}…`}
-            disabled={!canOperate || sending}
-            style={{ flex: 1, padding: "0.5rem", fontSize: "0.95rem" }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void sendMessage();
-              }
-            }}
-          />
-          <button onClick={() => void sendMessage()} disabled={!canOperate || sending || draft.trim().length === 0} style={{ padding: "0.5rem 0.9rem" }}>
-            {sending ? "Enviando…" : "Enviar"}
-          </button>
-        </div>
-        {sendError && <p style={{ color: "#b91c1c", fontSize: "0.85rem" }}>Error al enviar: {sendError}</p>}
-      </ChatSection>
+      {session && (
+        <MessageComposer
+          draft={draft}
+          onDraftChange={setDraft}
+          onSend={() => { void sendMessage(); }}
+          disabled={!canOperate || sending}
+          sending={sending}
+          sendError={sendError}
+          myLanguageLabel={labelOf(myLanguage)}
+          canOperate={canOperate}
+        />
+      )}
+
+      <DeveloperPanel
+        enabled={process.env.NODE_ENV === "development"}
+        seed={seed}
+        seedBusy={seedBusy}
+        seedError={seedError}
+        onRunSeed={() => { void runSeed(); }}
+        onSignInAs={(email, password) => { void signIn(email, password); }}
+        isAuthenticated={session !== null}
+      />
     </ChatPageFrame>
   );
 }
