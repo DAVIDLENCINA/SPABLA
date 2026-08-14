@@ -1,21 +1,27 @@
 /**
- * SPABLA V2 · Hito 9.2.4 · Endpoint-level AUTH-RECOVERY integration
- * tests for `GET /api/v2/messages`.
+ * SPABLA V2 · Hito 9.2.4 · DIRECT-HANDLER integration tests for
+ * `GET /api/v2/messages`.
  *
- * These tests satisfy the corrective operational order (BLOQUE 3):
- *   - Real fixture (tenant + actor + membership) on Supabase local.
- *   - Real sign-in → real access_token.
- *   - Real GET on the imported route handler (`route.ts` `GET`) —
- *     no HTTP simulation, no fake `getClaims`.
- *   - Real HTTP 401 emitted by the endpoint after corrupting the JWT.
- *   - The 401 Response is handed to the SAME
- *     `applyAuth401Recovery` coordinator that `app/v2/chat/page.tsx`
- *     uses in production, verifying:
- *       * exactly ONE recovery transition;
- *       * NO polling loop on subsequent 401s;
- *       * NO reuse of the previous actor's data;
- *       * language preferences preserved verbatim;
- *       * inconsistent authenticated state cleaned up.
+ * SCOPE (BLOQUE 2 of the final closure order): this suite imports
+ * the productive `GET` handler from `route.ts` and invokes it with
+ * a constructed `NextRequest`. That path is **integración directa
+ * del route handler**: it produces a real `Response` object with
+ * `.status === 401` from the same code path that runs in
+ * production, but it does NOT go through:
+ *   - a TCP socket,
+ *   - a Next dev/prod server process,
+ *   - HTTP header parsing over the wire,
+ *   - HTTP body serialization / streaming.
+ *
+ * Therefore this suite must NOT be described as a "real HTTP
+ * request" test. The HTTP-frontier test lives in
+ * `app/api/v2/messages/route.http.integration.test.ts` (BLOQUE 3);
+ * that one boots `next dev` on an isolated port and issues
+ * `fetch()` calls, exercising the socket layer end-to-end.
+ *
+ * Both suites are kept: this one is a fast in-process integration
+ * (~1 second) that runs after every commit, and the other is a
+ * heavier boundary test (~30 seconds) that runs in CI Job B.
  *
  * Skipped locally without env vars; runs in CI Job B where the
  * Supabase local stack is available and the env vars are exported
