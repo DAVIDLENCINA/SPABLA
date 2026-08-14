@@ -40,6 +40,10 @@ import {
   writeSeedToCache,
   type SeedResponse,
 } from "@/lib/v2/client/seed-cache";
+import {
+  applyAuth401Recovery,
+  shouldTriggerAuth401Recovery,
+} from "@/lib/v2/client/auth-recovery-coordinator";
 
 // Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
@@ -308,21 +312,28 @@ export default function VisibleConversationPage() {
       );
       const body = (await res.json().catch(() => ({}))) as { error?: string; items?: ReadonlyArray<Message>; actorId?: string };
       const action = classifyPollingResponse({ status: res.status }, body);
-      if (action.kind === "expire") {
-        // AUTH-RECOVERY (Hito 9.2.4): single deterministic transition.
-        // The ref short-circuits any in-flight tick queued behind this
-        // response; setting `session = null` flips `canOperate` and
-        // cancels the runner. `signOut({scope:"local"})` clears the
-        // invalid token from Supabase Auth storage of this tab only,
-        // NEVER touching localStorage keys owned by the preference
-        // store (`spabla_v2:language-preferences:v1:*`) or by the seed
-        // cache (`spabla_v2_fase9_seed`).
-        sessionExpiredRef.current = true;
-        setSessionExpired(true);
-        setRawPollError(null);
-        setRawMessages({ items: [], forActor: null });
-        setSession(null);
-        void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      if (action.kind === "expire" || shouldTriggerAuth401Recovery(res)) {
+        // AUTH-RECOVERY (Hito 9.2.4): delegated to the coordinator
+        // (`applyAuth401Recovery`) so the transition is idempotent,
+        // testable and mirrors byte-for-byte what the integration
+        // suite drives. The coordinator NEVER touches the
+        // preference store, so `spabla_v2:language-preferences:v1:*`
+        // and the seed cache (`spabla_v2_fase9_seed`) survive.
+        await applyAuth401Recovery({
+          hasAlreadyRecovered: () => sessionExpiredRef.current,
+          markRecovered: () => {
+            sessionExpiredRef.current = true;
+          },
+          notifyExpired: () => {
+            setSessionExpired(true);
+            setRawPollError(null);
+            setRawMessages({ items: [], forActor: null });
+            setSession(null);
+          },
+          signOutLocalScope: async () => {
+            await supabase.auth.signOut({ scope: "local" });
+          },
+        });
         return;
       }
       if (action.kind === "surface") {

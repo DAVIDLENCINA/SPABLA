@@ -130,9 +130,22 @@ jobs:
           npx vitest run \
             src/adapters/persistence/supabase/supabase-persistence.integration.test.ts \
             src/adapters/persistence/supabase/fase9-visible-conversation.integration.test.ts \
-            src/adapters/persistence/supabase/auth-recovery.integration.test.ts \
             src/adapters/persistence/usage/usage-emitter.integration.test.ts \
             src/adapters/translation-store/supabase/supabase-translation-store.integration.test.ts
+
+      # Hito 9.2.4 · Client-integration tests that exercise the real
+      # `/api/v2/messages` HTTP handler against Supabase local. Runs in
+      # Job B so it has both the Supabase stack up and the env vars
+      # exported by the previous step. It reuses the root vitest
+      # client runner (`test:client`) — the AUTH-RECOVERY endpoint
+      # integration test skips silently when the env vars are absent.
+      - name: Install root dependencies (for client integration tests)
+        working-directory: .
+        run: npm ci
+
+      - name: Run client integration tests against local Supabase
+        working-directory: .
+        run: npm run test:client
 
       - name: Stop Supabase local stack
         if: always()
