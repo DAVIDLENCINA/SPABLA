@@ -30,10 +30,13 @@ import { isLangCode, type LangCode } from "@engine/types/language";
 // que la página y el store consuman la misma fuente sin duplicarla.
 import { UI_LANGUAGE_OPTIONS } from "@/lib/v2/client/ui-languages";
 import {
-  loadLanguagePreference,
   saveLanguagePreference,
   type MinimalStorage,
 } from "@/lib/v2/client/language-preference-store";
+import {
+  planPreferenceHydration,
+  type PreferenceStorageState,
+} from "@/lib/v2/client/language-preference-hydration";
 
 // Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
@@ -93,30 +96,41 @@ function labelOf(code: string): string {
 
 const POLL_INTERVAL_MS = 1500;
 
-// Hito 9.2.3 · Adaptador SSR-seguro sobre `window.localStorage` que el
-// store cliente consume. Devuelve `null` en el servidor (SSR) y ante
-// cualquier excepción de acceso; en ese caso la persistencia degrada
-// silenciosamente y el chat sigue funcionando con los defaults canónicos.
-function useLanguagePreferenceStorage(): MinimalStorage | null {
-  const [storage, setStorage] = useState<MinimalStorage | null>(null);
+// Hito 9.2.3 · Adaptador SSR-seguro sobre `window.localStorage`.
+// Distingue explícitamente los tres estados posibles del almacén:
+//   - "pending"     antes de que el sanity probe complete en el
+//                   primer efecto cliente. En este estado, el planner
+//                   de hidratación NO puede marcar al actor como
+//                   hidratado (evita perder la preferencia persistida
+//                   si la sesión Supabase llega antes que el storage).
+//   - "unavailable" tras un probe fallido (modo privado, quota o
+//                   política de seguridad) o en SSR. La persistencia
+//                   se degrada silenciosamente; los defaults se
+//                   aplican y los cambios manuales viven en memoria.
+//   - "available"   tras un probe exitoso; adaptador `MinimalStorage`
+//                   productivo sobre `window.localStorage`.
+function useLanguagePreferenceStorage(): PreferenceStorageState {
+  const [state, setState] = useState<PreferenceStorageState>({ kind: "pending" });
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") {
+      setState({ kind: "unavailable" });
+      return;
+    }
     try {
       const ls = window.localStorage;
-      // Sanity probe: en modo privado / con permisos denegados el
-      // simple acceso al descriptor puede lanzar. Envuelve todo.
       const probeKey = "__spabla_v2_pref_probe__";
       ls.setItem(probeKey, "1");
       ls.removeItem(probeKey);
-      setStorage({
+      const storage: MinimalStorage = {
         getItem: (k) => ls.getItem(k),
         setItem: (k, v) => ls.setItem(k, v),
-      });
+      };
+      setState({ kind: "available", storage });
     } catch {
-      setStorage(null);
+      setState({ kind: "unavailable" });
     }
   }, []);
-  return storage;
+  return state;
 }
 
 function useSupabaseClient(): SupabaseClient | null {
@@ -252,63 +266,61 @@ export default function VisibleConversationPage() {
     }
   }, [sessionUserId]);
 
-  // Hito 9.2.3 · Hidratación por actor. Combina en un único efecto:
-  //   (a) el default canónico D1 heredado del Hito 9.1.1
-  //       (`initialLanguagesFor` sobre el seed);
-  //   (b) la carga posterior de la preferencia local persistida para
-  //       ese mismo actor.
-  // Si la preferencia local es válida, ambos selectores se aplican
-  // conjuntamente y sobrescriben al default. `preferenceHydratedActor`
-  // se marca sólo AL FINAL, garantizando que la persistencia (que
-  // depende de este flag) nunca escriba antes de haber leído.
-  const lastSeenActorRef = useRef<string | null>(null);
+  // Hito 9.2.3 (fix carrera pending→available) · La reconciliación
+  // entre defaults canónicos y preferencia persistida se delega a la
+  // función pura `planPreferenceHydration`. Reglas clave:
+  //   - mientras `preferenceStorage.kind === "pending"` el planner
+  //     devuelve `noop` y `preferenceHydratedActor` NO se marca,
+  //     así que el efecto vuelve a correr al pasar el storage a
+  //     `available` o `unavailable` y aplica la preferencia guardada
+  //     de forma atómica (nunca queda un default provisional que
+  //     bloquee la carga real);
+  //   - `persistIfHydrated` sigue gated por `preferenceHydratedActor`
+  //     y por `kind === "available"`, así que un cambio manual del
+  //     usuario nunca sobrescribe la preferencia persistida antes de
+  //     haberla leído.
   const [preferenceHydratedActor, setPreferenceHydratedActor] =
     useState<string | null>(null);
   useEffect(() => {
-    if (!session) return;
-    const currentActor = session.user.id;
-    if (lastSeenActorRef.current === currentActor) return;
-    // (a) Defaults canónicos D1 (sólo si conocemos el seed del actor).
-    if (seed) {
-      const pair = initialLanguagesFor(currentActor, seed);
-      if (pair !== null) {
-        setMyLanguage(pair.myLanguage);
-        setTargetLanguage(pair.targetLanguage);
-      }
+    const actorId = session?.user.id ?? null;
+    const defaultsPair = session && seed
+      ? initialLanguagesFor(session.user.id, seed)
+      : null;
+    const decision = planPreferenceHydration({
+      actorId,
+      hydratedActor: preferenceHydratedActor,
+      storage: preferenceStorage,
+      defaults: defaultsPair,
+    });
+    if (decision.kind === "noop") return;
+    if (decision.kind === "apply") {
+      setMyLanguage(decision.myLanguage);
+      setTargetLanguage(decision.targetLanguage);
     }
-    // (b) Preferencia local persistida (puede sobrescribir el default).
-    if (preferenceStorage) {
-      const stored = loadLanguagePreference(preferenceStorage, currentActor);
-      if (stored !== null) {
-        setMyLanguage(stored.myLanguage);
-        setTargetLanguage(stored.targetLanguage);
-      }
-    }
-    lastSeenActorRef.current = currentActor;
-    setPreferenceHydratedActor(currentActor);
-  }, [session, seed, preferenceStorage]);
+    setPreferenceHydratedActor(decision.markHydratedFor);
+  }, [session, seed, preferenceStorage, preferenceHydratedActor]);
 
-  // Hito 9.2.3 · Al cerrar sesión, limpiar sólo el estado React
-  // relacionado con la hidratación. Prohibido borrar la preferencia
-  // persistida ni sobrescribirla con defaults: se conserva íntegra
-  // para el próximo sign-in del mismo actor.
+  // Hito 9.2.3 · Al cerrar sesión, limpiar sólo la guardia React de
+  // hidratación. Prohibido borrar la preferencia persistida ni
+  // sobrescribirla con defaults: se conserva íntegra para el próximo
+  // sign-in del mismo actor en el mismo navegador.
   useEffect(() => {
     if (sessionUserId === null) {
-      lastSeenActorRef.current = null;
       setPreferenceHydratedActor(null);
     }
   }, [sessionUserId]);
 
   const persistIfHydrated = useCallback(
     (pref: { readonly myLanguage: string; readonly targetLanguage: string }) => {
-      if (!preferenceStorage) return;
+      if (preferenceStorage.kind !== "available") return;
       const actor = sessionUserId;
       if (actor === null) return;
       // Guardia: sólo persistimos cuando el actor autenticado coincide
-      // con el actor cuya preferencia ya se hidrató. Evita escribir la
-      // pareja del actor anterior justo tras un cambio de sesión.
+      // con el actor cuya preferencia ya se hidrató. Evita escribir el
+      // par del actor anterior justo tras un cambio de sesión y evita
+      // sobrescribir la preferencia persistida antes de haberla leído.
       if (preferenceHydratedActor !== actor) return;
-      saveLanguagePreference(preferenceStorage, actor, pref);
+      saveLanguagePreference(preferenceStorage.storage, actor, pref);
     },
     [preferenceStorage, sessionUserId, preferenceHydratedActor],
   );
