@@ -130,6 +130,7 @@ jobs:
           npx vitest run \
             src/adapters/persistence/supabase/supabase-persistence.integration.test.ts \
             src/adapters/persistence/supabase/fase9-visible-conversation.integration.test.ts \
+            src/adapters/persistence/supabase/auth-recovery.integration.test.ts \
             src/adapters/persistence/usage/usage-emitter.integration.test.ts \
             src/adapters/translation-store/supabase/supabase-translation-store.integration.test.ts
 
