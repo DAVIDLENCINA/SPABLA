@@ -58,6 +58,18 @@ jobs:
       - name: Vitest suite (>= 639 tests)
         run: npx vitest run
 
+      # Client-side test suite (root package). Runs against the root
+      # `vitest.client.config.ts` (environment=node, include limited to
+      # `app/**` and `lib/v2/client/**`, engine excluded). Keeps engine
+      # and client suites fully separated; no fourth CI job.
+      - name: Install root dependencies (for client tests)
+        working-directory: .
+        run: npm ci
+
+      - name: Client Vitest suite
+        working-directory: .
+        run: npm run test:client
+
   integration:
     name: Job B — Supabase integration
     runs-on: ubuntu-latest

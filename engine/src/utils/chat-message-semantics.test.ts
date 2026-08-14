@@ -48,6 +48,11 @@ const CHAT_PAGE = resolve(REPO_ROOT, "app/v2/chat/page.tsx");
 const ROOT_LAYOUT = resolve(REPO_ROOT, "app/layout.tsx");
 const V2_LAYOUT = resolve(REPO_ROOT, "app/v2/layout.tsx");
 const GLOBALS_CSS = resolve(REPO_ROOT, "app/globals.css");
+// Hito 9.2.3 · La lista canónica de 13 idiomas se movió del array
+// literal en `page.tsx` a este módulo cliente compartido para que la
+// página y el store de preferencias locales consuman una única fuente
+// (Plan V1.1 §14 sigue rigiendo el orden y las etiquetas exactas).
+const UI_LANGUAGES_MODULE = resolve(REPO_ROOT, "lib/v2/client/ui-languages.ts");
 
 function readOrThrow(path: string): string {
   if (!existsSync(path)) throw new Error(`missing artifact: ${path}`);
@@ -165,9 +170,13 @@ describe("LANG13-02 · LANGUAGE_OPTIONS activates the 13 approved languages in P
   // Load the activated block once for the whole group. All assertions
   // read from the same textual source so drift in any dimension —
   // presence, order, label, count, duplicates — surfaces immediately.
-  const src = readOrThrow(CHAT_PAGE);
+  // Hito 9.2.3 moved the literal to `lib/v2/client/ui-languages.ts`
+  // (single source of truth shared by `page.tsx` and the local
+  // preference store); the invariants below still apply verbatim,
+  // just against the new location.
+  const src = readOrThrow(UI_LANGUAGES_MODULE);
   const blockMatch = src.match(
-    /const LANGUAGE_OPTIONS[\s\S]*?=\s*\[([\s\S]*?)\];/,
+    /export const UI_LANGUAGE_OPTIONS[\s\S]*?=\s*\[([\s\S]*?)\];/,
   );
 
   // Extract entries as an ordered array of `{ code, label }`.

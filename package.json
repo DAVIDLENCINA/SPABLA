@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "signaling": "tsx server/signaling.ts"
+    "signaling": "tsx server/signaling.ts",
+    "test:client": "vitest run --config vitest.client.config.ts"
   },
   "dependencies": {
     "@deepgram/sdk": "^3.13.0",
@@ -30,6 +31,7 @@
     "tailwindcss": "^4",
     "ts-node": "^10.9.2",
     "tsx": "^4.0.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

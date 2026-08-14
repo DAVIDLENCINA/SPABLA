@@ -22,6 +22,19 @@ import {
 } from "@engine/utils/polling-response-classifier";
 import { isLangCode, type LangCode } from "@engine/types/language";
 
+// Hito 9.2.3 · Persistencia local del par de idiomas por actor. El
+// helper es puro (dependencia inyectada `MinimalStorage`); la instancia
+// productiva usa `window.localStorage` bajo protección SSR + try/catch
+// (ver `useLanguagePreferenceStorage` más abajo). El catálogo de 13
+// idiomas activados vive ahora en `lib/v2/client/ui-languages.ts` para
+// que la página y el store consuman la misma fuente sin duplicarla.
+import { UI_LANGUAGE_OPTIONS } from "@/lib/v2/client/ui-languages";
+import {
+  loadLanguagePreference,
+  saveLanguagePreference,
+  type MinimalStorage,
+} from "@/lib/v2/client/language-preference-store";
+
 // Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
 import { ChatPageFrame } from "./components/ChatPageFrame";
@@ -63,22 +76,11 @@ type SeedResponse = {
 // LANG13-02 · Activación de 13 idiomas en el selector del chat.
 // Orden de producto obligatorio fijado por Plan V1.1 §14 (APROBADO Y
 // CONGELADO). NO reordenar alfabéticamente. Etiquetas visibles en la
-// lengua propia de cada idioma (§8, regla de coherencia 1).
-const LANGUAGE_OPTIONS: ReadonlyArray<{ readonly code: string; readonly label: string }> = [
-  { code: "es", label: "Español" },
-  { code: "ca", label: "Català" },
-  { code: "en", label: "English" },
-  { code: "fr", label: "Français" },
-  { code: "de", label: "Deutsch" },
-  { code: "it", label: "Italiano" },
-  { code: "pt", label: "Português" },
-  { code: "zh", label: "中文（简体）" },
-  { code: "ja", label: "日本語" },
-  { code: "ko", label: "한국어" },
-  { code: "ar", label: "العربية" },
-  { code: "hi", label: "हिन्दी" },
-  { code: "ru", label: "Русский" },
-];
+// lengua propia de cada idioma (§8, regla de coherencia 1). El catálogo
+// vive en `lib/v2/client/ui-languages.ts` (Hito 9.2.3) para compartir
+// una única fuente entre la página y el store de preferencias locales.
+const LANGUAGE_OPTIONS: ReadonlyArray<{ readonly code: string; readonly label: string }> =
+  UI_LANGUAGE_OPTIONS;
 
 // Hito 9.2.2 · Etiqueta humana para un código ISO — se usa en la
 // cabecera de conversación y en el placeholder del compositor para no
@@ -90,6 +92,32 @@ function labelOf(code: string): string {
 }
 
 const POLL_INTERVAL_MS = 1500;
+
+// Hito 9.2.3 · Adaptador SSR-seguro sobre `window.localStorage` que el
+// store cliente consume. Devuelve `null` en el servidor (SSR) y ante
+// cualquier excepción de acceso; en ese caso la persistencia degrada
+// silenciosamente y el chat sigue funcionando con los defaults canónicos.
+function useLanguagePreferenceStorage(): MinimalStorage | null {
+  const [storage, setStorage] = useState<MinimalStorage | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const ls = window.localStorage;
+      // Sanity probe: en modo privado / con permisos denegados el
+      // simple acceso al descriptor puede lanzar. Envuelve todo.
+      const probeKey = "__spabla_v2_pref_probe__";
+      ls.setItem(probeKey, "1");
+      ls.removeItem(probeKey);
+      setStorage({
+        getItem: (k) => ls.getItem(k),
+        setItem: (k, v) => ls.setItem(k, v),
+      });
+    } catch {
+      setStorage(null);
+    }
+  }, []);
+  return storage;
+}
 
 function useSupabaseClient(): SupabaseClient | null {
   const [client, setClient] = useState<SupabaseClient | null>(null);
@@ -152,6 +180,10 @@ function humanizeTranslationError(code: string | null): string {
 
 export default function VisibleConversationPage() {
   const supabase = useSupabaseClient();
+  // Hito 9.2.3 · Storage cliente para preferencias locales por actor.
+  // Es `null` durante SSR y en navegadores con localStorage bloqueado;
+  // en ambos casos la persistencia se degrada silenciosamente.
+  const preferenceStorage = useLanguagePreferenceStorage();
   const [session, setSession] = useState<Session | null>(null);
   const [signInEmail, setSignInEmail] = useState("");
   const [signInPassword, setSignInPassword] = useState("");
@@ -220,31 +252,77 @@ export default function VisibleConversationPage() {
     }
   }, [sessionUserId]);
 
-  // D1 fix (Hito 9.1.1): apply the seeded default (myLanguage === targetLanguage)
-  // ONCE per actor change. A manual selection made during the session survives
-  // subsequent effect re-runs; only signing out or switching actor re-arms the
-  // default. Reloading the page with the same actor still re-arms because a
-  // fresh mount starts with `lastSeenActorRef.current = null`.
+  // Hito 9.2.3 · Hidratación por actor. Combina en un único efecto:
+  //   (a) el default canónico D1 heredado del Hito 9.1.1
+  //       (`initialLanguagesFor` sobre el seed);
+  //   (b) la carga posterior de la preferencia local persistida para
+  //       ese mismo actor.
+  // Si la preferencia local es válida, ambos selectores se aplican
+  // conjuntamente y sobrescriben al default. `preferenceHydratedActor`
+  // se marca sólo AL FINAL, garantizando que la persistencia (que
+  // depende de este flag) nunca escriba antes de haber leído.
   const lastSeenActorRef = useRef<string | null>(null);
+  const [preferenceHydratedActor, setPreferenceHydratedActor] =
+    useState<string | null>(null);
   useEffect(() => {
-    if (!session || !seed) return;
+    if (!session) return;
     const currentActor = session.user.id;
     if (lastSeenActorRef.current === currentActor) return;
-    const pair = initialLanguagesFor(currentActor, seed);
-    if (pair === null) return;
+    // (a) Defaults canónicos D1 (sólo si conocemos el seed del actor).
+    if (seed) {
+      const pair = initialLanguagesFor(currentActor, seed);
+      if (pair !== null) {
+        setMyLanguage(pair.myLanguage);
+        setTargetLanguage(pair.targetLanguage);
+      }
+    }
+    // (b) Preferencia local persistida (puede sobrescribir el default).
+    if (preferenceStorage) {
+      const stored = loadLanguagePreference(preferenceStorage, currentActor);
+      if (stored !== null) {
+        setMyLanguage(stored.myLanguage);
+        setTargetLanguage(stored.targetLanguage);
+      }
+    }
     lastSeenActorRef.current = currentActor;
-    setMyLanguage(pair.myLanguage);
-    setTargetLanguage(pair.targetLanguage);
-  }, [session, seed]);
+    setPreferenceHydratedActor(currentActor);
+  }, [session, seed, preferenceStorage]);
+
+  // Hito 9.2.3 · Al cerrar sesión, limpiar sólo el estado React
+  // relacionado con la hidratación. Prohibido borrar la preferencia
+  // persistida ni sobrescribirla con defaults: se conserva íntegra
+  // para el próximo sign-in del mismo actor.
+  useEffect(() => {
+    if (sessionUserId === null) {
+      lastSeenActorRef.current = null;
+      setPreferenceHydratedActor(null);
+    }
+  }, [sessionUserId]);
+
+  const persistIfHydrated = useCallback(
+    (pref: { readonly myLanguage: string; readonly targetLanguage: string }) => {
+      if (!preferenceStorage) return;
+      const actor = sessionUserId;
+      if (actor === null) return;
+      // Guardia: sólo persistimos cuando el actor autenticado coincide
+      // con el actor cuya preferencia ya se hidrató. Evita escribir la
+      // pareja del actor anterior justo tras un cambio de sesión.
+      if (preferenceHydratedActor !== actor) return;
+      saveLanguagePreference(preferenceStorage, actor, pref);
+    },
+    [preferenceStorage, sessionUserId, preferenceHydratedActor],
+  );
 
   const onMyLanguageChange = useCallback((next: string) => {
     if (!isLangCode(next)) return;
     setMyLanguage(next);
-  }, []);
+    persistIfHydrated({ myLanguage: next, targetLanguage });
+  }, [persistIfHydrated, targetLanguage]);
   const onTargetLanguageChange = useCallback((next: string) => {
     if (!isLangCode(next)) return;
     setTargetLanguage(next);
-  }, []);
+    persistIfHydrated({ myLanguage, targetLanguage: next });
+  }, [persistIfHydrated, myLanguage]);
 
   const canOperate = useMemo(
     () => Boolean(session && tenantId && conversationId && targetLanguage),
