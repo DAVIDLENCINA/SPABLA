@@ -248,21 +248,23 @@ describe("PREF-ACCEPTANCE · Checklist §5.3 (8 items)", () => {
 
   it("(8) Cero llamada a OpenAI: la reconciliación de preferencias no toca `spabla_v2.message_translations`", () => {
     // The planner is a pure function. It never issues HTTP, never
-    // opens sockets, never spawns workers. The presence of this test
-    // pins the invariant so a future edit that tries to fetch a
-    // translation from within the hydration path fails obviously.
+    // opens sockets, never spawns workers. This test pins the
+    // invariant by tracking `fetch` invocations across the hydration
+    // call and asserting the counter is untouched.
     const storage = inMemoryStorage();
     saveLanguagePreference(storage, ACTOR_A, {
       myLanguage: "ca",
       targetLanguage: "de",
     });
     let fetchCalls = 0;
-    const originalFetch = globalThis.fetch;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (globalThis as any).fetch = () => {
-      fetchCalls += 1;
-      throw new Error("no fetch allowed during preference hydration");
-    };
+    const target = globalThis as unknown as { fetch: typeof fetch };
+    const originalFetch = target.fetch;
+    target.fetch = ((): typeof fetch =>
+      (() => {
+        fetchCalls += 1;
+        throw new Error("no fetch allowed during preference hydration");
+      }) as typeof fetch
+    )();
     try {
       planPreferenceHydration({
         actorId: ACTOR_A,
@@ -271,8 +273,7 @@ describe("PREF-ACCEPTANCE · Checklist §5.3 (8 items)", () => {
         defaults: DEFAULTS_A,
       });
     } finally {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).fetch = originalFetch;
+      target.fetch = originalFetch;
     }
     expect(fetchCalls).toBe(0);
   });
