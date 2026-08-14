@@ -120,6 +120,14 @@ jobs:
             # can verify JWTs against Supabase local Auth.
             echo "NEXT_PUBLIC_SUPABASE_URL=${URL}"
             echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON}"
+            # `lib/v2/server/translation-runtime.ts` reads
+            # `SUPABASE_SERVICE_ROLE_KEY` from the process environment
+            # to instantiate the privileged TranslationStore client.
+            # Without it, the GET handler throws
+            # `translation_runtime_env_missing` and returns HTTP 500
+            # instead of the expected 200. Export the same
+            # already-extracted local value.
+            echo "SUPABASE_SERVICE_ROLE_KEY=${SERVICE}"
           } >> "$GITHUB_ENV"
 
       - name: Setup Node.js 24 for integration tests
