@@ -111,6 +111,15 @@ jobs:
             echo "SPABLA_TEST_SUPABASE_URL=${URL}"
             echo "SPABLA_TEST_SUPABASE_ANON_KEY=${ANON}"
             echo "SPABLA_TEST_SUPABASE_SERVICE_ROLE_KEY=${SERVICE}"
+            # Hito 9.2.4 · The endpoint-level integration test in
+            # `app/api/v2/messages/route.integration.test.ts` imports
+            # `lib/v2/server/composition.ts`, which reads
+            # `NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY` from the process
+            # environment through `readAnonEnv()`. Export the same
+            # local-stack values here so the productive handler code
+            # can verify JWTs against Supabase local Auth.
+            echo "NEXT_PUBLIC_SUPABASE_URL=${URL}"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON}"
           } >> "$GITHUB_ENV"
 
       - name: Setup Node.js 24 for integration tests
