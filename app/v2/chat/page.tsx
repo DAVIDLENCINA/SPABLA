@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import type { Session } from "@supabase/supabase-js";
 
 import { createPollingRunner } from "@engine/utils/polling";
 import { initialLanguagesFor } from "@engine/utils/initial-languages";
@@ -22,21 +22,24 @@ import {
 } from "@engine/utils/polling-response-classifier";
 import { isLangCode, type LangCode } from "@engine/types/language";
 
-// Hito 9.2.3 · Persistencia local del par de idiomas por actor. El
-// helper es puro (dependencia inyectada `MinimalStorage`); la instancia
-// productiva usa `window.localStorage` bajo protección SSR + try/catch
-// (ver `useLanguagePreferenceStorage` más abajo). El catálogo de 13
-// idiomas activados vive ahora en `lib/v2/client/ui-languages.ts` para
-// que la página y el store consuman la misma fuente sin duplicarla.
+// Hito 9.2.3/9.2.4 · Persistencia local del par de idiomas por actor.
+// El catálogo de 13 idiomas activados vive en `lib/v2/client/ui-languages.ts`
+// para que la página y el store consuman la misma fuente sin duplicarla.
+// Hito 9.2.4 elimina los seis `setState`-in-effect estructuralmente
+// usando `useSyncExternalStore` para las tres fuentes externas
+// (cliente Supabase, probe de localStorage, cache del seed) y
+// derivación en render + resets event-driven para el estado
+// actor-scoped y la reconciliación de preferencias.
 import { UI_LANGUAGE_OPTIONS } from "@/lib/v2/client/ui-languages";
+import { saveLanguagePreference } from "@/lib/v2/client/language-preference-store";
+import { planPreferenceHydration } from "@/lib/v2/client/language-preference-hydration";
+import { useSupabaseBrowserClient } from "@/lib/v2/client/supabase-browser-client";
+import { usePreferenceStorage } from "@/lib/v2/client/preference-storage-source";
 import {
-  saveLanguagePreference,
-  type MinimalStorage,
-} from "@/lib/v2/client/language-preference-store";
-import {
-  planPreferenceHydration,
-  type PreferenceStorageState,
-} from "@/lib/v2/client/language-preference-hydration";
+  useSeedCache,
+  writeSeedToCache,
+  type SeedResponse,
+} from "@/lib/v2/client/seed-cache";
 
 // Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
@@ -69,13 +72,6 @@ type Message = {
   readonly createdAt: string;
 };
 
-type SeedResponse = {
-  readonly tenantId: string;
-  readonly conversationId: string;
-  readonly actorA: { readonly actorId: string; readonly email: string; readonly password: string; readonly language: "es" | "en" };
-  readonly actorB: { readonly actorId: string; readonly email: string; readonly password: string; readonly language: "es" | "en" };
-};
-
 // LANG13-02 · Activación de 13 idiomas en el selector del chat.
 // Orden de producto obligatorio fijado por Plan V1.1 §14 (APROBADO Y
 // CONGELADO). NO reordenar alfabéticamente. Etiquetas visibles en la
@@ -95,57 +91,6 @@ function labelOf(code: string): string {
 }
 
 const POLL_INTERVAL_MS = 1500;
-
-// Hito 9.2.3 · Adaptador SSR-seguro sobre `window.localStorage`.
-// Distingue explícitamente los tres estados posibles del almacén:
-//   - "pending"     antes de que el sanity probe complete en el
-//                   primer efecto cliente. En este estado, el planner
-//                   de hidratación NO puede marcar al actor como
-//                   hidratado (evita perder la preferencia persistida
-//                   si la sesión Supabase llega antes que el storage).
-//   - "unavailable" tras un probe fallido (modo privado, quota o
-//                   política de seguridad) o en SSR. La persistencia
-//                   se degrada silenciosamente; los defaults se
-//                   aplican y los cambios manuales viven en memoria.
-//   - "available"   tras un probe exitoso; adaptador `MinimalStorage`
-//                   productivo sobre `window.localStorage`.
-function useLanguagePreferenceStorage(): PreferenceStorageState {
-  const [state, setState] = useState<PreferenceStorageState>({ kind: "pending" });
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      setState({ kind: "unavailable" });
-      return;
-    }
-    try {
-      const ls = window.localStorage;
-      const probeKey = "__spabla_v2_pref_probe__";
-      ls.setItem(probeKey, "1");
-      ls.removeItem(probeKey);
-      const storage: MinimalStorage = {
-        getItem: (k) => ls.getItem(k),
-        setItem: (k, v) => ls.setItem(k, v),
-      };
-      setState({ kind: "available", storage });
-    } catch {
-      setState({ kind: "unavailable" });
-    }
-  }, []);
-  return state;
-}
-
-function useSupabaseClient(): SupabaseClient | null {
-  const [client, setClient] = useState<SupabaseClient | null>(null);
-  useEffect(() => {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    if (!url || !key) return;
-    const c = createClient(url, key, {
-      auth: { persistSession: true, autoRefreshToken: true, storageKey: "spabla_v2_fase9_auth" },
-    });
-    setClient(c);
-  }, []);
-  return client;
-}
 
 function randomMessageId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -193,53 +138,57 @@ function humanizeTranslationError(code: string | null): string {
 }
 
 export default function VisibleConversationPage() {
-  const supabase = useSupabaseClient();
-  // Hito 9.2.3 · Storage cliente para preferencias locales por actor.
-  // Es `null` durante SSR y en navegadores con localStorage bloqueado;
-  // en ambos casos la persistencia se degrada silenciosamente.
-  const preferenceStorage = useLanguagePreferenceStorage();
+  // Hito 9.2.4 · Fuentes externas expuestas vía `useSyncExternalStore`.
+  // Cero `setState` dentro de `useEffect` para el cliente Supabase, el
+  // probe de `window.localStorage` y la carga del seed persistido.
+  const supabase = useSupabaseBrowserClient();
+  const preferenceStorage = usePreferenceStorage();
+  const { seed, tenantId, conversationId } = useSeedCache();
+
   const [session, setSession] = useState<Session | null>(null);
   const [signInEmail, setSignInEmail] = useState("");
   const [signInPassword, setSignInPassword] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
   const [signInBusy, setSignInBusy] = useState(false);
 
-  const [seed, setSeed] = useState<SeedResponse | null>(null);
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedBusy, setSeedBusy] = useState(false);
 
-  const [tenantId, setTenantId] = useState<string>("");
-  const [conversationId, setConversationId] = useState<string>("");
-  // D1: both default to the same language; `initialLanguagesFor` overrides
-  // them to the seeded actor's language when a session is recognised.
-  const [myLanguage, setMyLanguage] = useState<LangCode>("es");
-  const [targetLanguage, setTargetLanguage] = useState<LangCode>("es");
+  // Hito 9.2.4 · Sustituye la reconciliación en efecto por derivación
+  // en render. `manualLangs.forActor` marca al dueño del par manual;
+  // al cambiar de actor la selección manual queda invalidada y el
+  // planner puro vuelve a decidir a partir de defaults canónicos +
+  // preferencia persistida. Cero `setState` en efecto.
+  const [manualLangs, setManualLangs] = useState<{
+    readonly myLanguage: LangCode | null;
+    readonly targetLanguage: LangCode | null;
+    readonly forActor: string | null;
+  }>({ myLanguage: null, targetLanguage: null, forActor: null });
 
-  const [messages, setMessages] = useState<ReadonlyArray<Message>>([]);
-  const [pollError, setPollError] = useState<string | null>(null);
+  // Hito 9.2.4 · Estado actor-scoped derivado en render. El polling
+  // adjunta `forActor` a cada actualización; si `session.user.id`
+  // deja de coincidir, el valor efectivo cae a vacío sin necesidad
+  // de un `useEffect` de reset (elimina un `setState`-in-effect).
+  const [rawMessages, setRawMessages] = useState<{
+    readonly items: ReadonlyArray<Message>;
+    readonly forActor: string | null;
+  }>({ items: [], forActor: null });
+  const [rawPollError, setRawPollError] = useState<{
+    readonly code: string;
+    readonly forActor: string | null;
+  } | null>(null);
+  const [rawSendError, setRawSendError] = useState<{
+    readonly code: string;
+    readonly forActor: string | null;
+  } | null>(null);
   const [sessionExpired, setSessionExpired] = useState<boolean>(false);
   // Immediate short-circuit for in-flight polling ticks that started
   // before the runner cleanup fired. Once true, `fetchMessages`
-  // returns early and never re-uses the invalid token.
+  // returns early and never re-uses the invalid token. `useRef` never
+  // triggers the set-state-in-effect rule.
   const sessionExpiredRef = useRef<boolean>(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
-
-  // Restore any previously seeded context so both browsers stay aligned.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = window.localStorage.getItem("spabla_v2_fase9_seed");
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved) as SeedResponse;
-      setSeed(parsed);
-      setTenantId(parsed.tenantId);
-      setConversationId(parsed.conversationId);
-    } catch {
-      // ignore corrupt cache
-    }
-  }, []);
 
   useEffect(() => {
     if (!supabase) return;
@@ -250,91 +199,93 @@ export default function VisibleConversationPage() {
     };
   }, [supabase]);
 
-  // Reset per-session view state whenever the authenticated user changes
-  // (including sign-out → sign-in-as-different-actor). Prevents a stale
-  // "unauthorized" banner from surviving a fresh session.
   const sessionUserId = session?.user.id ?? null;
-  useEffect(() => {
-    setMessages([]);
-    setPollError(null);
-    setSendError(null);
-    if (sessionUserId !== null) {
-      // A fresh, valid session invalidates any prior expiry notice and
-      // re-arms the polling loop.
-      sessionExpiredRef.current = false;
-      setSessionExpired(false);
-    }
-  }, [sessionUserId]);
+  // Actor-scoped derivations. Reads only; no state mutations.
+  const messages: ReadonlyArray<Message> = rawMessages.forActor === sessionUserId
+    ? rawMessages.items
+    : [];
+  const pollError: string | null = rawPollError !== null && rawPollError.forActor === sessionUserId
+    ? rawPollError.code
+    : null;
+  const sendError: string | null = rawSendError !== null && rawSendError.forActor === sessionUserId
+    ? rawSendError.code
+    : null;
 
-  // Hito 9.2.3 (fix carrera pending→available) · La reconciliación
-  // entre defaults canónicos y preferencia persistida se delega a la
-  // función pura `planPreferenceHydration`. Reglas clave:
-  //   - mientras `preferenceStorage.kind === "pending"` el planner
-  //     devuelve `noop` y `preferenceHydratedActor` NO se marca,
-  //     así que el efecto vuelve a correr al pasar el storage a
-  //     `available` o `unavailable` y aplica la preferencia guardada
-  //     de forma atómica (nunca queda un default provisional que
-  //     bloquee la carga real);
-  //   - `persistIfHydrated` sigue gated por `preferenceHydratedActor`
-  //     y por `kind === "available"`, así que un cambio manual del
-  //     usuario nunca sobrescribe la preferencia persistida antes de
-  //     haberla leído.
-  const [preferenceHydratedActor, setPreferenceHydratedActor] =
-    useState<string | null>(null);
-  useEffect(() => {
-    const actorId = session?.user.id ?? null;
-    const defaultsPair = session && seed
-      ? initialLanguagesFor(session.user.id, seed)
+  // Hito 9.2.4 · Planner puro invocado en render sobre el mismo estado
+  // usado por Hito 9.2.3, pero con la guardia `hydratedActor` derivada
+  // de `manualLangs.forActor` — la aplicación de la decisión no vive
+  // en un efecto, sino directamente en las variables `myLanguage` /
+  // `targetLanguage` calculadas más abajo.
+  const hydrationDecision = useMemo(() => {
+    const actorId = sessionUserId;
+    const defaultsPair = actorId && seed
+      ? initialLanguagesFor(actorId, seed)
       : null;
-    const decision = planPreferenceHydration({
+    // `hydratedActor` = `manualLangs.forActor` cuando el usuario ya
+    // hizo una selección manual para el actor vigente; de lo contrario
+    // `null` (el planner devuelve `apply` si hay algo que aplicar y el
+    // resultado se materializa en `myLanguage`/`targetLanguage` abajo).
+    const hydratedActor = manualLangs.forActor === actorId ? actorId : null;
+    return planPreferenceHydration({
       actorId,
-      hydratedActor: preferenceHydratedActor,
+      hydratedActor,
       storage: preferenceStorage,
       defaults: defaultsPair,
     });
-    if (decision.kind === "noop") return;
-    if (decision.kind === "apply") {
-      setMyLanguage(decision.myLanguage);
-      setTargetLanguage(decision.targetLanguage);
-    }
-    setPreferenceHydratedActor(decision.markHydratedFor);
-  }, [session, seed, preferenceStorage, preferenceHydratedActor]);
+  }, [sessionUserId, seed, preferenceStorage, manualLangs.forActor]);
 
-  // Hito 9.2.3 · Al cerrar sesión, limpiar sólo la guardia React de
-  // hidratación. Prohibido borrar la preferencia persistida ni
-  // sobrescribirla con defaults: se conserva íntegra para el próximo
-  // sign-in del mismo actor en el mismo navegador.
-  useEffect(() => {
-    if (sessionUserId === null) {
-      setPreferenceHydratedActor(null);
-    }
-  }, [sessionUserId]);
+  // Valores efectivos de los selectores en render (D1 preservado):
+  //   - Si el usuario ha elegido manualmente para el actor actual, sus
+  //     valores prevalecen.
+  //   - Si el planner puede aplicar (preferencia guardada o defaults),
+  //     esos valores se usan.
+  //   - En cualquier otro caso, `es`/`es` (default histórico).
+  let myLanguage: LangCode = "es";
+  let targetLanguage: LangCode = "es";
+  if (manualLangs.forActor === sessionUserId && manualLangs.myLanguage && manualLangs.targetLanguage) {
+    myLanguage = manualLangs.myLanguage;
+    targetLanguage = manualLangs.targetLanguage;
+  } else if (hydrationDecision.kind === "apply") {
+    myLanguage = hydrationDecision.myLanguage as LangCode;
+    targetLanguage = hydrationDecision.targetLanguage as LangCode;
+  }
 
-  const persistIfHydrated = useCallback(
+  const persistIfWritable = useCallback(
     (pref: { readonly myLanguage: string; readonly targetLanguage: string }) => {
       if (preferenceStorage.kind !== "available") return;
       const actor = sessionUserId;
       if (actor === null) return;
-      // Guardia: sólo persistimos cuando el actor autenticado coincide
-      // con el actor cuya preferencia ya se hidrató. Evita escribir el
-      // par del actor anterior justo tras un cambio de sesión y evita
-      // sobrescribir la preferencia persistida antes de haberla leído.
-      if (preferenceHydratedActor !== actor) return;
       saveLanguagePreference(preferenceStorage.storage, actor, pref);
     },
-    [preferenceStorage, sessionUserId, preferenceHydratedActor],
+    [preferenceStorage, sessionUserId],
   );
 
   const onMyLanguageChange = useCallback((next: string) => {
     if (!isLangCode(next)) return;
-    setMyLanguage(next);
-    persistIfHydrated({ myLanguage: next, targetLanguage });
-  }, [persistIfHydrated, targetLanguage]);
+    const actor = sessionUserId;
+    if (actor === null) return;
+    setManualLangs((prev) => ({
+      myLanguage: next,
+      targetLanguage: prev.forActor === actor && prev.targetLanguage
+        ? prev.targetLanguage
+        : targetLanguage,
+      forActor: actor,
+    }));
+    persistIfWritable({ myLanguage: next, targetLanguage });
+  }, [persistIfWritable, sessionUserId, targetLanguage]);
   const onTargetLanguageChange = useCallback((next: string) => {
     if (!isLangCode(next)) return;
-    setTargetLanguage(next);
-    persistIfHydrated({ myLanguage, targetLanguage: next });
-  }, [persistIfHydrated, myLanguage]);
+    const actor = sessionUserId;
+    if (actor === null) return;
+    setManualLangs((prev) => ({
+      myLanguage: prev.forActor === actor && prev.myLanguage
+        ? prev.myLanguage
+        : myLanguage,
+      targetLanguage: next,
+      forActor: actor,
+    }));
+    persistIfWritable({ myLanguage, targetLanguage: next });
+  }, [persistIfWritable, sessionUserId, myLanguage]);
 
   const canOperate = useMemo(
     () => Boolean(session && tenantId && conversationId && targetLanguage),
@@ -345,6 +296,7 @@ export default function VisibleConversationPage() {
     if (!supabase || !session) return;
     if (sessionExpiredRef.current) return;
     const token = session.access_token;
+    const actor = session.user.id;
     try {
       const res = await fetch(
         `/api/v2/messages?tenantId=${encodeURIComponent(tenantId)}&conversationId=${encodeURIComponent(conversationId)}&to=${encodeURIComponent(targetLanguage)}`,
@@ -357,23 +309,24 @@ export default function VisibleConversationPage() {
       const body = (await res.json().catch(() => ({}))) as { error?: string; items?: ReadonlyArray<Message>; actorId?: string };
       const action = classifyPollingResponse({ status: res.status }, body);
       if (action.kind === "expire") {
-        // Session expiry is the ONLY case where the polling loop is
-        // torn down and the user forced back to sign-in. The `ref`
-        // short-circuits any in-flight tick that might still be
-        // queued behind this response; setting `session = null`
-        // causes `canOperate` to flip and the effect's cleanup
-        // cancels the runner. Local sign-out — never global — clears
-        // the invalid token from Supabase's own storage.
+        // AUTH-RECOVERY (Hito 9.2.4): single deterministic transition.
+        // The ref short-circuits any in-flight tick queued behind this
+        // response; setting `session = null` flips `canOperate` and
+        // cancels the runner. `signOut({scope:"local"})` clears the
+        // invalid token from Supabase Auth storage of this tab only,
+        // NEVER touching localStorage keys owned by the preference
+        // store (`spabla_v2:language-preferences:v1:*`) or by the seed
+        // cache (`spabla_v2_fase9_seed`).
         sessionExpiredRef.current = true;
         setSessionExpired(true);
-        setPollError(null);
-        setMessages([]);
+        setRawPollError(null);
+        setRawMessages({ items: [], forActor: null });
         setSession(null);
         void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
         return;
       }
       if (action.kind === "surface") {
-        setPollError(action.pollError);
+        setRawPollError({ code: action.pollError, forActor: actor });
         return;
       }
       const items = Array.isArray(body.items) ? body.items : [];
@@ -381,13 +334,13 @@ export default function VisibleConversationPage() {
       // payload if the server-verified actorId no longer matches the
       // current client-side session. This complements the runner-level
       // cancellation and eliminates any residual UI flicker.
-      if (body.actorId !== undefined && body.actorId !== session.user.id) {
+      if (body.actorId !== undefined && body.actorId !== actor) {
         return;
       }
-      setMessages(items);
-      setPollError(null);
+      setRawMessages({ items, forActor: actor });
+      setRawPollError(null);
     } catch {
-      setPollError("poll_network");
+      setRawPollError({ code: "poll_network", forActor: actor });
     }
   }, [supabase, session, tenantId, conversationId, targetLanguage]);
 
@@ -412,12 +365,10 @@ export default function VisibleConversationPage() {
         return;
       }
       const body = (await res.json()) as SeedResponse;
-      setSeed(body);
-      setTenantId(body.tenantId);
-      setConversationId(body.conversationId);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("spabla_v2_fase9_seed", JSON.stringify(body));
-      }
+      // Hito 9.2.4 · Escritura + notificación centralizada. El external
+      // store (`useSeedCache`) actualiza `tenantId`/`conversationId` en
+      // el próximo render sin ningún `setState` en efecto.
+      writeSeedToCache(body);
     } catch {
       setSeedError("seed_network");
     } finally {
@@ -438,32 +389,41 @@ export default function VisibleConversationPage() {
       setSignInError(null);
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       setSignInBusy(false);
-      if (error) setSignInError(error.message);
+      if (error) {
+        setSignInError(error.message);
+        return;
+      }
+      // AUTH-RECOVERY (Hito 9.2.4): un login exitoso siempre limpia el
+      // aviso de expiración y re-arma el guardia — resets event-driven
+      // en lugar de un `useEffect` que observe `sessionUserId`.
+      sessionExpiredRef.current = false;
+      setSessionExpired(false);
     },
     [supabase, signInEmail, signInPassword],
   );
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    // `scope: "local"` clears only THIS tab's session; other browsers
-    // authenticated as the same actor are left alone. The auth listener
-    // then propagates `session = null`, which triggers the state reset
-    // effect and unmounts the polling runner. A manual sign-out clears
-    // the expiry notice too — it is a user-initiated action, not a
-    // recovery from an invalidated JWT.
+    // AUTH-RECOVERY (Hito 9.2.4): `scope: "local"` limpia la sesión
+    // SÓLO de esta pestaña; otros navegadores del mismo actor quedan
+    // intactos. NO borra ninguna clave localStorage propiedad del
+    // preference store (`spabla_v2:language-preferences:v1:*`) ni del
+    // seed cache (`spabla_v2_fase9_seed`) — se preservan íntegras para
+    // el próximo sign-in.
     await supabase.auth.signOut({ scope: "local" });
     sessionExpiredRef.current = false;
     setSessionExpired(false);
     setSession(null);
-    setMessages([]);
-    setPollError(null);
-    setSendError(null);
+    setRawMessages({ items: [], forActor: null });
+    setRawPollError(null);
+    setRawSendError(null);
   }, [supabase]);
 
   const sendMessage = useCallback(async () => {
     if (!session || !draft.trim()) return;
+    const actor = session.user.id;
     setSending(true);
-    setSendError(null);
+    setRawSendError(null);
     try {
       const res = await fetch("/api/v2/messages", {
         method: "POST",
@@ -481,13 +441,13 @@ export default function VisibleConversationPage() {
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setSendError(body.error ?? `send_status_${res.status}`);
+        setRawSendError({ code: body.error ?? `send_status_${res.status}`, forActor: actor });
         return;
       }
       setDraft("");
       await fetchMessages();
     } catch {
-      setSendError("send_network");
+      setRawSendError({ code: "send_network", forActor: actor });
     } finally {
       setSending(false);
     }

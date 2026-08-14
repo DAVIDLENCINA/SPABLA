@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   planPreferenceHydration,
-  type HydrationInput,
   type PreferenceStorageState,
 } from "./language-preference-hydration";
 import {
@@ -365,13 +364,10 @@ describe("planner purity", () => {
 
   it("never invokes getItem while the storage state is pending", () => {
     const getItem = vi.fn(() => null);
-    const storage: MinimalStorage = {
-      getItem,
-      setItem: () => undefined,
-    };
-    // storage is `pending`, so the planner MUST NOT touch the adapter
-    // (there is no adapter to touch in a real pending state, but this
-    // property is preserved even if the caller passes a real one).
+    // storage adapter is intentionally NOT wired into the input below:
+    // `PENDING` means "no adapter is available yet", and the property
+    // under test is that the planner does not touch any adapter in
+    // that state (verified by asserting the spy remained untouched).
     planPreferenceHydration({
       actorId: ACTOR_A,
       hydratedActor: null,
