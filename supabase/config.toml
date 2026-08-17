@@ -42,9 +42,15 @@ max_client_conn = 100
 
 [realtime]
 enabled = true
-# Realtime is enabled because the V1 baseline registers `public.messages` and
-# `public.call_signals` in the `supabase_realtime` publication (Plan Hito 8.2
-# §5). Zero `spabla_v2.*` table is added to that publication during Hito 8.2.
+# Realtime is enabled but the `supabase_realtime` publication is empty in
+# the FINAL state of the database: Hito 9.2.6 (V1-ERADICATION) retired
+# `public.messages` and `public.call_signals` from the publication via
+# `20260817000000_v1_runtime_retirement.sql`. The publication object itself
+# is preserved so a future V2 realtime feature can `ALTER PUBLICATION ... ADD
+# TABLE` without recreating it. Zero `spabla_v2.*` table participates in the
+# publication today; when that changes, both this comment and the
+# `v1_runtime_retirement_verification.test.sql` guardrail must be updated
+# together on the introducing hito.
 
 [studio]
 enabled = false

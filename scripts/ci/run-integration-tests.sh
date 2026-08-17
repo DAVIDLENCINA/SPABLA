@@ -29,9 +29,9 @@ PGPASSWORD="postgres"
 
 export PGHOST PGPORT PGUSER PGDATABASE PGPASSWORD
 
-echo "[run-integration-tests] applying v1_baseline_smoke.test.sql"
+echo "[run-integration-tests] applying v1_runtime_retirement_verification.test.sql"
 psql --no-psqlrc --set ON_ERROR_STOP=1 \
-     -f supabase/tests/v1_baseline_smoke.test.sql
+     -f supabase/tests/v1_runtime_retirement_verification.test.sql
 
 echo "[run-integration-tests] applying rls_bootstrap.test.sql"
 psql --no-psqlrc --set ON_ERROR_STOP=1 \

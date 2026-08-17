@@ -212,6 +212,10 @@ TGT_V1_TABLES=$(psql_tgt -c "
      AND c.relkind = 'r'
      AND c.relname IN ('users','conversations','conversation_participants','messages','files','call_signals')
 ")
+# Post Hito 9.2.6 (V1-ERADICATION): the retirement migration
+# `20260817000000_v1_runtime_retirement.sql` removes all six V1 tables from
+# the FINAL state of the database. The dump therefore restores 0 V1 tables
+# into the target, and that is the invariant asserted below.
 TGT_POLICIES=$(psql_tgt -c "
   SELECT count(*) FROM pg_policies WHERE schemaname = 'spabla_v2'
 ")
@@ -237,14 +241,15 @@ TGT_ADMIN_FN=$(psql_tgt -c "
   # Fase 8 shipped five tables in spabla_v2; Fase 9.1.1 added
   # message_translations so the productive baseline is now six.
   echo "  spabla_v2 tables:     ${TGT_SCHEMA_TABLES} (expected 6)"
-  echo "  V1 public tables:     ${TGT_V1_TABLES} (expected 6)"
+  # V1 tables retired by Hito 9.2.6 (V1-ERADICATION) — expected 0.
+  echo "  V1 public tables:     ${TGT_V1_TABLES} (expected 0)"
   echo "  spabla_v2 policies:   ${TGT_POLICIES}"
   echo "  ENABLE+FORCE RLS:     ${TGT_RLS_OK} of 6 spabla_v2 tables"
   echo "  admin_* functions:    ${TGT_ADMIN_FN} of 5"
   echo ""
 } >> "${REPORT_PATH}"
 
-if [ "${TGT_SCHEMA_TABLES}" != "6" ] || [ "${TGT_V1_TABLES}" != "6" ] \
+if [ "${TGT_SCHEMA_TABLES}" != "6" ] || [ "${TGT_V1_TABLES}" != "0" ] \
    || [ "${TGT_RLS_OK}" != "6" ] || [ "${TGT_ADMIN_FN}" != "5" ]; then
   log "FATAL: structural mismatch after restore"
   exit 1
