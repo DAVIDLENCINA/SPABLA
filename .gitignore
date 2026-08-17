@@ -46,3 +46,8 @@ next-env.d.ts
 # supabase — CLI-managed local state (linked-project ref, pooler URL, versions)
 supabase/.temp/
 supabase/.branches/
+
+# supabase — nested artifact created when 'supabase --workdir supabase start'
+# is invoked from repo root. Must never be committed. See
+# docs/standards/SPABLA_V2_TOOLCHAIN.md.
+supabase/supabase/
