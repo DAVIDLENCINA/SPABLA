@@ -366,4 +366,126 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
     const body = await res.json();
     expect(body).toEqual({ error: "not_found" });
   }, 15_000);
+
+  // ────────────────────────────────────────────────────────────────
+  // Hito 9.2.5-D · HTTP-frontier assertions for the authorization
+  // semantics of /api/v2/messages. Reuses the same Next dev spawn.
+  //
+  // - X-SPABLA-Correlation-Id present on every response (2xx and 4xx).
+  // - Cross-tenant POST returns 404 (previously 401) so the client
+  //   auth-recovery does NOT trigger.
+  // - Cross-tenant POST body is indistinguishable from a POST against
+  //   a non-existent conversation of the same actor's tenant.
+  // - Cursor cross-conversation via GET returns 400 bad_request
+  //   (previously 404), indistinguishable from a malformed cursor.
+  // ────────────────────────────────────────────────────────────────
+
+  test.skipIf(!ENABLED)("HTTP · GET success carries X-SPABLA-Correlation-Id and no body correlationId", async () => {
+    const res = await fetch(endpointUrl(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${validJwt}` },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("X-SPABLA-Correlation-Id") ?? res.headers.get("x-spabla-correlation-id")).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    const body = await res.json();
+    expect(body.correlationId).toBeUndefined();
+    expect(body.actorId).toBe(actorId);
+  }, 15_000);
+
+  test.skipIf(!ENABLED)("HTTP · corrupted JWT → 401 with correlation echoed in body and header", async () => {
+    const corrupted = corruptJwtSignature(validJwt);
+    const res = await fetch(endpointUrl(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${corrupted}` },
+    });
+    expect(res.status).toBe(401);
+    const cidHeader = res.headers.get("x-spabla-correlation-id");
+    expect(cidHeader).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    const body = await res.json();
+    expect(body).toEqual({ error: "unauthorized", correlationId: cidHeader });
+    expect(shouldTriggerAuth401Recovery(res)).toBe(true);
+  }, 15_000);
+
+  test.skipIf(!ENABLED)("HTTP · POST cross-tenant returns 404 (not 401) and does NOT trigger auth recovery", async () => {
+    // Same valid JWT as the baseline, but pointing at a foreign
+    // tenant id (a fresh UUID that no one is a member of).
+    const foreignTenantId = randomUUID();
+    const res = await fetch(`${BASE_URL}/api/v2/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${validJwt}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        tenantId: foreignTenantId,
+        conversationId: randomUUID(),
+        text: "hola",
+        language: "es",
+        clientMessageId: randomUUID(),
+      }),
+    });
+    expect(res.status).toBe(404);
+    const cid = res.headers.get("x-spabla-correlation-id");
+    expect(cid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    const body = await res.json();
+    expect(body).toEqual({ error: "not_found", correlationId: cid });
+    // Client coordinator must NOT fire on 404.
+    expect(shouldTriggerAuth401Recovery(res)).toBe(false);
+  }, 20_000);
+
+  test.skipIf(!ENABLED)("HTTP · POST cross-tenant and POST missing-conversation return byte-identical bodies (modulo correlationId)", async () => {
+    async function postAgainst(targetTenant: string, targetConv: string): Promise<Record<string, unknown>> {
+      const r = await fetch(`${BASE_URL}/api/v2/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${validJwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          tenantId: targetTenant,
+          conversationId: targetConv,
+          text: "hola",
+          language: "es",
+          clientMessageId: randomUUID(),
+        }),
+      });
+      expect(r.status).toBe(404);
+      const b = (await r.json()) as Record<string, unknown>;
+      return b;
+    }
+    // Scenario 1: caller's own tenant, non-existent conversation.
+    const own = await postAgainst(tenantId, randomUUID());
+    // Scenario 2: cross-tenant (RLS block).
+    const foreign = await postAgainst(randomUUID(), randomUUID());
+    // Strip correlationId (must differ) and compare the rest.
+    delete own.correlationId;
+    delete foreign.correlationId;
+    expect(foreign).toEqual(own);
+    expect(own).toEqual({ error: "not_found" });
+  }, 30_000);
+
+  test.skipIf(!ENABLED)("HTTP · GET with malformed conversation UUID and unsupported language both yield 400 bad_request", async () => {
+    const bad1 = await fetch(`${BASE_URL}/api/v2/messages?tenantId=${tenantId}&conversationId=nope&to=en`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${validJwt}` },
+    });
+    const bad2 = await fetch(`${BASE_URL}/api/v2/messages?tenantId=${tenantId}&conversationId=${conversationId}&to=xx`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${validJwt}` },
+    });
+    expect(bad1.status).toBe(400);
+    expect(bad2.status).toBe(400);
+    const b1 = (await bad1.json()) as Record<string, unknown>;
+    const b2 = (await bad2.json()) as Record<string, unknown>;
+    expect(b1.error).toBe("bad_request");
+    expect(b2.error).toBe("bad_request");
+    // Both carry a correlationId matching their header.
+    for (const [res, body] of [[bad1, b1], [bad2, b2]] as const) {
+      const cid = res.headers.get("x-spabla-correlation-id");
+      expect(cid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(body.correlationId).toBe(cid);
+    }
+  }, 20_000);
 });
