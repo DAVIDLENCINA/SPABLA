@@ -101,6 +101,16 @@ function mapPersistenceCodeToPublic(
   if (code === "not_found") {
     return { status: 404, publicCode: "not_found", phase: "authorization", internalKind: "hidden_by_rls" };
   }
+  if (code === "membership_denied") {
+    // Hito 9.2.5-D (corrective) · Defensive mapping. `saveMessage`
+    // intercepts SQLSTATE 42501 locally and re-emits it as `not_found`
+    // for invisibility parity, so this branch is not reachable from the
+    // messages endpoint TODAY. Reserved for a future explicit
+    // role-based deny reaching this boundary; keeps the canonical 403
+    // slot honest and prevents a silent 500 if a new adapter path
+    // emits `membership_denied`.
+    return { status: 403, publicCode: "forbidden", phase: "authorization", internalKind: "membership_denied" };
+  }
   if (code === "conflict") {
     return { status: 409, publicCode: "conflict", phase: "integrity", internalKind: "unique_violation" };
   }

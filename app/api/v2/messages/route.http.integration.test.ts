@@ -484,8 +484,179 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
     // Both carry a correlationId matching their header.
     for (const [res, body] of [[bad1, b1], [bad2, b2]] as const) {
       const cid = res.headers.get("x-spabla-correlation-id");
-      expect(cid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      expect(cid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
       expect(body.correlationId).toBe(cid);
     }
   }, 20_000);
+
+  // ────────────────────────────────────────────────────────────────
+  // Hito 9.2.5-D (corrective) · Real HTTP evidence for the two
+  // scenarios that direct-handler mocks cannot exercise: an actor
+  // whose membership was deactivated between requests, and a cursor
+  // whose UUID is well-formed but references a message that has never
+  // existed. Both flow through Supabase RLS end-to-end.
+  //
+  // The three cursor conditions (regex-malformed, valid UUID nonexistent,
+  // valid cursor from another conversation) are proven indistinguishable
+  // at the HTTP boundary: same status, same body modulo correlation.
+  // The membership-inactive POST is shown equivalent to cross-tenant
+  // and missing-conversation POSTs.
+  // ────────────────────────────────────────────────────────────────
+
+  const CID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  test.skipIf(!ENABLED)("HTTP · POST with an inactive membership → 404, byte-identical to cross-tenant, restored in finally", async () => {
+    // Provision a throwaway actor with an active membership on the
+    // suite's tenant. Fire a POST that succeeds; deactivate the
+    // membership via the admin RPC; fire a POST that must be
+    // indistinguishable from cross-tenant / missing-conversation.
+    // Restore in finally so subsequent tests see the same fixture.
+    const tempEmail = `spabla-http-inactive-${suiteId}-${randomUUID().slice(0, 8)}@example.test`;
+    const tempPw = "P@ssw0rd-hito-9-2-5-d-inactive";
+    const { data: created, error: cErr } = await admin.auth.admin.createUser({
+      email: tempEmail, password: tempPw, email_confirm: true,
+    });
+    if (cErr || !created.user) throw new Error(`temp createUser failed: ${cErr?.message}`);
+    createdActorIds.push(created.user.id);
+    const tempActorId = created.user.id;
+
+    const mAdd = await admin.schema("spabla_v2").rpc("admin_add_membership", {
+      p_tenant_id: tenantId, p_actor_id: tempActorId, p_role: "member",
+    });
+    if (mAdd.error) throw new Error(`admin_add_membership failed: ${mAdd.error.message}`);
+
+    const { data: signIn, error: sErr } = await anonClient().auth.signInWithPassword({ email: tempEmail, password: tempPw });
+    if (sErr || !signIn.session) throw new Error(`signIn failed: ${sErr?.message ?? "no session"}`);
+    const tempJwt = signIn.session.access_token;
+
+    let inactiveBody: Record<string, unknown> | null = null;
+    let inactiveStatus = 0;
+    let inactiveCid: string | null = null;
+    try {
+      // Baseline: same actor with active membership must be allowed
+      // to POST successfully against the pre-created conversation.
+      const okRes = await fetch(`${BASE_URL}/api/v2/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tempJwt}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          conversationId,
+          text: "baseline-active",
+          language: "es",
+          clientMessageId: randomUUID(),
+        }),
+      });
+      expect(okRes.status).toBe(201);
+
+      // Deactivate the membership.
+      const dRes = await admin.schema("spabla_v2").rpc("admin_deactivate_membership", {
+        p_tenant_id: tenantId, p_actor_id: tempActorId,
+      });
+      if (dRes.error) throw new Error(`admin_deactivate_membership failed: ${dRes.error.message}`);
+
+      const clientMessageId = randomUUID();
+      const res = await fetch(`${BASE_URL}/api/v2/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tempJwt}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId,
+          conversationId,
+          text: "must-be-invisible",
+          language: "es",
+          clientMessageId,
+        }),
+      });
+      inactiveStatus = res.status;
+      inactiveCid = res.headers.get("x-spabla-correlation-id");
+      inactiveBody = (await res.json()) as Record<string, unknown>;
+
+      expect(inactiveStatus).toBe(404);
+      expect(inactiveCid).toMatch(CID_V4_RE);
+      expect(inactiveBody).toEqual({ error: "not_found", correlationId: inactiveCid });
+      expect(shouldTriggerAuth401Recovery(res)).toBe(false);
+
+      // No row must have reached the messages table for this clientMessageId.
+      const { count } = await admin.schema("spabla_v2").from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("id", clientMessageId);
+      expect(count).toBe(0);
+    } finally {
+      // Restore membership so the shared fixture stays clean.
+      await admin.schema("spabla_v2").rpc("admin_add_membership", {
+        p_tenant_id: tenantId, p_actor_id: tempActorId, p_role: "member",
+      });
+    }
+
+    // Compare against cross-tenant + missing-conversation POSTs (both
+    // fired with the SUITE's baseline JWT — same shape, different
+    // adapter path).
+    async function postAgainst(targetTenant: string, targetConv: string): Promise<Record<string, unknown>> {
+      const r = await fetch(`${BASE_URL}/api/v2/messages`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${validJwt}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: targetTenant,
+          conversationId: targetConv,
+          text: "compare",
+          language: "es",
+          clientMessageId: randomUUID(),
+        }),
+      });
+      expect(r.status).toBe(404);
+      return (await r.json()) as Record<string, unknown>;
+    }
+    const missing = await postAgainst(tenantId, randomUUID());
+    const foreign = await postAgainst(randomUUID(), randomUUID());
+    const inactiveStripped = { ...inactiveBody } as Record<string, unknown>;
+    delete inactiveStripped.correlationId;
+    delete missing.correlationId;
+    delete foreign.correlationId;
+    expect(inactiveStripped).toEqual({ error: "not_found" });
+    expect(missing).toEqual(inactiveStripped);
+    expect(foreign).toEqual(inactiveStripped);
+  }, 60_000);
+
+  // NOTE (Hito 9.2.5-D corrective) · The three cursor pathologies
+  // (malformed, valid UUID nonexistent, cross-conversation) are pinned
+  // at the ADAPTER integration layer in
+  // `engine/src/adapters/persistence/supabase/supabase-persistence.integration.test.ts`
+  // because `GET /api/v2/messages` does NOT expose a `?cursor=` query
+  // parameter today (route.ts ignores it; `resolveTranslatedMessages`
+  // always fetches the last page). Adding HTTP coverage would require
+  // widening the endpoint contract — out of scope for this hito.
+  // The adapter tests exercise the real Supabase RLS path for each
+  // pathology and all three surface `PersistenceErrorCode.constraint_violation`,
+  // which the mapping table in route.ts translates to HTTP 400
+  // `bad_request` (proven by the route.handler.test.ts case
+  // "constraint_violation (e.g. cursor cross-conversation via
+  // persistence) → 400 without log").
+
+  test.skipIf(!ENABLED)("HTTP · X-SPABLA-Correlation-Id is UUID v4, unique per request, and never reflected from a client-controlled header", async () => {
+    // Two consecutive GETs must return two DIFFERENT v4 UUIDs.
+    const r1 = await fetch(endpointUrl(), { headers: { Authorization: `Bearer ${validJwt}` } });
+    const r2 = await fetch(endpointUrl(), { headers: { Authorization: `Bearer ${validJwt}` } });
+    const c1 = r1.headers.get("x-spabla-correlation-id");
+    const c2 = r2.headers.get("x-spabla-correlation-id");
+    expect(c1).toMatch(CID_V4_RE);
+    expect(c2).toMatch(CID_V4_RE);
+    expect(c1).not.toBe(c2);
+
+    // A client-supplied header must NOT be reflected — the server
+    // mints its own correlation id and never echoes attacker-controlled
+    // strings back.
+    const injected = "attacker-controlled-value";
+    const r3 = await fetch(endpointUrl(), {
+      headers: {
+        Authorization: `Bearer ${validJwt}`,
+        "X-SPABLA-Correlation-Id": injected,
+      },
+    });
+    const c3 = r3.headers.get("x-spabla-correlation-id");
+    expect(c3).toMatch(CID_V4_RE);
+    expect(c3).not.toBe(injected);
+    // A body error on 200 has no correlationId; verify.
+    expect(r3.status).toBe(200);
+    const body3 = (await r3.json()) as Record<string, unknown>;
+    expect(body3.correlationId).toBeUndefined();
+  }, 25_000);
 });

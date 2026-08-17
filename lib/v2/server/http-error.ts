@@ -86,6 +86,11 @@ const KNOWN_INTERNAL_KINDS = new Set<string>([
   // Authorization / visibility (404 on write, 200 [] on read)
   "hidden_by_rls",
   "not_found",
+  // Authorization / explicit deny on a visible resource (403). Reserved
+  // for a future role-based policy; the messages endpoint does not
+  // emit it today because `saveMessage` intercepts SQLSTATE 42501 into
+  // `not_found` for invisibility parity.
+  "membership_denied",
   // Integrity (409)
   "unique_violation",
   // Infrastructure (503)

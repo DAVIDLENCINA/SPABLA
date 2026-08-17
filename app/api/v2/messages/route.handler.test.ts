@@ -68,7 +68,7 @@ import { CORRELATION_HEADER, GET, POST } from "./route";
 const buildScope = vi.mocked(buildRequestScopedPersistence);
 const resolve = vi.mocked(resolveTranslatedMessages);
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const A_UUID = "00000000-0000-0000-0000-000000000001";
 const B_UUID = "00000000-0000-0000-0000-000000000002";
 const C_UUID = "00000000-0000-0000-0000-000000000003";
@@ -402,6 +402,81 @@ describe("Non-401/404 persistence codes", () => {
 // ────────────────────────────────────────────────────────────────
 // Client auth-recovery interlock — only status 401 triggers it
 // ────────────────────────────────────────────────────────────────
+
+describe("403 · membership_denied defensive mapping (Hito 9.2.5-D corrective)", () => {
+  test("persistence membership_denied → 403 forbidden with correlation + sanitized log", async () => {
+    // Path: no current adapter path reaches this branch under the
+    // messages endpoint (`saveMessage` intercepts SQLSTATE 42501 into
+    // `not_found` for invisibility parity), but the mapper must not
+    // silently degrade an incoming `membership_denied` to 500. Locks
+    // the canonical 403 slot for future role-based policies.
+    const scope = scopeStub();
+    buildScope.mockResolvedValueOnce(scope as never);
+    (scope.persistence.saveMessage as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
+      code: "membership_denied",
+      message: "role denied",
+      retryable: false,
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(postRequest({
+      tenantId: A_UUID, conversationId: B_UUID, text: "hi", language: "es", clientMessageId: C_UUID,
+    }));
+    expect(res.status).toBe(403);
+    const cid = res.headers.get(CORRELATION_HEADER);
+    expect(cid).toMatch(UUID_RE);
+    await expect(res.json()).resolves.toEqual({ error: "forbidden", correlationId: cid });
+    expect(errSpy).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(errSpy.mock.calls[0]![0] as string) as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      status: 403,
+      code: "forbidden",
+      phase: "authorization",
+      internalKind: "membership_denied",
+    });
+  });
+});
+
+describe("Correlation ID hardening (Hito 9.2.5-D corrective)", () => {
+  test("emitted correlation id matches RFC 4122 UUID v4 (position 15 = '4', position 20 ∈ [89ab])", async () => {
+    const res = await GET(getRequest("?tenantId=x&conversationId=nope&to=en"));
+    const cid = res.headers.get(CORRELATION_HEADER) ?? "";
+    expect(cid).toMatch(UUID_RE);
+    // Version nibble explicitly.
+    expect(cid.charAt(14)).toBe("4");
+    // Variant nibble ∈ 8,9,a,b (case-insensitive).
+    expect("89ab").toContain(cid.charAt(19).toLowerCase());
+  });
+
+  test("two consecutive requests generate two distinct correlation ids", async () => {
+    const r1 = await GET(getRequest("?tenantId=x&conversationId=nope&to=en"));
+    const r2 = await GET(getRequest("?tenantId=x&conversationId=nope&to=en"));
+    const c1 = r1.headers.get(CORRELATION_HEADER);
+    const c2 = r2.headers.get(CORRELATION_HEADER);
+    expect(c1).toMatch(UUID_RE);
+    expect(c2).toMatch(UUID_RE);
+    expect(c1).not.toBe(c2);
+  });
+
+  test("a client-controlled X-SPABLA-Correlation-Id header is NOT reflected", async () => {
+    const injected = "attacker-controlled-value";
+    const url = "http://localhost/api/v2/messages?tenantId=x&conversationId=nope&to=en";
+    const req = new NextRequest(url, {
+      method: "GET",
+      headers: {
+        Authorization: "Bearer x",
+        "X-SPABLA-Correlation-Id": injected,
+      },
+    });
+    const res = await GET(req);
+    const cid = res.headers.get(CORRELATION_HEADER);
+    expect(cid).toMatch(UUID_RE);
+    expect(cid).not.toBe(injected);
+    const body = await res.json();
+    expect(body.correlationId).toBe(cid);
+    // The injected string never appears in the body either.
+    expect(JSON.stringify(body)).not.toContain(injected);
+  });
+});
 
 describe("Client auth-recovery interlock (shouldTriggerAuth401Recovery)", () => {
   test("only 401 responses match the coordinator predicate", async () => {

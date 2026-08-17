@@ -399,6 +399,33 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
     expect(err.code).toBe("constraint_violation");
   });
 
+  test("listMessages cursor with a valid UUID that does not point to any existing message raises constraint_violation (Hito 9.2.5-D corrective)", async () => {
+    // Non-existent messageId: fetchMessageRow returns null → the
+    // cursor validation code path raises `constraint_violation`,
+    // indistinguishable at the HTTP boundary from a malformed cursor
+    // and from a cross-conversation cursor. This closes the
+    // enumeration channel completely: no differential can leak
+    // whether a UUID that never existed is different from one that
+    // exists in another conversation. The UUID traverses the adapter
+    // real query (fetchMessageRow) rather than being rejected upfront
+    // by a regex.
+    const adapter = new SupabasePersistence({ authenticated: authClient(actorA.jwt), privileged: admin });
+    const ctx = ctxOf(actorA, tenantA);
+    const targetCid = randomUUID();
+    await adapter.saveConversation(ctx, makeConversation(tenantA, targetCid, actorA.id));
+    const nonExistentMid = randomUUID();
+    const phantomCursor = makeMessageCursor(
+      asISOTimestamp("2026-08-05T12:35:00.000Z"),
+      asUUID(nonExistentMid),
+    );
+    const err = await pgIsError(adapter.listMessages(ctx, {
+      conversationId: asUUID(targetCid) as ConversationId,
+      limit: 10,
+      cursor: phantomCursor,
+    }));
+    expect(err.code).toBe("constraint_violation");
+  });
+
   test("listMessages cursor from another conversation raises constraint_violation (Hito 9.2.5-D)", async () => {
     // A cursor whose message belongs to a different conversation is
     // treated as a structural input problem — indistinguishable at the

@@ -292,18 +292,24 @@ export class SupabasePersistence implements PersistencePort {
       if (raced !== null && this.messageEquals(raced, record)) {
         return;
       }
-      // Hito 9.2.5-D · A foreign-key violation on `messages` means the
-      // (tenant, conversation) parent row is not visible to the caller
-      // — either the conversation does not exist, or it belongs to
-      // another tenant, or the tenant itself does not exist. Map to
-      // `not_found` so the HTTP boundary responds with 404 uniformly
-      // with RLS-blocked writes; otherwise a caller could distinguish
-      // "own tenant, missing conversation" (currently 400) from
-      // "foreign tenant" (already 404 via 42501 → not_found), which
-      // is a MEDIUM enumeration vector.
+      // Hito 9.2.5-D · Invisibility parity for message writes only.
+      // Two SQLSTATEs collapse here because the caller must not be
+      // able to distinguish them at the HTTP boundary — both mean
+      // "the (tenant, conversation) target is not visible to you":
+      //   · 23503 — foreign-key violation on the composite
+      //     `(tenant_id, conversation_id)` or on `tenant_id`: the
+      //     parent row does not exist.
+      //   · 42501 — RLS `WITH CHECK` block: the actor is not an
+      //     active member of the referenced tenant.
+      // The context matters: outside this method the generic mapper
+      // still treats 42501 as `membership_denied` so callers such as
+      // `appendUsage` retain a truthful authorization semantics.
       const errCode = typeof error.code === "string" ? error.code : "";
       if (errCode === "23503") {
         throw persistenceError("not_found", "conversation_not_visible");
+      }
+      if (errCode === "42501") {
+        throw persistenceError("not_found", "hidden_by_rls");
       }
       throw this.translatePostgrestError(error);
     }
@@ -573,15 +579,21 @@ export class SupabasePersistence implements PersistencePort {
       return persistenceError("constraint_violation", "check_violation");
     }
     if (code === "42501") {
-      // Hito 9.2.5-D · SQLSTATE 42501 ("insufficient_privilege") arrives
-      // when an authenticated caller triggers an RLS WITH CHECK
-      // violation on write. The identity is valid; the resource simply
-      // does not exist within the caller's authorization scope. We
-      // map it to `not_found` so the HTTP boundary can respond with
-      // 404 — indistinguishable from a genuinely missing resource —
-      // and never with 401, which would incorrectly trigger client
-      // auth-recovery and destroy a live session.
-      return persistenceError("not_found", "hidden_by_rls");
+      // Hito 9.2.5-D (corrective) · SQLSTATE 42501
+      // ("insufficient_privilege") arrives from either RLS WITH CHECK
+      // blocks OR from SECURITY DEFINER admin functions rejecting the
+      // caller (e.g. `admin_append_usage` without active membership).
+      // The generic mapper preserves an honest AUTHORIZATION semantics
+      // via the internal `membership_denied` code — it must not be
+      // globally rewritten as `not_found` because callers such as the
+      // usage emitter have no HTTP boundary and rely on the truthful
+      // classification for their own control flow and observability.
+      //
+      // The one context that DOES need invisibility parity — writes
+      // through `saveMessage` — intercepts 42501 locally and remaps
+      // it to `not_found` before this generic path runs. See
+      // `saveMessage` for the rationale.
+      return persistenceError("membership_denied", "insufficient_privilege");
     }
     // PostgREST convention: "PGRST116" = "The result contains 0 rows" (used
     // when a `single()` returns nothing). We map it to `not_found`.

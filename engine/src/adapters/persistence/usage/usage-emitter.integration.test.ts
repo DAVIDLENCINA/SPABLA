@@ -528,12 +528,15 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
       entryKind: "normal",
       correlationId: null,
     }));
-    // Hito 9.2.5-D · admin_append_usage raises SQLSTATE 42501
-    // (insufficient_privilege) when membership is missing/inactive.
-    // The adapter now maps that to `not_found` so the HTTP boundary
-    // returns 404 (invisibility parity with reads) rather than 401,
-    // which would incorrectly trigger client auth-recovery.
-    expect(err.code).toBe("not_found");
+    // Hito 9.2.5-D (corrective) · admin_append_usage raises SQLSTATE
+    // 42501 (insufficient_privilege) when membership is missing or
+    // inactive. The generic adapter mapper classifies that as
+    // `membership_denied` — a truthful authorization outcome that
+    // this internal caller (the usage emitter has no HTTP boundary)
+    // must observe as such. The invisibility 404 mapping is confined
+    // to `saveMessage`, where an HTTP boundary needs indistinguishable
+    // responses across missing / foreign / inactive scenarios.
+    expect(err.code).toBe("membership_denied");
     // No write must have reached the ledger for this source.
     const { count } = await admin.schema("spabla_v2").from("usage_ledger")
       .select("id", { count: "exact", head: true })
@@ -591,11 +594,14 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
       entryKind: "normal",
       correlationId: null,
     }));
-    // Hito 9.2.5-D · Once membership is deactivated, subsequent writes
-    // must be indistinguishable from writes against a non-existent
-    // (tenant, actor) tuple. SQLSTATE 42501 → `not_found` at the port,
-    // → HTTP 404 at the boundary.
-    expect(err.code).toBe("not_found");
+    // Hito 9.2.5-D (corrective) · Once membership is deactivated,
+    // subsequent writes through `admin_append_usage` are rejected with
+    // SQLSTATE 42501. The generic adapter mapper — used here — reports
+    // this as `membership_denied`. The invisibility-based
+    // `not_found` remap only applies inside `saveMessage`, which is
+    // the sole path with an HTTP boundary that must hide cross-tenant
+    // presence from an authenticated caller.
+    expect(err.code).toBe("membership_denied");
     const { count } = await admin.schema("spabla_v2").from("usage_ledger")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", tenantA).eq("source", source);
