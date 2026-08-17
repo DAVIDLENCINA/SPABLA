@@ -528,9 +528,12 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
       entryKind: "normal",
       correlationId: null,
     }));
-    // admin_append_usage raises SQLSTATE 42501 (insufficient_privilege) when
-    // membership is missing/inactive; the adapter maps that to `unauthorized`.
-    expect(err.code).toBe("unauthorized");
+    // Hito 9.2.5-D · admin_append_usage raises SQLSTATE 42501
+    // (insufficient_privilege) when membership is missing/inactive.
+    // The adapter now maps that to `not_found` so the HTTP boundary
+    // returns 404 (invisibility parity with reads) rather than 401,
+    // which would incorrectly trigger client auth-recovery.
+    expect(err.code).toBe("not_found");
     // No write must have reached the ledger for this source.
     const { count } = await admin.schema("spabla_v2").from("usage_ledger")
       .select("id", { count: "exact", head: true })
@@ -588,7 +591,11 @@ describe.skipIf(!ENABLED)("UsageEmitter integration", () => {
       entryKind: "normal",
       correlationId: null,
     }));
-    expect(err.code).toBe("unauthorized");
+    // Hito 9.2.5-D · Once membership is deactivated, subsequent writes
+    // must be indistinguishable from writes against a non-existent
+    // (tenant, actor) tuple. SQLSTATE 42501 → `not_found` at the port,
+    // → HTTP 404 at the boundary.
+    expect(err.code).toBe("not_found");
     const { count } = await admin.schema("spabla_v2").from("usage_ledger")
       .select("id", { count: "exact", head: true })
       .eq("tenant_id", tenantA).eq("source", source);

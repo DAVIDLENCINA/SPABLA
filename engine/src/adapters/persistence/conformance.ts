@@ -499,15 +499,22 @@ export function buildPersistenceConformanceCases(
       } catch (e) {
         thrown = e;
       }
-      // Two acceptable behaviours per Plan §10.6: raise `not_found`, or
-      // silently return an empty first page (no leakage). Any leak is a
-      // failure. We accept both silent-empty and `not_found` throw.
+      // Hito 9.2.5-D · A cursor that points to a message the caller
+      // cannot see (RLS invisible or belonging to another conversation)
+      // is a structural input problem, not a resource lookup. Two
+      // acceptable behaviours: raise `constraint_violation`, or silently
+      // return an empty first page (no leakage). Any leak is a failure.
+      // Previously `not_found` was accepted; that enabled probing
+      // messageId → conversationId via a distinguishable 404. The
+      // canonical HTTP mapping now translates `constraint_violation`
+      // into 400 `bad_request`, indistinguishable from a malformed
+      // cursor.
       if (thrown !== undefined) {
         const problem = expectPersistenceCode(
           "list_messages_cursor_from_other_conversation_rejected",
           "cursor_from_other_conversation_accepted",
           "cursor_from_other_conversation_accepted",
-          "not_found",
+          "constraint_violation",
           thrown,
         );
         if (problem !== null) return problem;

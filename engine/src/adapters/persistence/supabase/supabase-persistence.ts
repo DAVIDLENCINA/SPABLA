@@ -292,6 +292,19 @@ export class SupabasePersistence implements PersistencePort {
       if (raced !== null && this.messageEquals(raced, record)) {
         return;
       }
+      // Hito 9.2.5-D · A foreign-key violation on `messages` means the
+      // (tenant, conversation) parent row is not visible to the caller
+      // — either the conversation does not exist, or it belongs to
+      // another tenant, or the tenant itself does not exist. Map to
+      // `not_found` so the HTTP boundary responds with 404 uniformly
+      // with RLS-blocked writes; otherwise a caller could distinguish
+      // "own tenant, missing conversation" (currently 400) from
+      // "foreign tenant" (already 404 via 42501 → not_found), which
+      // is a MEDIUM enumeration vector.
+      const errCode = typeof error.code === "string" ? error.code : "";
+      if (errCode === "23503") {
+        throw persistenceError("not_found", "conversation_not_visible");
+      }
       throw this.translatePostgrestError(error);
     }
   }
@@ -332,8 +345,16 @@ export class SupabasePersistence implements PersistencePort {
       cursorMessageId = rawMid;
       const anchor = await this.fetchMessageRow(ctx, cursorMessageId);
       if (anchor === null || anchor.conversation_id !== request.conversationId) {
+        // Hito 9.2.5-D · A cursor that points to a message the caller
+        // cannot see (missing row via RLS, or a row from another
+        // conversation) is treated as a structural input problem, not
+        // as "resource not found". The HTTP boundary maps
+        // `constraint_violation` to 400 `bad_request`, indistinguishable
+        // from a malformed cursor. This closes the enumeration channel
+        // where an attacker could once probe messageId → conversationId
+        // mappings.
         throw persistenceError(
-          "not_found",
+          "constraint_violation",
           "listMessages: cursor does not belong to the requested conversation",
         );
       }
@@ -552,7 +573,15 @@ export class SupabasePersistence implements PersistencePort {
       return persistenceError("constraint_violation", "check_violation");
     }
     if (code === "42501") {
-      return persistenceError("unauthorized", "insufficient_privilege");
+      // Hito 9.2.5-D · SQLSTATE 42501 ("insufficient_privilege") arrives
+      // when an authenticated caller triggers an RLS WITH CHECK
+      // violation on write. The identity is valid; the resource simply
+      // does not exist within the caller's authorization scope. We
+      // map it to `not_found` so the HTTP boundary can respond with
+      // 404 — indistinguishable from a genuinely missing resource —
+      // and never with 401, which would incorrectly trigger client
+      // auth-recovery and destroy a live session.
+      return persistenceError("not_found", "hidden_by_rls");
     }
     // PostgREST convention: "PGRST116" = "The result contains 0 rows" (used
     // when a `single()` returns nothing). We map it to `not_found`.

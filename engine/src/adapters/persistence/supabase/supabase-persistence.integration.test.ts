@@ -399,7 +399,12 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
     expect(err.code).toBe("constraint_violation");
   });
 
-  test("listMessages cursor from another conversation raises not_found", async () => {
+  test("listMessages cursor from another conversation raises constraint_violation (Hito 9.2.5-D)", async () => {
+    // A cursor whose message belongs to a different conversation is
+    // treated as a structural input problem — indistinguishable at the
+    // HTTP boundary from a malformed cursor (both surface as 400
+    // `bad_request`). Previously this raised `not_found`, which allowed
+    // an attacker to probe messageId → conversationId associations.
     const adapter = new SupabasePersistence({ authenticated: authClient(actorA.jwt), privileged: admin });
     const ctx = ctxOf(actorA, tenantA);
     const otherCid = randomUUID();
@@ -417,7 +422,7 @@ describe.skipIf(!ENABLED)("SupabasePersistence integration", () => {
       limit: 10,
       cursor: foreignCursor,
     }));
-    expect(err.code).toBe("not_found");
+    expect(err.code).toBe("constraint_violation");
   });
 
   test("appendUsage without privileged capability raises unauthorized", async () => {
