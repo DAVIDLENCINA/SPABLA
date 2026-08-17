@@ -266,7 +266,8 @@ describe("404 · POST invisibility parity (non-enumeration)", () => {
     // distinguish "hidden by RLS" from "missing row".
     const bodies: Array<Record<string, unknown>> = [];
     const cids: string[] = [];
-    for (const _ of ["cross-tenant", "inactive-membership", "missing-conversation"]) {
+    const scenarios = ["cross-tenant", "inactive-membership", "missing-conversation"];
+    for (let i = 0; i < scenarios.length; i++) {
       buildScope.mockResolvedValueOnce(scope as never);
       (scope.persistence.saveMessage as ReturnType<typeof vi.fn>).mockRejectedValueOnce({
         code: "not_found",
@@ -291,7 +292,8 @@ describe("404 · POST invisibility parity (non-enumeration)", () => {
     expect(new Set(cids).size).toBe(3);
     // Response bodies are byte-identical modulo `correlationId`.
     const stripped = bodies.map((b) => {
-      const { correlationId: _cid, ...rest } = b as { correlationId: string };
+      const rest = { ...b };
+      delete rest.correlationId;
       return rest;
     });
     expect(stripped[0]).toEqual({ error: "not_found" });
