@@ -1,5 +1,8 @@
-// SPABLA signaling server — branch release/v1-stable
-// Voice (B1, gpt-realtime-mini), chat, and idle-initiated video validated baseline.
+// SPABLA V1 legacy · signaling server — branch release/v1-stable.
+// Voice (B1, gpt-realtime-mini), chat, and idle-initiated video
+// validated baseline. Supported temporarily; retirement is out of
+// scope for this hito. Prohibited: introducing any new dependency
+// from V2 (`app/v2/`, `lib/v2/`, `engine/`) toward this file.
 import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import { createClient, LiveTranscriptionEvents } from "@deepgram/sdk";

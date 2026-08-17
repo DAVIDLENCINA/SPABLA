@@ -331,4 +331,39 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
       targetLanguage: "de",
     });
   }, 20_000);
+
+  // Hito 9.2.5-C · HTTP-frontier assertions for /api/v2/seed under the
+  // exact spawn configuration this suite already pays for (Next dev on
+  // the isolated port, `SPABLA_V2_ENABLE_DEV_SEED=0`). The seed
+  // endpoint must never be discoverable when the gate is off — GET,
+  // HEAD and POST all return 404. Gate-ON behaviour (405 + `Allow:
+  // POST`, and POST success/failure with the correlation header) is
+  // exhaustively covered by `app/api/v2/seed/route.test.ts` at the
+  // direct-handler layer; reproducing it here would require a second
+  // `next dev` spawn in the same repository directory, which Next
+  // 16.3.1 blocks (see Plan Hito 9.2.5 V1.1 §5-bis
+  // TEST-RUNNER-ISOLATION).
+
+  const seedUrl = () => `${BASE_URL}/api/v2/seed`;
+
+  test.skipIf(!ENABLED)("HTTP · seed GET with gate OFF → 404 and JSON error body", async () => {
+    const res = await fetch(seedUrl(), { method: "GET" });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body).toEqual({ error: "not_found" });
+  }, 15_000);
+
+  test.skipIf(!ENABLED)("HTTP · seed HEAD with gate OFF → 404 empty body", async () => {
+    const res = await fetch(seedUrl(), { method: "HEAD" });
+    expect(res.status).toBe(404);
+    const body = await res.text();
+    expect(body).toBe("");
+  }, 15_000);
+
+  test.skipIf(!ENABLED)("HTTP · seed POST with gate OFF → 404 (endpoint stays invisible)", async () => {
+    const res = await fetch(seedUrl(), { method: "POST" });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body).toEqual({ error: "not_found" });
+  }, 15_000);
 });

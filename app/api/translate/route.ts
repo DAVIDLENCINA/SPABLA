@@ -1,3 +1,7 @@
+// SPABLA V1 legacy · translation endpoint used by the V1 chat/call
+// pipeline only. Supported temporarily; retirement is out of scope
+// for this hito. Prohibited: introducing any new dependency from V2
+// (`app/v2/`, `lib/v2/`, `engine/`) toward this file.
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

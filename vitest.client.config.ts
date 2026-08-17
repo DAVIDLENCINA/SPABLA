@@ -25,6 +25,10 @@ export default defineConfig({
     include: [
       "app/**/*.test.ts",
       "lib/v2/client/**/*.test.ts",
+      // Hito 9.2.5-C: server-side V2 helpers (e.g. the log sanitizer
+      // used by /api/v2/seed) also run under this Node-environment
+      // vitest project so they share the same aliases and shims.
+      "lib/v2/server/**/*.test.ts",
     ],
     exclude: [
       "node_modules/**",
