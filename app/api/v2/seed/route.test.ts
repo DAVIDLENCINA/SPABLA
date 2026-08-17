@@ -4,6 +4,12 @@
  * Verifies:
  *   - Gate off ⇒ every method returns 404 (no reference to /api/v2/seed
  *     leaks) and `runFase9Seed` is NEVER invoked.
+ *   - Gate MIXED (NODE_ENV=development but SPABLA_V2_ENABLE_DEV_SEED
+ *     absent or equal to "0") ⇒ every method returns 404, `runFase9Seed`
+ *     is NEVER invoked, no correlation header is emitted and no
+ *     `seed_failed` log line is ever written. Locks down the boolean
+ *     AND semantics of the guard so a future refactor cannot silently
+ *     open the endpoint by relaxing the flag check.
  *   - Gate on, GET/HEAD ⇒ 405 with `Allow: POST`; `runFase9Seed` is
  *     NEVER invoked.
  *   - Gate on, POST success ⇒ 200 + JSON body + `X-SPABLA-Correlation-Id`
@@ -111,6 +117,69 @@ describe("/api/v2/seed · gate OFF", () => {
     expect(res.status).toBe(404);
     await expect(res.json()).resolves.toEqual({ error: "not_found" });
     expect(runFase9SeedMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Gate MIXED — `NODE_ENV=development` but the flag is either absent or
+ * set to a value distinct from the canonical `"1"`. The endpoint must
+ * remain fully invisible in these cases: no leakage through GET/HEAD,
+ * no mutation through POST, no correlation header, no `seed_failed`
+ * log. These scenarios were originally verified through an ephemeral
+ * probe; committing them to the suite prevents a regression where a
+ * future refactor accidentally weakens the boolean AND in
+ * `seedEnabled()`.
+ */
+describe.each<{ label: string; setFlag: () => void }>([
+  {
+    label: "NODE_ENV=development · SPABLA_V2_ENABLE_DEV_SEED absent",
+    setFlag: () => {
+      env["NODE_ENV"] = "development";
+      delete env["SPABLA_V2_ENABLE_DEV_SEED"];
+    },
+  },
+  {
+    label: "NODE_ENV=development · SPABLA_V2_ENABLE_DEV_SEED=\"0\"",
+    setFlag: () => {
+      env["NODE_ENV"] = "development";
+      env["SPABLA_V2_ENABLE_DEV_SEED"] = "0";
+    },
+  },
+])("/api/v2/seed · gate MIXED · $label", ({ setFlag }) => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    setFlag();
+    // Spy from the start of the scenario so we can prove `console.error`
+    // was never invoked (i.e. no `seed_failed` log ever escaped).
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  test("GET returns 404 · seed never called · no correlation header · no seed_failed log", async () => {
+    const res = await GET();
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "not_found" });
+    expect(res.headers.get(CORRELATION_HEADER)).toBeNull();
+    expect(runFase9SeedMock).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  test("HEAD returns 404 with an empty body · seed never called · no correlation header · no seed_failed log", async () => {
+    const res = await HEAD();
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe("");
+    expect(res.headers.get(CORRELATION_HEADER)).toBeNull();
+    expect(runFase9SeedMock).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  test("POST returns 404 · seed never called · no correlation header · no seed_failed log", async () => {
+    const res = await POST();
+    expect(res.status).toBe(404);
+    await expect(res.json()).resolves.toEqual({ error: "not_found" });
+    expect(res.headers.get(CORRELATION_HEADER)).toBeNull();
+    expect(runFase9SeedMock).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 });
 
