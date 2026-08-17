@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { SpablaCore } from "./SpablaCore.js";
 import { SpablaCoreError } from "./types.js";
 import { asUUID, asISOTimestamp, type Clock } from "../types/ids.js";
+// Hito 9.2.5-E · Vitest 4.x bundles Vite 8, whose oxc parser rejects
+// TypeScript's `implements import("...").X` inline-import syntax in
+// class heads. The productive tsc build still accepts the pattern;
+// this change is a test-time compatibility adjustment only. The same
+// types are now imported at the top of the file and referenced bare
+// in the three class declarations below (`FakeMT`, `FakeTts`,
+// `MtFake`). No production code is touched.
+import type { TranslationAdapter } from "../types/translation.js";
+import type { TTSAdapter } from "../types/tts.js";
 
 let counter = 0;
 function fakeClock(): Clock {
@@ -935,7 +944,7 @@ type FakeAdapterReq = {
   to: import("../types/language.js").LangCode;
 };
 
-class FakeMT implements import("../types/translation.js").TranslationAdapter {
+class FakeMT implements TranslationAdapter {
   readonly kind = "mt" as const;
   readonly displayName: string;
   private readonly resp: (r: FakeAdapterReq) => Promise<FakeAdapterResp>;
@@ -1362,7 +1371,7 @@ type FakeTTSRequest = {
   voiceId: string;
 };
 
-class FakeTts implements import("../types/tts.js").TTSAdapter {
+class FakeTts implements TTSAdapter {
   readonly kind = "tts" as const;
   readonly displayName: string;
   public calls: FakeTTSRequest[] = [];
@@ -1746,7 +1755,7 @@ describe("SpablaCore — TTS encapsulation + Translation-manual bridge", () => {
   });
 
   it("manual Translation + TTS: sourceTranslationRequestId preserved end-to-end", async () => {
-    class MtFake implements import("../types/translation.js").TranslationAdapter {
+    class MtFake implements TranslationAdapter {
       readonly kind = "mt" as const;
       readonly displayName = "fake-mt";
       async translate(r: import("../types/translation.js").TranslationAdapterRequest):
