@@ -195,17 +195,118 @@ jobs:
       - name: Install PostgreSQL 17 client (psql, pg_dump)
         run: |
           set -euo pipefail
-          # postgresql-client-17 is available on the Ubuntu runner via the
-          # PGDG APT repository already configured by the setup-node action's
-          # base image; if not, add it.
-          if ! psql --version 2>/dev/null | grep -qE '\b17\.'; then
-            sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
-            wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
-            sudo apt-get update -qq
-            sudo apt-get install -y postgresql-client-17
+
+          # Hito 9.2.5-G · Deterministic PostgreSQL 17 client provisioning.
+          #
+          # The previous version (hito 8.5) used `apt-key add` and issued
+          # `sudo apt-get update -qq` and `install -y` without per-command
+          # time limits. On 2026-08-19 the PGDG APT mirror
+          # (`apt.postgresql.org`) became unresponsive for two consecutive
+          # runs of this job and `apt-get update -qq` — silenced by `-qq` —
+          # consumed the full 20-minute job budget in both attempts before
+          # GitHub Actions cancelled the runner (see run 32274137020,
+          # attempts 1 and 2).
+          #
+          # This version:
+          #   · Uses a signed keyring at
+          #     `/usr/share/keyrings/pgdg-archive-keyring.gpg` with
+          #     `signed-by=` in the sources list (`apt-key` removed).
+          #   · Wraps every network-facing subcommand in `timeout` so no
+          #     single call can outlast its own bound.
+          #   · Retries each phase up to 3 times with an explicit sleep.
+          #   · Passes `Acquire::http::Timeout=30`,
+          #     `Acquire::https::Timeout=30` and `Acquire::Retries=2` to apt
+          #     so its internal fetches also cannot hang indefinitely.
+          #   · Logs a `[pg17]` prefix on every phase so the failing
+          #     subcommand is trivially identifiable in the job log.
+          #   · Fails the job fast (well under the 20-min job cap) if PGDG
+          #     is persistently unreachable; upper bound:
+          #     3·(45s key + 90s update + 180s install) + guards ≈ 16 min.
+
+          if psql --version 2>/dev/null | grep -qE '\b17\.'; then
+            echo "[pg17] pre-installed on runner"
+            psql --version
+            pg_dump --version
+            exit 0
           fi
+
+          KEYRING=/usr/share/keyrings/pgdg-archive-keyring.gpg
+          KEY_URL=https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          KEY_TIMEOUT=45
+          UPDATE_TIMEOUT=90
+          INSTALL_TIMEOUT=180
+          MAX_ATTEMPTS=3
+
+          APT_OPTS=(
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+            -o Acquire::Retries=2
+            -o Dpkg::Use-Pty=0
+          )
+
+          fetch_key() {
+            echo "[pg17] fetching PGDG signing key (bound ${KEY_TIMEOUT}s)"
+            sudo rm -f "${KEYRING}"
+            curl -fsSL --connect-timeout 10 \
+                 --max-time "${KEY_TIMEOUT}" \
+                 --retry 2 --retry-delay 3 \
+                 "${KEY_URL}" \
+              | sudo gpg --dearmor -o "${KEYRING}"
+            sudo chmod 0644 "${KEYRING}"
+          }
+
+          write_source_list() {
+            echo "[pg17] writing /etc/apt/sources.list.d/pgdg.list"
+            sudo sh -c "echo 'deb [signed-by=${KEYRING}] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main' > /etc/apt/sources.list.d/pgdg.list"
+            cat /etc/apt/sources.list.d/pgdg.list
+          }
+
+          apt_update() {
+            echo "[pg17] apt-get update (bound ${UPDATE_TIMEOUT}s)"
+            sudo timeout --kill-after=10s "${UPDATE_TIMEOUT}s" \
+              apt-get "${APT_OPTS[@]}" update
+          }
+
+          apt_install() {
+            echo "[pg17] apt-get install postgresql-client-17 (bound ${INSTALL_TIMEOUT}s)"
+            sudo DEBIAN_FRONTEND=noninteractive timeout --kill-after=10s "${INSTALL_TIMEOUT}s" \
+              apt-get "${APT_OPTS[@]}" install -y --no-install-recommends postgresql-client-17
+          }
+
+          with_retries() {
+            local label="$1"
+            shift
+            local attempt=1
+            while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
+              echo "[pg17] ${label}: attempt ${attempt}/${MAX_ATTEMPTS}"
+              if "$@"; then
+                echo "[pg17] ${label}: attempt ${attempt} OK"
+                return 0
+              fi
+              echo "[pg17] ${label}: attempt ${attempt} FAILED" >&2
+              attempt=$((attempt + 1))
+              sleep 5
+            done
+            echo "[pg17] ${label}: exhausted ${MAX_ATTEMPTS} attempts — aborting" >&2
+            return 1
+          }
+
+          with_retries "fetch-key" fetch_key
+          write_source_list
+          with_retries "apt-update" apt_update
+          with_retries "apt-install" apt_install
+
+          echo "[pg17] verifying installed versions"
           psql --version
           pg_dump --version
+          psql --version | grep -qE '\b17\.' || {
+            echo "[pg17] fatal: psql is not version 17" >&2
+            exit 1
+          }
+          pg_dump --version | grep -qE '\b17\.' || {
+            echo "[pg17] fatal: pg_dump is not version 17" >&2
+            exit 1
+          }
 
       - name: Start Supabase local stack (source)
         run: supabase start
