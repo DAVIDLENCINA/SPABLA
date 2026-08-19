@@ -196,117 +196,151 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Hito 9.2.5-G · Deterministic PostgreSQL 17 client provisioning.
+          # Hito 9.2.5-H · Deterministic PostgreSQL 17 binary resolution.
           #
-          # The previous version (hito 8.5) used `apt-key add` and issued
-          # `sudo apt-get update -qq` and `install -y` without per-command
-          # time limits. On 2026-08-19 the PGDG APT mirror
-          # (`apt.postgresql.org`) became unresponsive for two consecutive
-          # runs of this job and `apt-get update -qq` — silenced by `-qq` —
-          # consumed the full 20-minute job budget in both attempts before
-          # GitHub Actions cancelled the runner (see run 32274137020,
-          # attempts 1 and 2).
+          # Hito 9.2.5-G removed the indefinite `apt-get update` hang by
+          # bounding every subcommand with `timeout` and retiring
+          # `apt-key`. That correction landed in commit fd675c1b and made
+          # the step fail fast — but exposed a second, distinct failure:
+          # the Ubuntu Noble GitHub runner ships `postgresql-client-16`
+          # preinstalled, whose `pg_dump` (16.14) beats PGDG's `pg_dump`
+          # (17.11 at `/usr/lib/postgresql/17/bin/pg_dump`) in the default
+          # PATH. `update-alternatives` from the PGDG package only touches
+          # the `psql` man page, not the binaries, so `pg_dump --version`
+          # continued reporting 16.14 even after the 17.11 client was
+          # installed correctly (see run 32281608611, Job C, exit 1).
           #
           # This version:
-          #   · Uses a signed keyring at
-          #     `/usr/share/keyrings/pgdg-archive-keyring.gpg` with
-          #     `signed-by=` in the sources list (`apt-key` removed).
-          #   · Wraps every network-facing subcommand in `timeout` so no
-          #     single call can outlast its own bound.
-          #   · Retries each phase up to 3 times with an explicit sleep.
-          #   · Passes `Acquire::http::Timeout=30`,
-          #     `Acquire::https::Timeout=30` and `Acquire::Retries=2` to apt
-          #     so its internal fetches also cannot hang indefinitely.
-          #   · Logs a `[pg17]` prefix on every phase so the failing
-          #     subcommand is trivially identifiable in the job log.
-          #   · Fails the job fast (well under the 20-min job cap) if PGDG
-          #     is persistently unreachable; upper bound:
-          #     3·(45s key + 90s update + 180s install) + guards ≈ 16 min.
+          #   · Pins the exact absolute directory `/usr/lib/postgresql/17/bin`
+          #     as `PG17_BIN`. Every check, verification and subsequent
+          #     step uses this prefix; no reliance on `update-alternatives`,
+          #     symlinks, apt-get purge or global system mutation.
+          #   · Only skips provisioning when BOTH `${PG17_BIN}/psql` and
+          #     `${PG17_BIN}/pg_dump` exist AND both report version 17.
+          #     The pre-9.2.5-H early exit checked only the PATH-resolved
+          #     `psql`, which could pass while `pg_dump` remained 16.
+          #   · Persists PG17_BIN at the head of PATH for every subsequent
+          #     step of Job C via `echo "${PG17_BIN}" >> "${GITHUB_PATH}"`,
+          #     so the restore drill and `supabase` invocations pick up
+          #     the 17.x binaries transparently. `scripts/ci/restore-drill.sh`
+          #     is NOT modified.
+          #   · Tightens the acotamiento established in 9.2.5-G to keep the
+          #     documented worst-case well under 10 min (job cap 20 min):
+          #     fetch-key 30s, apt-update 60s, apt-install 120s, 2 attempts
+          #     per phase with a 5-second sleep, APT connection/read
+          #     timeout 20s and 1 internal retry, curl connect-timeout 10s
+          #     max-time 30s retry 1. Worst case with kill-after guards:
+          #     2·(30+10) + 5 + 2·(60+10) + 5 + 2·(120+10) + 5 = 495 s
+          #     ≈ 8 min 15 s.
 
-          if psql --version 2>/dev/null | grep -qE '\b17\.'; then
-            echo "[pg17] pre-installed on runner"
-            psql --version
-            pg_dump --version
-            exit 0
-          fi
-
+          PG17_BIN=/usr/lib/postgresql/17/bin
           KEYRING=/usr/share/keyrings/pgdg-archive-keyring.gpg
           KEY_URL=https://www.postgresql.org/media/keys/ACCC4CF8.asc
-          KEY_TIMEOUT=45
-          UPDATE_TIMEOUT=90
-          INSTALL_TIMEOUT=180
-          MAX_ATTEMPTS=3
+          KEY_TIMEOUT=30
+          UPDATE_TIMEOUT=60
+          INSTALL_TIMEOUT=120
+          MAX_ATTEMPTS=2
 
           APT_OPTS=(
-            -o Acquire::http::Timeout=30
-            -o Acquire::https::Timeout=30
-            -o Acquire::Retries=2
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+            -o Acquire::Retries=1
             -o Dpkg::Use-Pty=0
           )
 
-          fetch_key() {
-            echo "[pg17] fetching PGDG signing key (bound ${KEY_TIMEOUT}s)"
-            sudo rm -f "${KEYRING}"
-            curl -fsSL --connect-timeout 10 \
-                 --max-time "${KEY_TIMEOUT}" \
-                 --retry 2 --retry-delay 3 \
-                 "${KEY_URL}" \
-              | sudo gpg --dearmor -o "${KEYRING}"
-            sudo chmod 0644 "${KEYRING}"
+          check_pg17_binaries_present() {
+            [ -x "${PG17_BIN}/psql" ] \
+              && [ -x "${PG17_BIN}/pg_dump" ] \
+              && "${PG17_BIN}/psql"    --version | grep -qE '\b17\.' \
+              && "${PG17_BIN}/pg_dump" --version | grep -qE '\b17\.'
           }
 
-          write_source_list() {
-            echo "[pg17] writing /etc/apt/sources.list.d/pgdg.list"
-            sudo sh -c "echo 'deb [signed-by=${KEYRING}] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main' > /etc/apt/sources.list.d/pgdg.list"
-            cat /etc/apt/sources.list.d/pgdg.list
-          }
+          if check_pg17_binaries_present; then
+            echo "[pg17] PGDG 17 client already present at ${PG17_BIN}"
+          else
+            echo "[pg17] provisioning PGDG PostgreSQL 17 client"
 
-          apt_update() {
-            echo "[pg17] apt-get update (bound ${UPDATE_TIMEOUT}s)"
-            sudo timeout --kill-after=10s "${UPDATE_TIMEOUT}s" \
-              apt-get "${APT_OPTS[@]}" update
-          }
+            fetch_key() {
+              echo "[pg17] fetching PGDG signing key (bound ${KEY_TIMEOUT}s)"
+              sudo rm -f "${KEYRING}"
+              curl -fsSL --connect-timeout 10 \
+                   --max-time "${KEY_TIMEOUT}" \
+                   --retry 1 --retry-delay 3 \
+                   "${KEY_URL}" \
+                | sudo gpg --dearmor -o "${KEYRING}"
+              sudo chmod 0644 "${KEYRING}"
+            }
 
-          apt_install() {
-            echo "[pg17] apt-get install postgresql-client-17 (bound ${INSTALL_TIMEOUT}s)"
-            sudo DEBIAN_FRONTEND=noninteractive timeout --kill-after=10s "${INSTALL_TIMEOUT}s" \
-              apt-get "${APT_OPTS[@]}" install -y --no-install-recommends postgresql-client-17
-          }
+            write_source_list() {
+              echo "[pg17] writing /etc/apt/sources.list.d/pgdg.list"
+              sudo sh -c "echo 'deb [signed-by=${KEYRING}] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main' > /etc/apt/sources.list.d/pgdg.list"
+              cat /etc/apt/sources.list.d/pgdg.list
+            }
 
-          with_retries() {
-            local label="$1"
-            shift
-            local attempt=1
-            while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
-              echo "[pg17] ${label}: attempt ${attempt}/${MAX_ATTEMPTS}"
-              if "$@"; then
-                echo "[pg17] ${label}: attempt ${attempt} OK"
-                return 0
-              fi
-              echo "[pg17] ${label}: attempt ${attempt} FAILED" >&2
-              attempt=$((attempt + 1))
-              sleep 5
-            done
-            echo "[pg17] ${label}: exhausted ${MAX_ATTEMPTS} attempts — aborting" >&2
-            return 1
-          }
+            apt_update() {
+              echo "[pg17] apt-get update (bound ${UPDATE_TIMEOUT}s)"
+              sudo timeout --kill-after=10s "${UPDATE_TIMEOUT}s" \
+                apt-get "${APT_OPTS[@]}" update
+            }
 
-          with_retries "fetch-key" fetch_key
-          write_source_list
-          with_retries "apt-update" apt_update
-          with_retries "apt-install" apt_install
+            apt_install() {
+              echo "[pg17] apt-get install postgresql-client-17 (bound ${INSTALL_TIMEOUT}s)"
+              sudo DEBIAN_FRONTEND=noninteractive timeout --kill-after=10s "${INSTALL_TIMEOUT}s" \
+                apt-get "${APT_OPTS[@]}" install -y --no-install-recommends postgresql-client-17
+            }
 
-          echo "[pg17] verifying installed versions"
+            with_retries() {
+              local label="$1"
+              shift
+              local attempt=1
+              while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
+                echo "[pg17] ${label}: attempt ${attempt}/${MAX_ATTEMPTS}"
+                if "$@"; then
+                  echo "[pg17] ${label}: attempt ${attempt} OK"
+                  return 0
+                fi
+                echo "[pg17] ${label}: attempt ${attempt} FAILED" >&2
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+              echo "[pg17] ${label}: exhausted ${MAX_ATTEMPTS} attempts — aborting" >&2
+              return 1
+            }
+
+            with_retries "fetch-key"   fetch_key
+            write_source_list
+            with_retries "apt-update"  apt_update
+            with_retries "apt-install" apt_install
+          fi
+
+          echo "[pg17] verifying ${PG17_BIN}/psql and ${PG17_BIN}/pg_dump"
+          test -x "${PG17_BIN}/psql"    || { echo "[pg17] fatal: ${PG17_BIN}/psql missing"    >&2; exit 1; }
+          test -x "${PG17_BIN}/pg_dump" || { echo "[pg17] fatal: ${PG17_BIN}/pg_dump missing" >&2; exit 1; }
+          "${PG17_BIN}/psql"    --version | grep -qE '\b17\.' || { echo "[pg17] fatal: ${PG17_BIN}/psql is not version 17"    >&2; exit 1; }
+          "${PG17_BIN}/pg_dump" --version | grep -qE '\b17\.' || { echo "[pg17] fatal: ${PG17_BIN}/pg_dump is not version 17" >&2; exit 1; }
+
+          # Prepend for the remaining commands of THIS step and for every
+          # subsequent step of the job. `GITHUB_PATH` is the canonical
+          # cross-step mechanism GitHub Actions provides; it takes effect
+          # for the next step onwards. `export PATH` is required to make
+          # the immediately-following verification lines below observe the
+          # 17 client in the same shell.
+          export PATH="${PG17_BIN}:${PATH}"
+          echo "${PG17_BIN}" >> "${GITHUB_PATH}"
+
+          echo "[pg17] resolved binaries in current step:"
+          echo "[pg17]   command -v psql    = $(command -v psql)"
+          echo "[pg17]   command -v pg_dump = $(command -v pg_dump)"
           psql --version
           pg_dump --version
-          psql --version | grep -qE '\b17\.' || {
-            echo "[pg17] fatal: psql is not version 17" >&2
-            exit 1
-          }
-          pg_dump --version | grep -qE '\b17\.' || {
-            echo "[pg17] fatal: pg_dump is not version 17" >&2
-            exit 1
-          }
+
+          # Fail the step (and therefore the whole job) if the exported
+          # PATH does NOT resolve to the pinned PG17_BIN. This is the last
+          # defence: subsequent steps rely on `psql`/`pg_dump` being 17.
+          [ "$(command -v psql)"    = "${PG17_BIN}/psql"    ] || { echo "[pg17] fatal: psql resolves to $(command -v psql), expected ${PG17_BIN}/psql"       >&2; exit 1; }
+          [ "$(command -v pg_dump)" = "${PG17_BIN}/pg_dump" ] || { echo "[pg17] fatal: pg_dump resolves to $(command -v pg_dump), expected ${PG17_BIN}/pg_dump" >&2; exit 1; }
+          psql    --version | grep -qE '\b17\.' || { echo "[pg17] fatal: psql --version is not 17"    >&2; exit 1; }
+          pg_dump --version | grep -qE '\b17\.' || { echo "[pg17] fatal: pg_dump --version is not 17" >&2; exit 1; }
 
       - name: Start Supabase local stack (source)
         run: supabase start
