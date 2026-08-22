@@ -76,13 +76,23 @@ command -v curl      >/dev/null || { echo "curl missing" >&2; exit 1; }
 command -v lsof      >/dev/null || { echo "lsof missing" >&2; exit 1; }
 
 # ─── 2. Arranque Supabase local (idempotente) ──────────────────────
-log "starting Supabase local via scripts/dev/start-local.sh"
-"${REPO_ROOT}/scripts/dev/start-local.sh"
+# En CI arrancamos crudo con `supabase start` (mismo patrón que
+# Jobs B/C). Evitamos `scripts/dev/start-local.sh` en este runner
+# porque su post-start check exige que PostgREST ya exponga el
+# schema `spabla_v2` — que no existe hasta aplicar migraciones. En
+# local, si Supabase ya está corriendo, `supabase start` es
+# idempotente.
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "_spabla-hito-8-2-local$"; then
+  log "supabase local already up (skipping start)"
+else
+  log "starting supabase local (supabase start)"
+  supabase start >/dev/null
+fi
 
 # ─── 3. Migraciones ────────────────────────────────────────────────
 if [ "$RESET" -eq 1 ]; then
   log "applying migration chain (supabase db reset --local)"
-  "${REPO_ROOT}/scripts/ci/apply-migrations.sh"
+  bash "${REPO_ROOT}/scripts/ci/apply-migrations.sh"
 else
   log "skipping db reset (--reset not passed); assuming migrations already applied"
 fi
