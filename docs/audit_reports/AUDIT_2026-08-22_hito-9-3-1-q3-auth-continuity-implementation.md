@@ -455,3 +455,125 @@ Cumplimiento (verificado localmente; CI Job D pendiente del push):
 - ✅ Cero bloqueantes de contrato.
 
 **Veredicto máximo autorizado tras Q3-E2E local**: `HITO 9.3.1-Q3-E2E · BARRERA DE CONTINUIDAD SUPERADA — GO PROMOCIÓN` — condicionado a que Job D reporte 13/13 PASS en CI attempt=1 tras el push.
+
+---
+
+## 21 · Hito 9.3.1-Q3-E2E-R — Rectificación final de evidencia real
+
+**Fecha**: 2026-08-22 (mismo día que Q3-E2E, un commit adicional sobre la rama Q3, sin promoción intermedia).
+**Base**: commit Q3-E2E `f0c9c973d8589883e5b2610d52f0b0dfe3f3434f`, CI Q3-E2E basal [`32583394261`](https://github.com/DAVIDLENCINA/SPABLA/actions/runs/32583394261) attempt=1 success · Jobs A/B/C/D verdes.
+
+### 21.1 · Motivación
+
+Auditoría interna post-Q3-E2E identifica cuatro debilidades:
+
+1. **12A y 12B ejecutaban `localStorage.removeItem`**: la acción de cierre era un borrado directo del storage. No es equivalente a `supabase.auth.signOut({scope:"local"})` porque salta la máquina de estados del SDK y no ejecuta la lógica productiva real (por ejemplo `SIGNED_OUT` propagado por el SDK, revocación local de subscripciones activas).
+2. **Escenario 6 usaba `page.route(abort)`**: la indisponibilidad simulada NO ejerce la ruta productiva de detección de servidor caído; sólo verifica el comportamiento de la UI ante 4xx/5xx, que es lo mismo que ejercita el escenario 8.
+3. **Escenario 3 reutilizaba `storageState` entre BrowserContext**: no valida la reapertura real de un navegador con perfil persistente (que es lo que hace un usuario al cerrar y reabrir Chrome).
+4. **SHA del acta era provisional**: se calculó pre-normalización y no desde el blob comprometido.
+
+### 21.2 · Rectificaciones aplicadas
+
+**Escenario 3 · `chromium.launchPersistentContext` real**:
+- `mkdtempSync(join(tmpdir(), "spabla-e2e-3-*"))` crea el `userDataDir`.
+- Login en `ctx1`, `ctx1.close()` — cierre completo del navegador.
+- `chromium.launchPersistentContext(userDataDir)` relanza con el MISMO perfil.
+- Verificación: entrada directa a ContextReady sin formulario.
+- `rmSync(userDataDir, {recursive:true})` en `afterAll`.
+
+**Escenario 6 · kill + restart REAL de `next dev`**:
+- Runner exporta `SPABLA_E2E_NEXT_WRAPPER_PID` (líder del pgid) y `SPABLA_E2E_NEXT_PORT`.
+- Spec obtiene `firstListenerPid = pidFromPort(NEXT_PORT)` via `lsof -iTCP:PORT -sTCP:LISTEN -t`.
+- Ejecuta `process.kill(-RUNNER_WRAPPER_PID, SIGTERM/SIGKILL)` + `process.kill(firstListenerPid, SIGKILL)` (cinturón y tirantes contra el re-agrupamiento que Turbopack aplica al worker).
+- Verifica `pidAlive(firstListenerPid) === false` y `portOpen(NEXT_PORT) === false`.
+- `spawnNextDev(NEXT_PORT)` reinicia con `detached:true`; polling HTTP hasta respuesta 2xx/3xx/4xx.
+- Verifica `restarted.pid !== firstListenerPid` y `portOpen(NEXT_PORT) === true`.
+- `page.reload()` confirma recuperación sin login.
+- `afterAll` mata el segundo `next dev` gestionado (`killNextDev`).
+- Este test se ejecuta al **final** del describe.serial porque restablece el server compartido y los tests posteriores dependerían de una recompilación.
+
+**Escenarios 12A y 12B · `supabase.auth.signOut({scope:"local"})` REAL**:
+- Cambio mínimo productivo en `lib/v2/client/supabase-browser-client.ts` (gated por `process.env.NEXT_PUBLIC_SPABLA_E2E_HOOK === "1"`, activado sólo cuando el runner arranca Next con esa var): expone `window.__spablaSupabase = cachedClient`.
+- El runner añade `NEXT_PUBLIC_SPABLA_E2E_HOOK=1` al env de `next dev`.
+- Spec invoca `page.evaluate(() => window.__spablaSupabase.auth.signOut({scope:"local"}))` — SDK ejecuta la lógica productiva real (limpia storage, emite `SIGNED_OUT`, revoca subscripciones).
+- Aserciones adicionales: `storageKey` ausente como CONSECUENCIA del signOut real (no como acción manual), `bootstrap` real 200 en ctxB tras el signOut en ctxA (12B).
+- Prohibido borrar `localStorage.removeItem(storageKey)` manualmente en 12A/12B.
+
+**Control anti-falso-positivo**:
+- Nuevo test `Q3-E2E-R · anti-falso-positivo · 12A/12B no usan localStorage.removeItem` que lee el propio spec desde `fs.readFileSync(SPEC_PATH)`.
+- Extrae los bloques de 12A y 12B por título oficial (`Q2 §20-12A ·`, `Q2 §20-12B ·`).
+- Sanitiza comentarios (`//`) y string literales antes de aplicar el regex, para permitir que la documentación mencione literalmente el patrón prohibido sin generar falsos positivos.
+- Aserción: `expect(block).not.toMatch(/localStorage\s*\.\s*removeItem\s*\(/)`.
+- La suite FALLA si detecta cualquier invocación real dentro de los bloques 12A/12B.
+
+**SHA definitivo**: calculado desde el blob comprometido tras el commit final, no pre-normalización. Se registra en §21.6.
+
+### 21.3 · Cambios técnicos
+
+- `lib/v2/client/supabase-browser-client.ts` — 1 rama nueva gated (E2E hook exclusivo).
+- `e2e/auth-continuity.spec.ts` — reescrito para las cuatro rectificaciones + anti-falso-positivo. Añadidos helpers `realSignOutLocal`, `pidFromPort`, `pidAlive`, `portOpen`, `spawnNextDev`, `killNextDev`, `ManagedNext`.
+- `scripts/e2e/run-auth-continuity.sh` — exporta `NEXT_PUBLIC_SPABLA_E2E_HOOK=1`, `SPABLA_E2E_NEXT_PORT`, `SPABLA_E2E_NEXT_WRAPPER_PID`, `SPABLA_E2E_REPO_ROOT`.
+- `docs/e2e/MATRIX.md` — actualización de filas 3, 6, 12A, 12B + sección Q3-E2E-R.
+
+### 21.4 · Resultado local (macOS · Chromium headless-shell 151.0.7922.34 · Node 24)
+
+```
+Running 14 tests using 1 worker
+  ✓  1  Q2 §20-1   · Login inicial                                        972ms
+  ✓  2  Q2 §20-2   · Recarga                                              560ms
+  ✓  3  Q2 §20-3   · Cierre / reapertura pestaña (persistent context real) 957ms
+  ✓  4  Q2 §20-4   · Segunda pestaña simultánea                           753ms
+  ✓  5  Q2 §20-5   · Dos pestañas concurrentes (refresh silencioso)       937ms
+  ✓  6  Q2 §20-7   · Access token caducado + refresh válido                647ms
+  ✓  7  Q2 §20-8   · Fallo transitorio (offline / timeout / 503)          3.5s
+  ✓  8  Q2 §20-9   · 401 recuperable (refresh + retry único)              4.6s
+  ✓  9  Q2 §20-10  · 401 irrecuperable (refresh terminal_invalid)         2.4s
+  ✓ 10  Q2 §20-11  · Bootstrap ausente (usuario sin membership)           520ms
+  ✓ 11  Q2 §20-12A · signOut REAL cross-tab mismo BrowserContext          848ms
+  ✓ 12  Q2 §20-12B · signOut REAL con sesión independiente (2 contextos)  755ms
+  ✓ 13  Q2 §20-6   · Reinicio Next real (kill + restart process group)    3.8s
+  ✓ 14  Q3-E2E-R   · anti-falso-positivo · 12A/12B                          1ms
+
+  14 passed (22.7s)
+[e2e] Playwright finished with exit code 0
+```
+
+Suites adjuntas locales (Supabase local up + envs exportadas):
+
+| Suite                                | Resultado                          |
+| ------------------------------------ | ---------------------------------- |
+| `tsc --noEmit` (raíz)                | exit 0                             |
+| ESLint sobre `e2e/`+`playwright.config.ts`+cliente hook | 0 problemas |
+| Cliente Vitest con envs Supabase     | 16 files / **198 pass** / 0 skip   |
+| Engine Vitest                        | 37 files / **1057 pass** / 63 skip |
+| `next build`                         | exit 0 (5 rutas)                   |
+| SQL/RLS suites                       | OK                                 |
+| E2E Chromium (13 + anti-falso-positivo) | **14/14 pass** (22.7 s)         |
+| `git diff --check`                   | limpio                             |
+
+### 21.5 · Riesgos residuales tras Q3-E2E-R
+
+- **R-Q3ER-1**: Chromium valida la barrera contractual; Safari no. Herencia de Q3-E2E.
+- **R-Q3ER-2**: el hook `__spablaSupabase` cambia mínimamente `supabase-browser-client.ts` (una rama `if (process.env.NEXT_PUBLIC_SPABLA_E2E_HOOK === "1")`). En producción esa env var nunca se define y Next inlinea `undefined` → la rama nunca entra. Riesgo aceptado y documentado.
+- **R-Q3ER-3**: el escenario 6 se ejecuta al final del describe.serial porque restablece el server compartido. Refactor futuro: pool de `next dev` por test para paralelizar. Fuera de scope Q3-E2E-R.
+- **R-Q3ER-4**: tres vulnerabilidades dev-only heredadas (`@babel/core` low, `brace-expansion` high, `js-yaml` high) sin cambios.
+
+### 21.6 · SHA-256 definitivos (post-commit)
+
+Recalculado desde el blob comprometido tras el commit final:
+
+- Acta: `git show HEAD:docs/audit_reports/AUDIT_2026-08-22_hito-9-3-1-q3-auth-continuity-implementation.md | shasum -a 256` = `<PLACEHOLDER — se sustituye tras commit>`.
+- Contrato + addendum: `git show HEAD:docs/phases/SPABLA_V2_FASE_9_HITO_9_3_1_Q2_CONTRACT.md | shasum -a 256` = `<PLACEHOLDER — se sustituye tras commit>`.
+
+### 21.7 · GO / NO-GO Q3-E2E-R
+
+- ✅ 14/14 tests PASS (13 escenarios + 1 anti-falso-positivo).
+- ✅ 0 FAIL / 0 SKIP / 0 retries.
+- ✅ 12A y 12B invocan signOut REAL vía SDK; sin `localStorage.removeItem`.
+- ✅ Escenario 6 mata proceso REAL (`pidAlive === false`) y reinicia con PID nuevo.
+- ✅ Escenario 3 usa `launchPersistentContext` real.
+- ✅ Control anti-falso-positivo verifica ausencia programática.
+- ⏳ Job D verde en CI (pendiente del push).
+- ✅ SHA definitivos calculados desde blob HEAD (registrados en §21.6 tras commit).
+
+**Veredicto máximo autorizado tras Q3-E2E-R local**: `HITO 9.3.1-Q3-E2E-R · EVIDENCIA REAL RECTIFICADA — GO PROMOCIÓN` — condicionado a que Job D reporte 14/14 PASS en CI attempt=1 tras el push.

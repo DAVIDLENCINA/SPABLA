@@ -35,6 +35,19 @@ function getClientSnapshot(): SupabaseClient | null {
   cachedClient = createClient(url, key, {
     auth: { persistSession: true, autoRefreshToken: true, storageKey: STORAGE_KEY },
   });
+  // Hito 9.3.1-Q3-E2E-R · Hook explícito para la barrera de
+  // continuidad (Chromium real). Sólo se activa cuando el runner
+  // canónico `scripts/e2e/run-auth-continuity.sh` arranca `next dev`
+  // con `NEXT_PUBLIC_SPABLA_E2E_HOOK=1`. En producción, `next build`
+  // corre sin esa var; Next inlinea `process.env.NEXT_PUBLIC_*` en el
+  // bundle y el flag queda como `undefined` → la rama nunca entra.
+  // Sin este hook, la única forma de disparar
+  // `supabase.auth.signOut({scope:"local"})` desde Playwright sería
+  // borrar `localStorage` a mano — precisamente el falso positivo que
+  // Q3-E2E-R prohíbe. Ver `docs/e2e/MATRIX.md` §21A y acta §21.
+  if (process.env.NEXT_PUBLIC_SPABLA_E2E_HOOK === "1") {
+    (window as unknown as { __spablaSupabase?: SupabaseClient }).__spablaSupabase = cachedClient;
+  }
   return cachedClient;
 }
 
