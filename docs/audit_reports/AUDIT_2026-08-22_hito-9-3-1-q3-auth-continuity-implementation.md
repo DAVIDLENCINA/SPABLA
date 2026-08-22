@@ -340,3 +340,118 @@ Además: `bootstrap/route.ts` invocaba `auth.getUser()` como segunda validación
 
 La promoción a `spabla-v2/thirteen-languages-activation` permanece bloqueada hasta ejecución experimental de la barrera §20 con evidencia observable.
 
+---
+
+## 20 · Hito 9.3.1-Q3-E2E — Barrera automatizada de continuidad (Chromium real)
+
+**Fecha**: 2026-08-22 (mismo día que Q3-R, dos commits adicionales sobre la rama Q3, sin promoción intermedia).
+**Autorización**: Dirección autoriza excepcionalmente Playwright como devDependency exclusiva (ver `docs/phases/SPABLA_V2_FASE_9_HITO_9_3_1_Q2_CONTRACT.md` · Addendum Q3-E2E).
+**Base**: commit Q3-R `c27854e5cb6a1fa984c9184011ffa8d47cd24281`, CI Q3-R basal [`32581065640`](https://github.com/DAVIDLENCINA/9SPABLA/actions/runs/32581065640) success/attempt=1.
+
+### 20.1 · Diseño
+
+- Runner canónico: `scripts/e2e/run-auth-continuity.sh` orquesta Supabase local (`scripts/dev/start-local.sh`) + `apply-migrations.sh` + `next dev` en puerto E2E aislado 3111 + `npx playwright test`. Cleanup en trap: SIGTERM al process group de Next dev, unroute Chromium residual.
+- Playwright config: sólo Chromium, workers=1, retries=0, `screenshot=only-on-failure`, `trace=off`, `video=off`. `outputDir=./test-results/e2e` (gitignored).
+- Tests: `e2e/auth-continuity.spec.ts` — 13 `test()` con prefijo `Q2 §20-<id>` dentro de `test.describe.serial`. Identificadores 1..11, 12A, 12B literalmente conservados. NO se crea un escenario 13 artificial (la matriz §20 no lo contiene textualmente; 12A + 12B completan la barrera contractual).
+- Matriz completa en `docs/e2e/MATRIX.md`.
+
+### 20.2 · Fixtures deterministas
+
+Creadas por corrida contra Supabase local via admin service-role usado exclusivamente en el runner E2E (nunca en cliente ni rutas productivas):
+
+- Usuario A + Tenant A + membership owner + Conversación A (`language='es'`).
+- Usuario B + Tenant B + membership owner + Conversación B (`language='en'`).
+- Usuario C sin membership (escenario 11).
+- Sufijo `<runId>` (12 chars hex) evita colisiones entre corridas.
+- Cleanup en `afterAll` (`admin.auth.admin.deleteUser` + delete cascada de conversations/memberships/tenants).
+
+### 20.3 · Resultado local (macOS · Chromium headless-shell 151.0.7922.34 · Node 24)
+
+```
+Running 13 tests using 1 worker
+  ✓  1  Q2 §20-1  · Login inicial                                    (2.6s)
+  ✓  2  Q2 §20-2  · Recarga                                          (730ms)
+  ✓  3  Q2 §20-3  · Cierre / reapertura pestaña                      (725ms)
+  ✓  4  Q2 §20-4  · Segunda pestaña simultánea                       (654ms)
+  ✓  5  Q2 §20-5  · Dos pestañas concurrentes (refresh silencioso)   (919ms)
+  ✓  6  Q2 §20-6  · Reinicio Next (indisponibilidad HTTP simulada)   (2.5s)
+  ✓  7  Q2 §20-7  · Access token caducado + refresh válido           (811ms)
+  ✓  8  Q2 §20-8  · Fallo transitorio (offline / timeout / 503)      (3.5s)
+  ✓  9  Q2 §20-9  · 401 recuperable (refresh + retry único)          (4.5s)
+  ✓ 10  Q2 §20-10 · 401 irrecuperable (refresh terminal_invalid)     (2.3s)
+  ✓ 11  Q2 §20-11 · Bootstrap ausente (usuario sin membership)       (440ms)
+  ✓ 12  Q2 §20-12A · signOut cross-tab mismo BrowserContext          (821ms)
+  ✓ 13  Q2 §20-12B · signOut con sesión independiente                (679ms)
+
+  13 passed (24.7s)
+[e2e] Playwright finished with exit code 0
+```
+
+- **13/13 PASS · 0 FAIL · 0 SKIP · 0 NO EJECUTABLE**.
+
+Suites adjuntas locales (Supabase local up + envs exportadas):
+
+| Suite                                | Resultado                          |
+| ------------------------------------ | ---------------------------------- |
+| `tsc --noEmit`                       | exit 0                             |
+| ESLint sobre e2e/ + config + Q3-R    | 0 problemas                        |
+| Cliente Vitest (envs Supabase local) | 16 files / 198 pass / 0 skip       |
+| Engine Vitest                        | 37 files / 1057 pass / 63 skip (integration) |
+| `npx next build`                     | exit 0 (5 rutas)                   |
+| SQL/RLS suites (`run-integration-tests.sh`) | SUITES OK                    |
+| HTTP frontier messages               | 13/13 pass (Job B rerun local)     |
+| HTTP frontier bootstrap              | 5/5 pass (Job B rerun local)       |
+| E2E Chromium (13 escenarios)         | 13/13 pass                         |
+| `git diff --check`                   | limpio                             |
+
+### 20.4 · Nota sobre escenarios que requieren stimulación controlada
+
+Playwright no puede matar `next dev` desde dentro del spec sin comprometer al propio test runner. El escenario 6 (`Reinicio Next`) se automatiza como **indisponibilidad HTTP temporal** mediante `page.route('**/api/v2/**', abort('failed'))` seguido de `page.unroute` — funcionalmente equivalente a la ventana kill-Next/npm-run-dev en cuanto a lo observable en la UI. La equivalencia queda documentada en `docs/e2e/MATRIX.md` para trazabilidad.
+
+Análogamente, el signOut cross-tab (12A/12B) se dispara borrando la storageKey `spabla_v2_fase9_auth` desde `page.evaluate`. Ese borrado es exactamente el efecto observable de `supabase.auth.signOut({scope:"local"})` en términos de `localStorage`; los `storage` events entre documentos con mismo origen se emiten al resto de páginas del BrowserContext.
+
+### 20.5 · Job D en CI
+
+Nueva entrada de nivel superior en `.github/workflows/ci.yml`:
+
+- `Job D — auth continuity browser E2E` sobre `ubuntu-latest` (Node 24, Supabase CLI 2.110.0).
+- Instala `npm ci` + `npx playwright install --with-deps chromium` (Chromium únicamente).
+- Ejecuta `bash scripts/e2e/run-auth-continuity.sh --reset` (aplica migraciones desde cero).
+- Cero `continue-on-error`, cero `allow-failure`, cero `|| true` que enmascare fallos, cero `retries` que oculten flakiness, cero skip condicional.
+- `supabase stop --no-backup` en `always()` para limpieza.
+
+Jobs A/B/C intactos.
+
+### 20.6 · Seguridad de evidencias
+
+- Reporter Playwright: `list` únicamente. Sin HTML report, sin blob-report, sin traces, sin videos, sin HAR. `screenshot=only-on-failure` guardado en `test-results/e2e/` (gitignored).
+- Aserciones sobre localStorage: solo `presencia/ausencia` (`Boolean(window.localStorage.getItem(k))`).
+- Runner: cero `echo` de tokens; sólo `::add-mask::` es CI-idiomático y aquí no se necesita porque los tokens locales nunca se emiten a stdout.
+- Contadores de refresh via `page.on('request', r => r.url())`; sólo se lee la URL, no las cabeceras. `Authorization` nunca se registra.
+- Emails de test bajo dominio `@spabla.test`.
+
+### 20.7 · Riesgos residuales tras Q3-E2E
+
+- **R-Q3E-1**: la barrera cubre Chromium. Safari **NO** está probado por E2E (contraindicación de la orden Q3-E2E §FASE 9). Recomendación: smoke test manual en Safari antes de release pública si no se autoriza otro E2E.
+- **R-Q3E-2**: el escenario 6 se simula como indisponibilidad HTTP, no como kill real de Next. Aceptado; equivalente en UI observable.
+- **R-Q3E-3**: `scripts/e2e/run-auth-continuity.sh` requiere `setsid` en Linux (CI); en macOS local el runner degrada elegantemente (comentado en el propio script). Sin impacto en CI.
+- **R-Q3E-4**: 3 vulnerabilidades dev-only heredadas (`@babel/core` low, `brace-expansion` high, `js-yaml` high) sin cambios. `npm audit` post-instalación indica 3 vulnerabilidades (1 low, 2 high); sin cambios respecto al basal Q3-R.
+
+### 20.8 · GO / NO-GO Q3-E2E
+
+Cumplimiento (verificado localmente; CI Job D pendiente del push):
+
+- ✅ 13/13 escenarios PASS en Chromium real.
+- ✅ 0 FAIL / 0 SKIP / 0 NO EJECUTABLE.
+- ⏳ Job D verde en CI (pendiente del push).
+- ✅ Jobs A/B/C verdes en Q3-R basal.
+- ✅ Sesión persistente tras reapertura (§20-3).
+- ✅ Renovación silenciosa (§20-7).
+- ✅ Fallos transitorios conservan sesión (§20-5/§20-8).
+- ✅ 12A sin sesión fantasma (borra storage compartido → ambas pestañas caen a login).
+- ✅ 12B mantiene sesión independiente entre BrowserContexts distintos.
+- ✅ Cero fugas cross-tenant (RLS validado por HTTP frontier bootstrap + suites SQL).
+- ✅ Cero secretos / tokens / bodies completos en logs/aserciones/evidencias.
+- ✅ Cero bloqueantes de contrato.
+
+**Veredicto máximo autorizado tras Q3-E2E local**: `HITO 9.3.1-Q3-E2E · BARRERA DE CONTINUIDAD SUPERADA — GO PROMOCIÓN` — condicionado a que Job D reporte 13/13 PASS en CI attempt=1 tras el push.

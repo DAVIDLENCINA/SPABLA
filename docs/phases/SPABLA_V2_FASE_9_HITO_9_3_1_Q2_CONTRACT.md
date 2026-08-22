@@ -654,3 +654,93 @@ Q3 se implementa en el siguiente orden lógico (subunidades de la orden operativ
 **HITO 9.3.1-Q2 · CONTRATO CONGELADO — GO Q3**
 
 Q3 puede implementarse dentro del alcance congelado del Plan V1.2 §15.1/§15.2 sin decisiones bloqueantes. La barrera experimental §20 de 13 escenarios permanece como condición obligatoria para promocionar Q3.
+
+---
+
+## Addendum · Hito 9.3.1-Q3-E2E — Barrera automatizada en Chromium real
+
+**Fecha del addendum**: 2026-08-22.
+**Autorización**: Dirección aprueba, de manera excepcional y limitada,
+la incorporación de `@playwright/test` **exclusivamente como
+devDependency** con el único propósito de automatizar la ejecución de
+los 13 escenarios contractuales de §20 sobre un navegador real
+(Chromium). El addendum se emite tras la rectificación Q3-R (commit
+`c27854e5cb6a1fa984c9184011ffa8d47cd24281`) y con CI Q3-R basal
+[`32581065640`](https://github.com/DAVIDLENCINA/9SPABLA/actions/runs/32581065640)
+verde (attempt=1 / Jobs A/B/C success).
+
+### Alcance de la autorización
+
+Dirección **permite exclusivamente**:
+
+1. `@playwright/test` como devDependency (versión fijada por lockfile).
+2. Ficheros de configuración y tests E2E (`playwright.config.ts`,
+   `e2e/**`, `scripts/e2e/**`).
+3. Un Job D específico (`Job D — auth continuity browser E2E`) en el
+   workflow CI existente que instala **únicamente Chromium** de
+   Playwright.
+4. Registro de la barrera en el acta Q3 (sección Q3-E2E) y en este
+   addendum, sin borrar el contrato original ni la matriz §20.
+
+Dirección **NO autoriza**:
+
+- Dependencias productivas nuevas.
+- Cambios arquitectónicos de autenticación.
+- Migraciones nuevas.
+- Nuevas tablas o columnas.
+- `@supabase/ssr`.
+- Cookies SSR.
+- PKCE general.
+- BroadcastChannel productivo.
+- Cambios funcionales ajenos a la barrera.
+- Promoción a la rama oficial.
+
+No se emite ADR: AGENTS.md/gobernanza vigente no lo exigen para una
+devDep de testing.
+
+### Matriz 13/13 (ver `docs/e2e/MATRIX.md`)
+
+Los 13 escenarios contractuales conservan los identificadores **1..11,
+12A, 12B**. NO existe un "escenario 13" textual separado en la tabla
+§20; 12A y 12B son las dos variantes que completan la barrera. Cada
+escenario tiene un test Playwright con el prefijo `Q2 §20-<id>` en
+`e2e/auth-continuity.spec.ts`.
+
+### Criterio de promoción a la rama oficial
+
+Sólo puede declararse
+`HITO 9.3.1-Q3-E2E · BARRERA DE CONTINUIDAD SUPERADA — GO PROMOCIÓN`
+si se cumplen **simultáneamente** todos los ítems siguientes:
+
+- 13/13 escenarios PASS en Chromium real vía Job D.
+- 0 FAIL, 0 SKIP, 0 NO EJECUTABLE.
+- Jobs A/B/C **y** D verdes, CI attempt=1, PostgreSQL 17 y restore
+  drill PASS.
+- Sesión persistente tras reapertura (§20-3).
+- Renovación silenciosa del access token (§20-7).
+- Fallos transitorios conservan sesión (§20-8).
+- 12A sin sesión fantasma ni expulsión evitable.
+- 12B mantiene sesión independiente entre BrowserContexts.
+- Cero fugas cross-tenant.
+- Cero secretos / tokens / bodies completos en logs, evidencias o
+  aserciones.
+
+### Impacto sobre §17
+
+`§17.5 · Cambios previstos por archivo` no se modifica. La
+implementación E2E vive exclusivamente en `e2e/`, `scripts/e2e/`,
+`playwright.config.ts`, `docs/e2e/`, `.github/workflows/ci.yml`
+(Job D adicional) y `package.json` / `package-lock.json` (devDep).
+
+Cero cambio productivo. Cero migración. Cero workflow existente
+reescrito (Jobs A/B/C intactos salvo el añadido del Job D como
+nueva entrada de nivel superior).
+
+### Estado tras el addendum
+
+- Barrera §20: **AUTOMATIZADA y VERIFICABLE** vía Chromium real.
+- Promoción: **BLOQUEADA** hasta que Job D reporte 13/13 PASS en CI
+  attempt=1.
+- Contrato original: **INTACTO**.
+
+**HITO 9.3.1-Q2 · CONTRATO + ADDENDUM Q3-E2E — GO Q3-E2E BARRERA REAL**

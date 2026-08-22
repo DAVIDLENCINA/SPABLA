@@ -51,3 +51,10 @@ supabase/.branches/
 # is invoked from repo root. Must never be committed. See
 # docs/standards/SPABLA_V2_TOOLCHAIN.md.
 supabase/supabase/
+
+# playwright — Hito 9.3.1-Q3-E2E · never commit E2E artifacts (may
+# carry tokens, cookies, HAR, screenshots of authenticated UIs).
+/playwright-report/
+/test-results/
+/blob-report/
+/.playwright/

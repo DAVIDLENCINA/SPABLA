@@ -363,3 +363,48 @@ jobs:
       - name: Stop Supabase local stack
         if: always()
         run: supabase stop --no-backup
+
+  # SPABLA V2 · Hito 9.3.1-Q3-E2E · Job D — barrera experimental de
+  # continuidad de sesión autenticada, 13 escenarios (Q2 §20), ejecutados
+  # sobre Chromium real vía Playwright. Este job es OBLIGATORIO para
+  # declarar GO promoción del hito. Prohibido `continue-on-error`,
+  # `allow-failure`, `|| true`, `retries` que enmascaren inestabilidad
+  # o skip condicional.
+  e2e-auth-continuity:
+    name: Job D — auth continuity browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium only
+        run: npx playwright install --with-deps chromium
+
+      - name: Run barrier (scripts/e2e/run-auth-continuity.sh --reset)
+        run: bash scripts/e2e/run-auth-continuity.sh --reset
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup || true
