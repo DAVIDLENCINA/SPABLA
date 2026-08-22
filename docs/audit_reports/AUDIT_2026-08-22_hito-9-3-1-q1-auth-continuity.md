@@ -225,9 +225,9 @@ const signOut = useCallback(async () => {
 }, [supabase]);
 ```
 
-- `scope: "local"` correcto (solo pestaña actual).
-- Preserva preferences y seedCache (por diseño 9.2.4).
-- Pero también borra el refresh_token de esta pestaña (comportamiento nativo Supabase).
+- `scope: "local"` (documentación oficial: cierre de la sesión local del navegador/dispositivo, ver §7-bis). **No** equivale a «solo esta pestaña»: el efecto exacto entre pestañas del mismo navegador debe verificarse experimentalmente en Q3.
+- Preserva preferences y seedCache en `localStorage` (invariante de diseño 9.2.4 explícitamente documentado por el comentario del código): la eliminación por `signOut` afecta a las claves de sesión Supabase (`spabla_v2_fase9_auth`), no a `spabla_v2_fase9_seed` ni a `spabla_v2:language-preferences:v1:*`.
+- Como consecuencia documental, remueve el `refresh_token` de la sesión local (comportamiento nativo Supabase: «removing all items from localstorage» — se refiere a los items propios de la sesión Supabase bajo su `storageKey`).
 
 ### 6.7 `seedCache` y bootstrap del contexto
 
@@ -278,14 +278,26 @@ Archivos `lib/v2/server/composition.ts:80/83/106`, `seed.ts:178`, `translation-r
 
 ## 7 · Fuentes primarias oficiales consultadas
 
-Fecha de consulta: **2026-08-22**. Solo documentación oficial `supabase.com/docs`, ninguna fuente secundaria.
+Fechas de consulta: **2026-08-22** (Q1 inicial) + **2026-08-22 rectificación R2** (guía de signout + reference JS signOut + `onAuthStateChange` revisitadas). Solo documentación oficial `supabase.com/docs`, ninguna fuente secundaria.
 
 | Fuente | URL | Extracto verbatim relevante |
 |---|---|---|
 | Supabase User Sessions | https://supabase.com/docs/guides/auth/sessions | «Most applications should use the default expiration time of 1 hour.» — «refresh tokens never expire but can only be used once.» — «Within a 10-second reuse interval (default, not recommended to change)» — «the whole session is regarded as terminated and all refresh tokens belonging to it are marked as revoked» (reuse detection). |
+| Supabase Sign Out (guide) — R2 | https://supabase.com/docs/guides/auth/signout | Tres scopes: **global (default)** «all sessions active for the user are terminated»; **local** «only terminates the current session for the user but keep sessions on **other devices or browsers** active»; **others** «terminate all but the current session for the user». — Contrato del `access_token` tras `signOut`: «Access Tokens of revoked sessions remain valid until their expiry time, encoded in the `exp` claim. The user won't be immediately logged out and will only be logged out when the Access Token expires.» — La granularidad del scope local se expresa en términos de «other devices or browsers», **no en pestañas**. |
 | Supabase JavaScript `signOut` | https://supabase.com/docs/reference/javascript/auth-signout | «If you only want to sign the user out of the current session (the behavior most other auth libraries default to), pass `{ scope: 'local' }` explicitly.» — «signOut() will remove the logged in user from the browser session and log them out - removing all items from localstorage and then trigger a `"SIGNED_OUT"` event.» — «There is no way to revoke a user's access token jwt until it expires.» |
+| Supabase JavaScript `onAuthStateChange` — R2 | https://supabase.com/docs/reference/javascript/auth-onauthstatechange | Eventos oficialmente listados: `INITIAL_SESSION`, `SIGNED_IN`, `SIGNED_OUT`, `PASSWORD_RECOVERY`, `TOKEN_REFRESHED`, `USER_UPDATED`. La documentación consultada **no** describe explícitamente propagación entre pestañas del mismo navegador ni menciona `BroadcastChannel` / `storage` events como mecanismo cross-tab. Cualquier propagación cross-tab es comportamiento no documentado oficialmente y debe verificarse experimentalmente. |
 | Supabase JWT | https://supabase.com/docs/guides/auth/jwts | «Sets a time limit after which the token should not be trusted and is considered expired, even if it is properly signed.» — «The purpose of the signature is to verify the authenticity of the `<header>.<payload>` string without relying on database access.» |
 | Supabase Server-Side Auth Advanced Guide | https://supabase.com/docs/guides/auth/server-side/advanced-guide | Consultado como referencia para la Opción B (Next SSR / PKCE). No se emplea en Q1. |
+
+### 7-bis · Contrato oficial de `signOut({scope:"local"})` — precisión introducida por R2
+
+La documentación oficial expresa el aislamiento de `local` en términos de **sesiones que residen en el almacenamiento local del navegador o dispositivo**, no en términos de pestañas individuales. En consecuencia:
+
+- **`scope:"local"` termina la sesión local del navegador/dispositivo** en el que se ejecuta y **remueve del `localStorage` los tokens de esa sesión** («removing all items from localstorage»).
+- **Las pestañas del mismo navegador y origen que comparten `localStorage` comparten la misma sesión persistida** (mismo `storageKey`); una `signOut({scope:"local"})` en cualquier pestaña **elimina el `refresh_token` que las demás pestañas comparten**. **No se puede prometer** que una segunda pestaña del mismo navegador permanezca autenticada tras esa operación.
+- **La propagación del evento `SIGNED_OUT` a otras pestañas del mismo navegador no está documentada** por Supabase (ver `onAuthStateChange` arriba). Si el SDK implementa una propagación (por `BroadcastChannel`, `storage` event u otro mecanismo), es comportamiento no garantizado por la documentación consultada. Debe verificarse experimentalmente en Q3.
+- **Otros navegadores, perfiles de navegador, ventanas de incógnito con almacenamiento independiente y dispositivos separados conservan sus propias sesiones**; el scope `local` no las afecta.
+- **Los `access_token` ya emitidos antes de la `signOut` pueden continuar siendo válidos hasta su `exp` natural**, aunque la sesión renovable haya sido terminada («Access Tokens of revoked sessions remain valid until their expiry time, encoded in the `exp` claim»).
 
 Clasificación de afirmaciones técnicas usadas en el diagnóstico:
 
@@ -313,15 +325,16 @@ Clasificación de afirmaciones técnicas usadas en el diagnóstico:
 | A | Login válido → navegación normal | Cliente Supabase inicializado, credenciales válidas | `signInWithPassword` + operar | Chat operable, `session != null`, `access_token` en `Authorization: Bearer` | **NO EJECUTABLE** (requiere navegador real) | — | NO EJECUTABLE |
 | B | Login válido → recarga de `/v2/chat` | Sesión activa | `Cmd+R` | `getSession()` restaura sesión desde `localStorage["spabla_v2_fase9_auth"]`; UI operable | Verificado indirectamente por acta 9.2.4 paso 3 (recarga preservó `ca/de` para Actor A) | acta 9.2.4 | PASS (indirecta) |
 | C | Cerrar pestaña → reabrir | Sesión activa | Close tab, open new | Igual que B (mismo mecanismo `persistSession` en localStorage) | **NO EJECUTABLE** en este entorno | — | NO EJECUTABLE |
-| D | Nueva pestaña del mismo navegador | Sesión activa en pestaña original | Abrir nueva pestaña | Comparten localStorage → misma sesión activa | **NO EJECUTABLE** | — | NO EJECUTABLE |
-| E | Dos pestañas simultáneas | Sesión activa | Operar en ambas | Ambas ven la misma sesión; refresh en una se propaga vía `onAuthStateChange` (BroadcastChannel implícito del SDK) | **NO EJECUTABLE** | — | NO EJECUTABLE |
+| D | Nueva pestaña del mismo navegador | Sesión activa en pestaña original | Abrir nueva pestaña | Comparten `localStorage` bajo el mismo `storageKey` → misma sesión persistida activa | **NO EJECUTABLE** | — | NO EJECUTABLE |
+| E | Dos pestañas simultáneas | Sesión activa | Operar en ambas | Ambas leen la misma sesión persistida; la propagación cross-tab del refresh silencioso vía `onAuthStateChange` **no está documentada** por Supabase (§7-bis) y debe verificarse experimentalmente en Q3 | **NO EJECUTABLE** | — | NO EJECUTABLE |
 | F | Reinicio de Next manteniendo el navegador | Sesión activa | Kill + relanzar `next` | Cliente browser mantiene sesión; próximo fetch a `/api/v2/messages` valida contra Supabase directamente | **NO EJECUTABLE** en este turno (Q1 documental) | — | NO EJECUTABLE |
 | G | Reinicio de Supabase local | Sesión activa contra Supabase local | `supabase stop && supabase start` | Puede o no invalidar según persistencia de datos. **No representa producción**: en producción Supabase no se reinicia; el volumen de auth es persistente. | **NO EJECUTABLE + advertencia**: no válido como diagnóstico de continuidad productiva. | — | NO EJECUTABLE / no aplicable |
 | H | Access_token caducado con refresh_token válido | Sesión activa, esperar >3600 s SIN modificar `jwt_expiry` | Fetch tras caducidad | 401 → refresh silencioso → retry con nuevo token → 200 (comportamiento esperado por producto). **En el código actual: 401 → recovery destructiva → sign-out visible (defecto documentado en H-CORE-1/2/3)** | **NO EJECUTABLE en la ventana temporal de esta orden** (esperar 1 h). El código actual permite predecir el comportamiento con alta confianza sin ejecutar la prueba. | trazado estático §6.4 + docs §7 | PREDICCIÓN por análisis estático |
 | I | 401 real por token inválido | Sesión activa, JWT firma-corrupta | Fetch | 401 → recovery ejecuta correctamente | Verificado por CI Job B `route.http.integration.test.ts` (13 tests) contra JWT firma-corrupta | CI `32420002095` Job B success | PASS |
 | J | Error transitorio de red | Sesión activa | Interrumpir red | Fetch throws → `setRawPollError({code:"poll_network"})` sin disparar recovery | Verificado por trazado estático §6.4 (`catch { setRawPollError({code:"poll_network"}) }`) | código `page.tsx:353-355` | PASS (estática) |
 | K | Sesión válida pero seed/bootstrap incompleto | `session != null`, `seedCache` vacío | Cargar página | `canOperate=false` → mensaje engañoso «Inicia sesión…» | Reproducido en acta 9.2.4 paso 5 (Actor B en Chrome incógnito) | acta 9.2.4 | FAIL (documentado como DEUDA-UX-SEED-MISSING) |
-| L | `signOut` local y efecto sobre otra pestaña/sesión | 2 pestañas del mismo actor | `signOut({scope:"local"})` en pestaña 1 | Pestaña 2 permanece autenticada (política §15.2 confirmada) | **NO EJECUTABLE** en este entorno; validado normativamente por el contrato `scope: "local"` de Supabase docs §7 | docs §7 | PREDICCIÓN por contrato documentado |
+| L-navegador | `signOut` local entre navegadores/dispositivos independientes | Sesión activa en navegador A y en navegador/perfil/dispositivo B (almacenamiento independiente) | `signOut({scope:"local"})` en A | B permanece renovable y operable (el scope local NO afecta sesiones en «other devices or browsers», §7-bis) | **NO EJECUTABLE** en este entorno | docs §7-bis | PREDICCIÓN por contrato documentado |
+| L-pestañas | `signOut` local entre pestañas del mismo navegador | 2 pestañas del mismo navegador+origen compartiendo la misma sesión persistida | `signOut({scope:"local"})` en pestaña A | La sesión persistida se elimina del `localStorage`. La pestaña B pierde acceso al `refresh_token`; **no puede prometerse que B permanezca operable indefinidamente**. La propagación cross-tab del evento `SIGNED_OUT` no está documentada oficialmente y debe verificarse experimentalmente en Q3 | **NO EJECUTABLE** en este entorno; contrato reformulado por R2 | docs §7-bis | NO EJECUTABLE (Q3) |
 
 **Nota sobre NO EJECUTABLE**: la orden §FASE 4 prohíbe expresamente instalar Playwright/Puppeteer y no autoriza un navegador que este entorno agéntico no puede abrir. Los escenarios `A, C, D, E, F, H, L` requieren un navegador real y un observador humano; su clasificación como NO EJECUTABLE **no** cuenta como PASS. Se recomienda para Q2 (o para una verificación complementaria de Dirección) reproducir A/B/C/D/E/H/L manualmente o con un runner ya presente en el repo si aparece uno adecuado.
 
@@ -469,6 +482,16 @@ Diseñar la telemetría del path autenticado:
 
 Q2 debe redactar los criterios de aceptación **de forma que sean verificables experimentalmente en navegador real** por Q3. La barrera de §14-bis define el mínimo experimental que Q3 debe superar.
 
+### Vector 8 — contrato de `SIGNED_OUT` cross-tab (añadido por R2)
+
+Diseñar (sin implementar en Q2) el manejo del evento `SIGNED_OUT` a nivel navegador+origen:
+
+- Todas las pestañas del mismo navegador+origen que tengan una instancia activa del SDK **deben** manejar el evento `SIGNED_OUT` (documentado como uno de los seis eventos oficiales de `onAuthStateChange`, §7). La propagación cross-tab del evento no está garantizada por la documentación consultada; Q2 debe diseñar la política que evite estados incoherentes tanto si la propagación ocurre automáticamente como si no.
+- **Evitar** que una pestaña restaure una sesión eliminada por otra en la misma origen (no reinstanciar el cliente Supabase con `access_token`/`refresh_token` obsoletos ni consultar `localStorage["spabla_v2_fase9_auth"]` después de un evento `SIGNED_OUT` detectado).
+- **Actualizar la máquina de estados de forma determinista** ante `SIGNED_OUT`: transitar a `SessionMissing` o `Expired` con los mismos criterios de UI del Vector 5.
+- **Preservar las preferencias actor-scoped** (`spabla_v2:language-preferences:v1:*`) y el `seedCache` (`spabla_v2_fase9_seed`) que deban conservarse por el invariante 9.2.4: la eliminación de items del `localStorage` debe limitarse a los propios de la sesión Supabase bajo su `storageKey`; el resto de claves de la aplicación **no** deben tocarse por el signOut.
+- **Observabilidad del evento sin registrar tokens**: emitir métrica de `signOutObserved` con `origen` (self / cross-tab / storage-event / manual), `correlation-id` y timestamps; nunca serializar `access_token`, `refresh_token`, JWT ni contraseña en el log.
+
 ---
 
 ## 14-bis · Barrera experimental obligatoria para Q3
@@ -480,15 +503,16 @@ La implementación (Q3) **no podrá promocionarse como cerrada** hasta verificar
 | 1 | Login inicial y restauración | Sign-in con `email + password`; UI operable; `session != null`; `Authorization: Bearer` presente en fetch |
 | 2 | Recarga (`Cmd+R`) | Sesión persiste; UI vuelve a operable sin flicker; preferencias y contexto restaurados |
 | 3 | Cierre y reapertura de pestaña | Nueva pestaña restaura la sesión desde `localStorage["spabla_v2_fase9_auth"]`; UI operable |
-| 4 | Segunda pestaña simultánea | Ambas pestañas comparten sesión; refresh silencioso en una se propaga a la otra vía `onAuthStateChange` |
-| 5 | Dos pestañas operando concurrentemente | Sin race conditions; ambos polling loops usan el mismo `access_token` renovado; cero 401 espurios |
+| 4 | Segunda pestaña simultánea del mismo navegador | Ambas pestañas leen la misma sesión persistida bajo el mismo `storageKey`. La propagación cross-tab de eventos (`SIGNED_IN` / `TOKEN_REFRESHED`) es comportamiento no documentado oficialmente por Supabase (§7-bis) y debe demostrarse experimentalmente; la evidencia mínima es que ambas pestañas terminan operables tras un refresh silencioso |
+| 5 | Dos pestañas operando concurrentemente | Sin race conditions; ambos polling loops usan el mismo `access_token` (post-refresh, ya sea propagado o releído desde `localStorage`); cero 401 espurios |
 | 6 | Reinicio de Next (`kill next-server` + relanzar) manteniendo el navegador | Navegador mantiene sesión; próximo fetch a `/api/v2/messages` valida contra Supabase sin re-login |
 | 7 | `access_token` caducado con `refresh_token` válido | El SDK renueva silenciosamente o el vector 1 dispara `refreshSession()` explícito; cero login visible; UI operable |
 | 8 | Error transitorio de red | Fetch falla → `poll_network` mostrado; **cero logout**; al recuperarse la red, próximo tick opera sin re-login |
 | 9 | 401 recuperable con refresh + retry | 401 dispara `refreshSession()`; retry con nuevo token devuelve 200; cero logout; UI operable |
 | 10 | 401 irrecuperable con logout controlado | 401 con refresh_token inválido dispara recovery destructiva; formulario de sign-in visible con mensaje inequívoco de expiración; preferencias y (si se decide) seedCache preservados |
 | 11 | seed/bootstrap ausente con sesión válida | Estado UI = «Preparando tu conversación…», **nunca** «Inicia sesión para ver la conversación»; endpoint server-authoritative de Q2 resuelve el contexto sin necesidad de `runSeed` dev-only |
-| 12 | `signOut` local y efecto entre sesiones | `signOut({scope:"local"})` en pestaña A no afecta pestaña B del mismo actor; segunda pestaña permanece operable |
+| 12A | `signOut` local entre pestañas del mismo navegador | Precondición: 2 pestañas del mismo navegador+origen comparten la misma sesión persistida bajo el mismo `storageKey`. Criterio PASS: ejecutar `signOut({scope:"local"})` en pestaña A **elimina la sesión renovable del `localStorage` compartido**; la pestaña A pasa a `SessionMissing` / `Expired` según el contrato de Q2; la pestaña B detecta el cierre mediante `onAuthStateChange`, sincronización del SDK o la siguiente comprobación de sesión (el mecanismo específico se documenta con la evidencia observada, no se asume propagación automática); la pestaña B **no permanece indefinidamente operable con un `refresh_token` eliminado**; no se promete invalidación instantánea del `access_token` ya emitido antes de la `signOut`; no se produce bucle, race condition ni restauración fantasma de la sesión |
+| 12B | `signOut` local con sesión independiente en otro navegador/dispositivo | Precondición: misma cuenta autenticada en navegador/perfil/dispositivo B con almacenamiento independiente. Criterio PASS: `signOut({scope:"local"})` en A termina únicamente la sesión de A; la sesión independiente en B permanece renovable y operable; **no se realiza `signOut` global**; no se revocan otras sesiones |
 
 **Reglas de aceptación de la barrera**:
 
@@ -509,7 +533,7 @@ Sujetos a la orden operativa Q2 que redactará Dirección o su designado:
 5. Recarga completa, cierre/reapertura de pestaña, apertura de nueva pestaña del mismo navegador y reinicio del stack Next mantienen la sesión mientras el `refresh_token` sea usable.
 6. Mensaje UI durante bootstrap distingue «Cargando sesión», «Preparando conversación» y «Sesión expirada, inicia sesión».
 7. Bootstrap server-authoritative recupera `tenant / conversación / preferencias` a partir del JWT sin depender del `seedCache` local (`spabla_v2_fase9_seed`) en producción.
-8. `signOut({scope:"local"})` sigue afectando solo a la pestaña actual (política §15.2).
+8. `signOut({scope:"local"})` termina la sesión local del navegador/dispositivo actual (política §15.2 de Dirección); otros navegadores, perfiles y dispositivos con almacenamiento independiente conservan sus sesiones. El efecto sobre otras pestañas del mismo navegador+origen se documenta según el contrato §7-bis y se verifica experimentalmente en Q3 (escenario 12A).
 9. Cero llamadas a OpenAI durante las pruebas.
 10. CI Jobs A/B/C verdes.
 
@@ -540,6 +564,6 @@ Fundamento consolidado:
 - **Causalidad histórica del paso 10 no demostrada**: no se observó experimentalmente el mecanismo exacto; múltiples cadenas siguen siendo compatibles con la evidencia visual del acta 9.2.4. La hipótesis principal (defecto de recovery) es altamente plausible por trazado, pero no se afirma como causa histórica definitiva.
 - **La suficiencia final de A no está demostrada todavía**. No se reprodujeron en navegador real los escenarios A/C/D/E/F/H/L de la matriz §8. La confirmación definitiva requiere ejecutar la barrera experimental de §14-bis en Q3.
 - **Q2 puede redactarse y ejecutarse como fase de contrato** con los 7 vectores de §14. La implementación técnica pertenece a Q3.
-- **Q3 no podrá cerrarse sin PASS/FAIL experimental** en los 12 escenarios de §14-bis, con evidencia observada en navegador real. `NO EJECUTABLE` no es aceptable para promocionar Q3.
+- **Q3 no podrá cerrarse sin PASS/FAIL experimental** en los **13 escenarios** de §14-bis (rectificados por R2, con el antiguo escenario 12 dividido en 12A pestañas del mismo navegador + 12B navegador/dispositivo independiente), con evidencia observada en navegador real. `NO EJECUTABLE` no es aceptable para promocionar Q3.
 
 Trazabilidad de la rectificación: esta versión sustituye el veredicto inicial «GO ARQUITECTURA A» por «GO CONDICIONADO PARA CONTINUAR CON LA ARQUITECTURA A» para reflejar fielmente las limitaciones experimentales de la auditoría (ver §10 y §13 rectificados; §14 rediseñado como fase de contrato; §14-bis añadido con la barrera experimental obligatoria de Q3).
