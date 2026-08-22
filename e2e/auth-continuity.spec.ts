@@ -701,16 +701,19 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
       }
       expect(preWarmed).toBe(true);
 
-      // Recuperación sin re-identificarse. Usamos `page.goto` en vez
-      // de `page.reload` porque el `reload` sobre un frame que quedó
-      // sin server puede abortar con `net::ERR_ABORTED`. `goto`
-      // fuerza navegación limpia contra el server ya-restarted.
-      await page.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
+      // Recuperación sin re-identificarse. Abrimos una PÁGINA nueva
+      // dentro del mismo BrowserContext (comparte cookies + storage
+      // → sesión persistida sigue disponible) para evitar chocar con
+      // navegaciones pendientes de la página original (que quedó
+      // colgada intentando refetch mientras Next estaba muerto).
+      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      const freshPage = await ctx.newPage();
+      await freshPage.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
         waitUntil: "load",
         timeout: 90_000,
       });
-      await expectAuthenticatedUi(page);
-      await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
+      await expectAuthenticatedUi(freshPage);
+      await expect(freshPage.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
     } finally {
       await ctx.close();
     }
