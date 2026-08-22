@@ -47,6 +47,7 @@ import {
   extractBearerToken,
   Fase9RequestError,
   verifyJwt,
+  type VerifiedActor,
 } from "@/lib/v2/server/composition";
 import {
   buildBootstrapPayload,
@@ -110,38 +111,26 @@ export async function GET(req: NextRequest): Promise<Response> {
     return failure(401, "unauthorized", "authentication", "missing_authorization", correlationId, "GET");
   }
 
-  let actorId: string;
+  let actor: VerifiedActor;
   try {
-    const actor = await verifyJwt(token);
-    actorId = actor.actorId;
+    actor = await verifyJwt(token);
   } catch (err: unknown) {
     if (err instanceof Fase9RequestError && err.detail.kind === "unauthorized") {
       return failure(401, "unauthorized", "authentication", err.detail.reason.replace(/\s+/g, "_"), correlationId, "GET");
     }
     return failure(401, "unauthorized", "authentication", "jwt_verification_failed", correlationId, "GET");
   }
+  const actorId = actor.actorId;
+  // Q3-R §FASE 4: single identity validation per request. Email comes
+  // from the verified JWT claims — we do NOT call `auth.getUser()` a
+  // second time. An auth-service 429/5xx would otherwise surface here
+  // as a spurious 401 and destroy the caller's session in the browser.
+  const actorEmail = actor.email ?? "";
 
-  // Resolve email via a per-request client bound to the JWT.
   const authenticated = createClient(env.url, env.anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
-
-  // Email is best-effort: the payload contract already documents that
-  // preferences are actor-scoped, and the client only uses `email`
-  // cosmetically in the header. If `auth.getUser()` fails or times
-  // out we fall back to an empty string rather than escalating a
-  // network error to `503 unavailable` — the bootstrap itself
-  // continues via RLS-authoritative queries.
-  let actorEmail = "";
-  try {
-    const { data } = await authenticated.auth.getUser();
-    if (data.user && typeof data.user.email === "string") {
-      actorEmail = data.user.email;
-    }
-  } catch {
-    actorEmail = "";
-  }
 
   let payload: Awaited<ReturnType<typeof buildBootstrapPayload>>;
   try {

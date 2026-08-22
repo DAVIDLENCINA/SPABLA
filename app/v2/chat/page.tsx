@@ -182,8 +182,22 @@ export default function VisibleConversationPage() {
     | "network";
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [bootstrapPhase, setBootstrapPhase] = useState<BootstrapPhase>("idle");
-  const tenantId = bootstrap?.selectedTenantId ?? seedTenantId;
-  const conversationId = bootstrap?.selectedConversationId ?? seedConversationId;
+  // Hito 9.3.1-Q3-R · el `seedCache` NO puede rescatar operación
+  // productiva: tenantId/conversationId proceden EXCLUSIVAMENTE del
+  // bootstrap server-authoritative. El `seedCache` sigue disponible
+  // como herramienta dev-only para el `DeveloperPanel` (donde
+  // `seed`/`seedTenantId`/`seedConversationId` alimentan los defaults
+  // canónicos del planner de idiomas), pero cero decisión operativa
+  // depende de él.
+  const tenantId = bootstrap?.selectedTenantId ?? "";
+  const conversationId = bootstrap?.selectedConversationId ?? "";
+  // `seedTenantId`/`seedConversationId` deliberadamente sin usar en el
+  // path productivo. `seed` (SeedResponse) sigue alimentando
+  // `initialLanguagesFor` para calcular los defaults canónicos de
+  // idioma cuando la preferencia local no está poblada; esto no toma
+  // ninguna decisión de tenant/conversation.
+  void seedTenantId;
+  void seedConversationId;
   // Guardián para evitar disparos concurrentes del bootstrap.
   const bootstrapInFlightRef = useRef<boolean>(false);
   // Actor para el que se cacheó el bootstrap actual. Si cambia el actor,
@@ -383,13 +397,17 @@ export default function VisibleConversationPage() {
     if (sessionExpiredRef.current) return;
     const actor = session.user.id;
     try {
-      // Hito 9.3.1-Q3 · el fetch autenticado pasa por el retry helper
+      // Hito 9.3.1-Q3-R · el fetch autenticado pasa por el retry helper
       // (`fetchWithAuthRetry`), que atacha `Authorization: Bearer …`
       // con la sesión actual, reintenta una única vez tras un refresh
-      // single-flight ante 401 y devuelve la respuesta final. Si el
-      // retry devuelve 401 nuevamente o el refresh falla, el flujo
-      // desemboca en `applyAuth401Recovery` más abajo.
-      const res = await fetchWithAuthRetry(
+      // single-flight ante 401 y devuelve un `AuthRetryOutcome`
+      // discriminado. El caller distingue:
+      //   - `response` → procesar normal.
+      //   - `terminal_auth` → recovery destructiva (sesión concluyente
+      //     inválida).
+      //   - `transient_auth` → conservar sesión, `poll_network` UI.
+      //   - `network_error` → conservar sesión, `poll_network` UI.
+      const authOutcome = await fetchWithAuthRetry(
         supabase,
         `/api/v2/messages?tenantId=${encodeURIComponent(tenantId)}&conversationId=${encodeURIComponent(conversationId)}&to=${encodeURIComponent(targetLanguage)}`,
         {
@@ -397,9 +415,14 @@ export default function VisibleConversationPage() {
           cache: "no-store",
         },
       );
+      if (authOutcome.kind === "transient_auth" || authOutcome.kind === "network_error") {
+        setRawPollError({ code: "poll_network", forActor: actor });
+        return;
+      }
+      const res = authOutcome.response;
       const body = (await res.json().catch(() => ({}))) as { error?: string; items?: ReadonlyArray<Message>; actorId?: string };
       const action = classifyPollingResponse({ status: res.status }, body);
-      if (action.kind === "expire" || shouldTriggerAuth401Recovery(res)) {
+      if (authOutcome.kind === "terminal_auth" || action.kind === "expire" || shouldTriggerAuth401Recovery(res)) {
         // AUTH-RECOVERY (Hito 9.2.4): delegated to the coordinator
         // (`applyAuth401Recovery`) so the transition is idempotent,
         // testable and mirrors byte-for-byte what the integration
@@ -531,14 +554,17 @@ export default function VisibleConversationPage() {
     const actor = session.user.id;
     setSending(true);
     setRawSendError(null);
-    // Hito 9.3.1-Q3 · autorizado por Q2 §5.3: el POST usa
+    // Hito 9.3.1-Q3-R · autorizado por Q2 §5.3: el POST usa
     // `clientMessageId` como idempotency key, por lo que un retry
     // tras refresh silencioso con el mismo cuerpo es seguro y no
     // duplica el mensaje (el servidor devuelve 409 conflict si el
-    // ID ya está persistido).
+    // ID ya está persistido). El retry helper devuelve
+    // `AuthRetryOutcome`: transient_auth/network_error conservan la
+    // sesión y muestran error transitorio; terminal_auth dispara
+    // recovery destructiva; response se procesa según status.
     const clientMessageId = randomMessageId();
     try {
-      const res = await fetchWithAuthRetry(
+      const authOutcome = await fetchWithAuthRetry(
         supabase,
         "/api/v2/messages",
         {
@@ -553,6 +579,15 @@ export default function VisibleConversationPage() {
           }),
         },
       );
+      if (authOutcome.kind === "transient_auth" || authOutcome.kind === "network_error") {
+        setRawSendError({ code: "send_network", forActor: actor });
+        return;
+      }
+      if (authOutcome.kind === "terminal_auth") {
+        setRawSendError({ code: "send_status_401", forActor: actor });
+        return;
+      }
+      const res = authOutcome.response;
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setRawSendError({ code: body.error ?? `send_status_${res.status}`, forActor: actor });

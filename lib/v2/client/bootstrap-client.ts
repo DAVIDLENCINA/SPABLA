@@ -67,19 +67,16 @@ const BOOTSTRAP_URL = "/api/v2/bootstrap";
 export async function fetchBootstrap(
   supabase: SupabaseClient,
 ): Promise<BootstrapOutcome> {
-  let response: Response;
-  try {
-    response = await fetchWithAuthRetry(supabase, BOOTSTRAP_URL, {
-      method: "GET",
-      cache: "no-store",
-    });
-  } catch {
-    return { kind: "network" };
-  }
+  const outcome = await fetchWithAuthRetry(supabase, BOOTSTRAP_URL, {
+    method: "GET",
+    cache: "no-store",
+  });
 
-  if (response.status === 401) {
-    return { kind: "unauthorized" };
-  }
+  if (outcome.kind === "network_error") return { kind: "network" };
+  if (outcome.kind === "transient_auth") return { kind: "transient", status: 0 };
+  if (outcome.kind === "terminal_auth") return { kind: "unauthorized" };
+
+  const response = outcome.response;
   if (response.status !== 200) {
     return { kind: "transient", status: response.status };
   }

@@ -70,12 +70,26 @@ export function extractBearerToken(authorizationHeader: string | null | undefine
 export type VerifiedActor = {
   readonly actorId: ActorId;
   readonly issuedAt: string;
+  /**
+   * Optional email claim from the verified JWT. Present when the
+   * Supabase Auth token carries an `email` claim (default for
+   * password / OAuth sessions). Consumers MUST treat absence as
+   * neutral — `verifyJwt` never throws because of a missing email,
+   * and no callers should promote absence to 401 or 503.
+   */
+  readonly email?: string;
 };
 
 /**
  * Verifies a Supabase Auth JWT locally using JWKS. On any failure the
  * error surfaces opaquely — the raw provider message is discarded so it
  * cannot leak keys, headers or session material.
+ *
+ * This is the ONLY identity-validation call performed per request.
+ * Downstream code must not invoke `auth.getUser()` or any other
+ * server-side round-trip to re-validate the same token — that would
+ * turn a transient auth-service failure (429 / 5xx) into a spurious
+ * 401 for the caller (Hito 9.3.1-Q3-R §FASE 4).
  */
 export async function verifyJwt(token: string): Promise<VerifiedActor> {
   const { url, anonKey } = readAnonEnv();
@@ -97,7 +111,9 @@ export async function verifyJwt(token: string): Promise<VerifiedActor> {
   }
   const iatSeconds = typeof result.data.claims.iat === "number" ? result.data.claims.iat : 0;
   const issuedAt = new Date(iatSeconds > 0 ? iatSeconds * 1000 : Date.now()).toISOString();
-  return { actorId: asUUID(sub), issuedAt };
+  const rawEmail = (result.data.claims as { email?: unknown }).email;
+  const email = typeof rawEmail === "string" && rawEmail.length > 0 ? rawEmail : undefined;
+  return { actorId: asUUID(sub), issuedAt, email };
 }
 
 function buildAuthenticatedClient(jwt: string): SupabaseClient {

@@ -36,6 +36,16 @@ export default defineConfig({
       ".next/**",
       "supabase/**",
     ],
+    // Hito 9.3.1-Q3-R · §FASE 8 · Los tests HTTP-frontier de
+    // `app/api/v2/**/route.http.integration.test.ts` spawnean cada uno
+    // su propio `next dev` sobre un puerto distinto (3109, 3110, …).
+    // Aunque los puertos no se pisan, dos procesos `next dev` en el
+    // mismo cwd compiten por el directorio `.next/` y el HMR runtime.
+    // Ejecutar los archivos secuencialmente elimina la carrera sin
+    // afectar el paralelismo intra-archivo (test.concurrent sigue en
+    // pie donde se declare). El coste es ~500 ms adicionales sobre la
+    // suite completa; garantiza determinismo en CI Job B.
+    fileParallelism: false,
     reporters: ["default"],
   },
 });

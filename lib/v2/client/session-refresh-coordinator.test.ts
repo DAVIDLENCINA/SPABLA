@@ -1,11 +1,18 @@
 /**
- * SPABLA V2 · Hito 9.3.1-Q3 · Tests unitarios del coordinator
- * single-flight de refresh. Verifican Q2 §6:
- *   - N llamadas concurrentes producen UN solo refresh subyacente.
- *   - Todos los awaiters comparten el mismo resultado.
- *   - La promesa se libera al resolver (éxito o fallo) de modo que
- *     una nueva llamada posterior puede iniciar un nuevo refresh.
- *   - La clasificación de errores es determinista y sanitizada.
+ * SPABLA V2 · Hito 9.3.1-Q3-R · Tests del coordinator single-flight
+ * con la taxonomía discriminada de 4 resultados. Cubre §FASE 7.A del
+ * hito Q3-R:
+ *   - N llamadas concurrentes producen UN solo refresh.
+ *   - `renewed`, `no_session`, `terminal_invalid`, `transient_failure`
+ *     se distinguen deterministamente.
+ *   - Errores concluyentes de invalidez (invalid_grant, refresh_token
+ *     expired/revoked, session_not_found) → `terminal_invalid`.
+ *   - Errores ambiguos (network, timeout, DNS, 429, 5xx, unknown) →
+ *     `transient_failure` (principio de seguridad).
+ *   - La promesa in-flight se libera tras fallo transitorio y no
+ *     bloquea ciclos posteriores.
+ *   - Ningún token, ningún mensaje raw, ninguna Authorization aparecen
+ *     como return de este helper.
  */
 
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -26,14 +33,8 @@ type RefreshShape = Awaited<
   ReturnType<SupabaseClient["auth"]["refreshSession"]>
 >;
 
-function buildFakeClient(
-  refreshImpl: () => Promise<RefreshShape>,
-): SupabaseClient {
-  return {
-    auth: {
-      refreshSession: vi.fn(refreshImpl),
-    },
-  } as unknown as SupabaseClient;
+function buildFakeClient(refreshImpl: () => Promise<RefreshShape>): SupabaseClient {
+  return { auth: { refreshSession: vi.fn(refreshImpl) } } as unknown as SupabaseClient;
 }
 
 function fakeSession(): Session {
@@ -51,7 +52,7 @@ function fakeSession(): Session {
   } as unknown as Session;
 }
 
-describe("session-refresh-coordinator · single-flight", () => {
+describe("session-refresh-coordinator · single-flight (Q3-R)", () => {
   test("N concurrent calls invoke supabase.auth.refreshSession exactly once", async () => {
     let calls = 0;
     let resolveInner: (v: RefreshShape) => void = () => undefined;
@@ -64,7 +65,6 @@ describe("session-refresh-coordinator · single-flight", () => {
     });
 
     const promises = Array.from({ length: 5 }, () => refreshSessionOnce(client));
-    // While inner has not resolved, all callers share the same in-flight promise.
     expect(__sessionRefreshInFlightForTests()).toBe(true);
     resolveInner({ data: { session: fakeSession(), user: fakeSession().user }, error: null } as RefreshShape);
 
@@ -73,11 +73,10 @@ describe("session-refresh-coordinator · single-flight", () => {
     for (const outcome of outcomes) {
       expect(outcome.kind).toBe("renewed");
     }
-    // The shared promise must be released after settling.
     expect(__sessionRefreshInFlightForTests()).toBe(false);
   });
 
-  test("returns { renewed, session } when refreshSession resolves with a session", async () => {
+  test("returns renewed when refresh resolves with a session", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: fakeSession(), user: fakeSession().user },
       error: null,
@@ -90,7 +89,7 @@ describe("session-refresh-coordinator · single-flight", () => {
     }
   });
 
-  test("returns { no_session } when refreshSession resolves without session and without error", async () => {
+  test("returns no_session when SDK returns null session and null error", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: null, user: null },
       error: null,
@@ -100,66 +99,92 @@ describe("session-refresh-coordinator · single-flight", () => {
     expect(outcome.kind).toBe("no_session");
   });
 
-  test("returns { failed, refresh_invalid } when SDK error mentions invalid/expired/refresh_token", async () => {
+  test("terminal_invalid when SDK error message mentions invalid_grant", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: null, user: null },
-      error: new Error("Invalid refresh_token"),
+      error: new Error("invalid_grant: refresh token expired"),
     } as unknown as RefreshShape));
-
     const outcome = await refreshSessionOnce(client);
-    expect(outcome.kind).toBe("failed");
-    if (outcome.kind === "failed") {
-      expect(outcome.error.category).toBe("refresh_invalid");
-    }
+    expect(outcome.kind).toBe("terminal_invalid");
   });
 
-  test("returns { failed, refresh_transient } when SDK error mentions network/timeout", async () => {
+  test("terminal_invalid when SDK error has code=invalid_grant", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: null, user: null },
-      error: new Error("network timeout"),
+      error: { code: "invalid_grant", message: "auth failed" } as unknown as Error,
     } as unknown as RefreshShape));
-
     const outcome = await refreshSessionOnce(client);
-    expect(outcome.kind).toBe("failed");
-    if (outcome.kind === "failed") {
-      expect(outcome.error.category).toBe("refresh_transient");
-    }
+    expect(outcome.kind).toBe("terminal_invalid");
   });
 
-  test("returns { failed, refresh_unknown } for unclassified errors", async () => {
+  test("terminal_invalid when message says refresh_token_not_found", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: null, user: null },
-      error: new Error("unknown boom"),
+      error: new Error("refresh_token_not_found"),
     } as unknown as RefreshShape));
-
-    const outcome = await refreshSessionOnce(client);
-    expect(outcome.kind).toBe("failed");
-    if (outcome.kind === "failed") {
-      expect(outcome.error.category).toBe("refresh_unknown");
-    }
+    expect((await refreshSessionOnce(client)).kind).toBe("terminal_invalid");
   });
 
-  test("releases the in-flight slot on failure so the next call can retry", async () => {
+  test("terminal_invalid when message says refresh token has been used", async () => {
     const client = buildFakeClient(async () => ({
       data: { session: null, user: null },
-      error: new Error("boom"),
+      error: new Error("Refresh Token has been used"),
     } as unknown as RefreshShape));
-
-    const first = await refreshSessionOnce(client);
-    expect(first.kind).toBe("failed");
-    expect(__sessionRefreshInFlightForTests()).toBe(false);
-    const second = await refreshSessionOnce(client);
-    expect(second.kind).toBe("failed");
+    expect((await refreshSessionOnce(client)).kind).toBe("terminal_invalid");
   });
 
-  test("catches thrown errors and classifies as failed", async () => {
+  test("transient_failure for network errors (thrown fetch)", async () => {
     const client = buildFakeClient(async () => {
       throw new Error("fetch failed");
     });
     const outcome = await refreshSessionOnce(client);
-    expect(outcome.kind).toBe("failed");
-    if (outcome.kind === "failed") {
-      expect(outcome.error.category).toBe("refresh_transient");
+    expect(outcome.kind).toBe("transient_failure");
+  });
+
+  test("transient_failure for timeout messages", async () => {
+    const client = buildFakeClient(async () => ({
+      data: { session: null, user: null },
+      error: new Error("network timeout"),
+    } as unknown as RefreshShape));
+    expect((await refreshSessionOnce(client)).kind).toBe("transient_failure");
+  });
+
+  test("transient_failure for 429 rate-limit errors", async () => {
+    const client = buildFakeClient(async () => ({
+      data: { session: null, user: null },
+      error: { status: 429, message: "Too Many Requests" } as unknown as Error,
+    } as unknown as RefreshShape));
+    expect((await refreshSessionOnce(client)).kind).toBe("transient_failure");
+  });
+
+  test("transient_failure for 500/502/503/504 upstream errors", async () => {
+    for (const status of [500, 502, 503, 504]) {
+      __resetSessionRefreshCoordinatorForTests();
+      const client = buildFakeClient(async () => ({
+        data: { session: null, user: null },
+        error: { status, message: `HTTP ${status}` } as unknown as Error,
+      } as unknown as RefreshShape));
+      const outcome = await refreshSessionOnce(client);
+      expect(outcome.kind).toBe("transient_failure");
     }
+  });
+
+  test("transient_failure for unknown/ambiguous errors (safety-first)", async () => {
+    const client = buildFakeClient(async () => ({
+      data: { session: null, user: null },
+      error: new Error("boom something unexpected"),
+    } as unknown as RefreshShape));
+    expect((await refreshSessionOnce(client)).kind).toBe("transient_failure");
+  });
+
+  test("in-flight slot is released after transient failure so next cycle can retry", async () => {
+    const client = buildFakeClient(async () => ({
+      data: { session: null, user: null },
+      error: new Error("fetch failed"),
+    } as unknown as RefreshShape));
+    await refreshSessionOnce(client);
+    expect(__sessionRefreshInFlightForTests()).toBe(false);
+    const second = await refreshSessionOnce(client);
+    expect(second.kind).toBe("transient_failure");
   });
 });

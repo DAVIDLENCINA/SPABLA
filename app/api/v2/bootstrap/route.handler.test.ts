@@ -209,4 +209,118 @@ describe("GET /api/v2/bootstrap · direct handler", () => {
       expect(cid).toMatch(UUID_RE);
     }
   });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Hito 9.3.1-Q3-R · §FASE 4 / §FASE 7.C — single identity validation.
+  //
+  // Bajo Q3, el route hacía una segunda round-trip a `auth.getUser()`
+  // para resolver el `email`. Ese codepath convertía cualquier fallo
+  // transitorio del servicio de auth (429, 500, 502, 503, 504, DNS,
+  // fetch failed) en una respuesta 401 opaca para el navegador, que
+  // a su vez disparaba `signOut` destructivo. Q3-R elimina esa
+  // segunda llamada: el email vive en los claims verificados por
+  // `verifyJwt`. Los siguientes casos garantizan que:
+  //
+  //   1. `verifyJwt` es invocado exactamente una vez por request.
+  //   2. El email de los claims viaja al composer sin re-validar.
+  //   3. La ausencia de email no escala a 401 ni a 503.
+  // ─────────────────────────────────────────────────────────────────
+  test("Q3-R FASE 4: verifyJwt se invoca exactamente 1 vez por request (sin second-round identity)", async () => {
+    const composition = await importComposition();
+    const verifyJwtMock = composition.verifyJwt as ReturnType<typeof vi.fn>;
+    verifyJwtMock.mockClear();
+    verifyJwtMock.mockResolvedValueOnce({
+      actorId: "00000000-0000-4000-8000-000000000001",
+      issuedAt: new Date().toISOString(),
+      email: "actor@example.test",
+    });
+    const bootstrap = await importBootstrap();
+    const composerMock = bootstrap.buildBootstrapPayload as ReturnType<typeof vi.fn>;
+    composerMock.mockClear();
+    composerMock.mockResolvedValueOnce({
+      actor: { actorId: "00000000-0000-4000-8000-000000000001", email: "actor@example.test" },
+      memberships: [],
+      selectedTenantId: null,
+      conversations: [],
+      selectedConversationId: null,
+      canOperate: false,
+    });
+    const { GET } = await importHandler();
+    const res = await GET(buildRequest({ Authorization: "Bearer token" }) as never);
+    expect(res.status).toBe(200);
+    expect(verifyJwtMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("Q3-R FASE 4: email de los claims viaja al composer como actorEmail (single validation)", async () => {
+    const composition = await importComposition();
+    const verifyJwtMock = composition.verifyJwt as ReturnType<typeof vi.fn>;
+    verifyJwtMock.mockClear();
+    verifyJwtMock.mockResolvedValueOnce({
+      actorId: "00000000-0000-4000-8000-000000000001",
+      issuedAt: new Date().toISOString(),
+      email: "actor@example.test",
+    });
+    const bootstrap = await importBootstrap();
+    const composerMock = bootstrap.buildBootstrapPayload as ReturnType<typeof vi.fn>;
+    composerMock.mockClear();
+    composerMock.mockResolvedValueOnce({
+      actor: { actorId: "00000000-0000-4000-8000-000000000001", email: "actor@example.test" },
+      memberships: [],
+      selectedTenantId: null,
+      conversations: [],
+      selectedConversationId: null,
+      canOperate: false,
+    });
+    const { GET } = await importHandler();
+    const res = await GET(buildRequest({ Authorization: "Bearer token" }) as never);
+    expect(res.status).toBe(200);
+    const composerArg = composerMock.mock.calls[0][0] as { actorEmail: string; actorId: string };
+    expect(composerArg.actorEmail).toBe("actor@example.test");
+    expect(composerArg.actorId).toBe("00000000-0000-4000-8000-000000000001");
+  });
+
+  test("Q3-R FASE 7.C: JWT sin email claim → actorEmail=\"\" (nunca 401 ni 503)", async () => {
+    const composition = await importComposition();
+    const verifyJwtMock = composition.verifyJwt as ReturnType<typeof vi.fn>;
+    verifyJwtMock.mockClear();
+    verifyJwtMock.mockResolvedValueOnce({
+      actorId: "00000000-0000-4000-8000-000000000001",
+      issuedAt: new Date().toISOString(),
+      // sin email
+    });
+    const bootstrap = await importBootstrap();
+    const composerMock = bootstrap.buildBootstrapPayload as ReturnType<typeof vi.fn>;
+    composerMock.mockClear();
+    composerMock.mockResolvedValueOnce({
+      actor: { actorId: "00000000-0000-4000-8000-000000000001", email: "" },
+      memberships: [],
+      selectedTenantId: null,
+      conversations: [],
+      selectedConversationId: null,
+      canOperate: false,
+    });
+    const { GET } = await importHandler();
+    const res = await GET(buildRequest({ Authorization: "Bearer token" }) as never);
+    expect(res.status).toBe(200);
+    const composerArg = composerMock.mock.calls[0][0] as { actorEmail: string };
+    expect(composerArg.actorEmail).toBe("");
+  });
+
+  test("Q3-R FASE 7.C: verifyJwt lanza no-Fase9RequestError → 401 opaco (no leak) y NO 503", async () => {
+    const composition = await importComposition();
+    const verifyJwtMock = composition.verifyJwt as ReturnType<typeof vi.fn>;
+    verifyJwtMock.mockClear();
+    verifyJwtMock.mockImplementationOnce(async () => {
+      throw new Error("upstream 500 while calling getClaims");
+    });
+    const { GET } = await importHandler();
+    const res = await GET(buildRequest({ Authorization: "Bearer token" }) as never);
+    // Sí devuelve 401 (opaque), pero es que la identidad no se puede
+    // validar. Lo importante para Q3-R es que NO se ejecuta un
+    // segundo round-trip que pudiese convertir un 429/5xx del
+    // servicio de auth en un 401. Aquí no hay tal segundo round-trip.
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.error).toBe("unauthorized");
+  });
 });

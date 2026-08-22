@@ -92,17 +92,30 @@ describe("fetchBootstrap", () => {
     }
   });
 
-  test("401 → unauthorized (refresh no rescatable)", async () => {
+  test("401 con refresh terminal_invalid → unauthorized", async () => {
     const auth: FakeAuth = {
       refreshSession: vi.fn(async () => ({
         data: { session: null, user: null },
-        error: new Error("Invalid refresh_token"),
+        error: new Error("invalid_grant: refresh_token has expired"),
       })),
       getSession: vi.fn(async () => ({ data: { session: fakeSession("t") } })),
     };
     fetchSpy.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
     const outcome = await fetchBootstrap(buildFakeClient(auth));
     expect(outcome.kind).toBe("unauthorized");
+  });
+
+  test("401 con refresh transient_failure → transient (Q3-R: sesión preservada)", async () => {
+    const auth: FakeAuth = {
+      refreshSession: vi.fn(async () => ({
+        data: { session: null, user: null },
+        error: new Error("network timeout"),
+      })),
+      getSession: vi.fn(async () => ({ data: { session: fakeSession("t") } })),
+    };
+    fetchSpy.mockResolvedValueOnce(jsonResponse(401, { error: "unauthorized" }));
+    const outcome = await fetchBootstrap(buildFakeClient(auth));
+    expect(outcome.kind).toBe("transient");
   });
 
   test("503 → transient con status", async () => {

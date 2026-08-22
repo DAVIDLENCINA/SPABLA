@@ -1,34 +1,44 @@
 /**
  * SPABLA V2 · Hito 9.3.1-Q3 · Single-flight session refresh coordinator.
+ * SPABLA V2 · Hito 9.3.1-Q3-R · Nueva taxonomía discriminada de 4
+ *   resultados para evitar la recuperación destructiva ante fallos
+ *   transitorios (network / timeout / 429 / 5xx / desconocido).
  *
  * Guarantees that concurrent 401-triggered refresh attempts on the same
  * client instance share ONE `supabase.auth.refreshSession()` call. The
  * shared promise is cleared once resolved (or rejected) so a subsequent
- * refresh cycle can start fresh. There is NO cross-tab coordination: the
- * SDK's own `localStorage` + `onAuthStateChange` semantics are the only
- * cross-tab mechanism; anything beyond that is not in scope for Q3.
+ * refresh cycle can start fresh. There is NO cross-tab coordination.
  *
- * Contract (Q2 §6):
- *   - `refreshSessionOnce(supabase)` returns a `RefreshOutcome` variant:
- *       - `renewed` (with `session`) when the refresh produced a fresh
- *         session containing an `access_token`.
- *       - `no_session` when the SDK returned `{ data: { session: null },
- *         error: null }` (rare but possible; treated as unrecoverable).
- *       - `failed` (with sanitized `error.category`) when the refresh
- *         threw or the SDK returned a non-null `error`.
- *   - Never logs the raw error message, never inspects tokens.
- *   - The coordinator holds NO retained references after resolution.
+ * Contract (Q3-R):
  *
- * @internal — no direct import from server code. This module is
- * strictly a client-side auxiliary of `page.tsx` and its tests.
+ *   `refreshSessionOnce(supabase)` returns a `RefreshOutcome` variant:
+ *     - `renewed` (with `session`): the SDK produced a fresh session
+ *       with an `access_token`. Caller may execute the bounded retry.
+ *     - `no_session`: the SDK returned `{ data: { session: null },
+ *       error: null }` — no material to refresh. Caller may transition
+ *       to `SessionMissing` ONLY after the initial restoration is
+ *       resolved; otherwise treat as transitional.
+ *     - `terminal_invalid` (with sanitized `error`): concluding
+ *       evidence that the `refresh_token` is expired, revoked or
+ *       invalid. Caller may transition to `Expired`.
+ *     - `transient_failure` (with sanitized `error`): network,
+ *       timeout, DNS, 429, 5xx, or unclassified failure that does
+ *       NOT prove invalidity. Caller MUST preserve the persisted
+ *       session, MUST NOT call `signOut`, MUST NOT show login, and
+ *       may transition to `TransientError` (Q2 §9).
+ *
+ *   Ambiguous errors default to `transient_failure` (safety-first
+ *   principle: never destroy a renewable session without evidence).
+ *
+ *   Never logs the raw error message. Only the coarse category is
+ *   observable via the returned enum.
+ *
+ * @internal — client-side auxiliary only.
  */
 
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
 
-export type RefreshErrorCategory =
-  | "refresh_invalid"
-  | "refresh_transient"
-  | "refresh_unknown";
+export type RefreshErrorCategory = "terminal_invalid" | "transient_failure";
 
 export type RefreshError = {
   readonly category: RefreshErrorCategory;
@@ -37,7 +47,8 @@ export type RefreshError = {
 export type RefreshOutcome =
   | { readonly kind: "renewed"; readonly session: Session }
   | { readonly kind: "no_session" }
-  | { readonly kind: "failed"; readonly error: RefreshError };
+  | { readonly kind: "terminal_invalid"; readonly error: RefreshError }
+  | { readonly kind: "transient_failure"; readonly error: RefreshError };
 
 let activePromise: Promise<RefreshOutcome> | null = null;
 
@@ -52,8 +63,6 @@ export function refreshSessionOnce(
     return activePromise;
   }
   const inFlight = runRefresh(supabase).finally(() => {
-    // Release the shared reference only after the promise has settled.
-    // A subsequent 401 cycle will start a brand-new refresh call.
     if (activePromise === inFlight) {
       activePromise = null;
     }
@@ -68,44 +77,83 @@ async function runRefresh(
   try {
     const { data, error } = await supabase.auth.refreshSession();
     if (error !== null && error !== undefined) {
-      return { kind: "failed", error: classifyRefreshError(error) };
+      return classifyErrorOutcome(error);
     }
     if (data && data.session != null) {
       return { kind: "renewed", session: data.session };
     }
     return { kind: "no_session" };
   } catch (unexpected: unknown) {
-    return { kind: "failed", error: classifyRefreshError(unexpected) };
+    return classifyErrorOutcome(unexpected);
   }
 }
 
-function classifyRefreshError(err: unknown): RefreshError {
-  // Sanitised classification: we intentionally do NOT read `.message`,
-  // `.status`, `.statusText` from the raw error into any log. The only
-  // observable outcome is the coarse enum below.
-  const description = describeError(err);
-  if (description.includes("invalid") || description.includes("expired") || description.includes("revoked") || description.includes("refresh_token")) {
-    return { category: "refresh_invalid" };
-  }
-  if (description.includes("network") || description.includes("timeout") || description.includes("fetch failed") || description.includes("unavailable")) {
-    return { category: "refresh_transient" };
-  }
-  return { category: "refresh_unknown" };
-}
+// Structured status/name matchers for terminal invalidity. The Supabase
+// SDK error shape is intentionally not part of the exported public
+// surface, so we defensively read a few well-known fields.
+type ErrorShape = {
+  readonly status?: number;
+  readonly name?: string;
+  readonly code?: string;
+  readonly message?: string;
+};
 
-function describeError(err: unknown): string {
-  if (err instanceof Error) return err.message.toLowerCase();
-  if (typeof err === "string") return err.toLowerCase();
+function readErrorShape(err: unknown): ErrorShape {
   if (err && typeof err === "object") {
-    const candidate = (err as { message?: unknown }).message;
-    if (typeof candidate === "string") return candidate.toLowerCase();
+    const anyErr = err as Record<string, unknown>;
+    return {
+      status: typeof anyErr.status === "number" ? anyErr.status : undefined,
+      name: typeof anyErr.name === "string" ? anyErr.name : undefined,
+      code: typeof anyErr.code === "string" ? anyErr.code : undefined,
+      message: typeof anyErr.message === "string" ? anyErr.message : undefined,
+    };
   }
-  return "";
+  if (typeof err === "string") return { message: err };
+  return {};
+}
+
+// Terminal keywords: only match on tokens that concretely prove the
+// refresh_token itself is unusable. `invalid_grant` is the OAuth2
+// standard error for "refresh token expired/revoked".
+const TERMINAL_KEYWORDS = [
+  "invalid_grant",
+  "refresh_token_not_found",
+  "refresh token not found",
+  "refresh_token has expired",
+  "refresh_token has been revoked",
+  "refresh token has been used",
+  "session_not_found",
+];
+
+function classifyErrorOutcome(err: unknown): RefreshOutcome {
+  const shape = readErrorShape(err);
+  const lower = (shape.message ?? "").toLowerCase();
+  const code = (shape.code ?? "").toLowerCase();
+
+  // Explicit terminal signals — never destroy a session without one.
+  if (code === "invalid_grant" || code === "refresh_token_not_found" || code === "session_not_found") {
+    return { kind: "terminal_invalid", error: { category: "terminal_invalid" } };
+  }
+  for (const keyword of TERMINAL_KEYWORDS) {
+    if (lower.includes(keyword)) {
+      return { kind: "terminal_invalid", error: { category: "terminal_invalid" } };
+    }
+  }
+  // 401 with an explicit `invalid_grant`-like payload from Supabase Auth
+  // (rare in JS SDK, but defensively covered).
+  if (shape.status === 401 && (lower.includes("invalid") && lower.includes("refresh"))) {
+    return { kind: "terminal_invalid", error: { category: "terminal_invalid" } };
+  }
+
+  // Everything else — network, timeout, DNS, rate-limit, 5xx or
+  // unclassified — is treated as transient. The safety-first default
+  // guarantees we never destroy a still-usable session because a
+  // temporary infrastructure hiccup surfaced as an ambiguous error.
+  return { kind: "transient_failure", error: { category: "transient_failure" } };
 }
 
 /**
  * @internal — test helper. Clears the shared promise between tests.
- * Never invoked from productive code.
  */
 export function __resetSessionRefreshCoordinatorForTests(): void {
   activePromise = null;

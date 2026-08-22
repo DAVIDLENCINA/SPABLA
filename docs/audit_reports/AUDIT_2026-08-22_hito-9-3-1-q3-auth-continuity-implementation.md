@@ -247,3 +247,96 @@ Criterios de éxito Q3 según la orden (todos requeridos):
 ## 18 · SHA-256 del acta
 
 El SHA-256 del acta se calcula tras el commit; se registra en el reporte final del hito.
+
+---
+
+## 19 · Rectificación Q3-R — CONTINUIDAD TIPO WHATSAPP Y ENDURECIMIENTO DEL BOOTSTRAP
+
+**Fecha**: 2026-08-22 (mismo día que Q3, mismo commit-base `88358a2` sobre la rama Q3, sin promoción intermedia).
+**Rama de rectificación**: `spabla-v2/hito-9-3-1-q3-auth-continuity-implementation` (misma rama Q3; se añade un commit adicional sobre `88358a2`).
+**Contrato gobernante**: orden operativa HITO 9.3.1-Q3-R (14 fases) + AGENTS.md + Plan 9.3 V1.2 + contrato Q2 V1.0. Cero migración, cero dependencia, cero workflow tocado.
+
+### 19.1 · Diagnóstico
+
+Auditoría post-Q3 identifica tres desviaciones respecto al invariante "una sola vez que el usuario inicie sesión, permanece autenticado hasta cierre explícito o token concluyentemente inválido":
+
+1. **Refresh mono-categórico**: el coordinator single-flight de Q3 clasificaba TODO fallo de `refreshSession()` como destructivo. Un `network timeout`, `429`, o `503` del servicio de auth disparaba el mismo signOut idempotente que un `invalid_grant`. Un usuario en un ascensor podía perder la sesión por un fallo transitorio de la red.
+2. **fetch-with-auth-retry sin discriminar**: en el vector 401 → refresh transient_failure, el helper devolvía el 401 al caller. Cualquier caller (page.tsx, futuros consumers) que tratase 401 como "sesión expirada" ejecutaría el signOut. Semántica insuficiente para preservar continuidad.
+3. **Bootstrap con fallback a seed-cache dev-only**: `page.tsx` degradaba a `seedTenantId`/`seedConversationId` cuando `bootstrap` era null, incluso en el path productivo. El path productivo debe ser 100% authoritativo del servidor.
+
+Además: `bootstrap/route.ts` invocaba `auth.getUser()` como segunda validación de identidad para resolver el email — un 429/5xx del servicio de auth en esa segunda llamada convertía la request en 401 y destruía la sesión río abajo.
+
+### 19.2 · Cambios técnicos
+
+- **Taxonomía discriminada de 4 outcomes en `session-refresh-coordinator.ts`**:
+  - `renewed(session)` — refresh OK.
+  - `no_session` — SDK devuelve session=null sin error (fin de sesión limpio).
+  - `terminal_invalid(error)` — SÓLO cuando el mensaje o `code` matchea whitelist explícita: `invalid_grant`, `refresh_token_not_found`, `refresh_token has expired`, `refresh_token has been revoked`, `refresh token has been used`, `session_not_found`.
+  - `transient_failure(error)` — cualquier otro error (network, timeout, DNS, 429, 5xx, unknown). **Principio de seguridad**: la ambigüedad favorece preservar la sesión.
+- **`AuthRetryOutcome` discriminado en `fetch-with-auth-retry.ts`**:
+  - `response(res)` — respuesta real que el caller debe procesar.
+  - `terminal_auth(res)` — 401 que sobrevive el retry O refresh sin sesión O refresh terminal_invalid → el caller debe destruir sesión.
+  - `transient_auth(error)` — refresh transient_failure durante retry. **NO se devuelve un 401**, se devuelve un error para que un caller ingenuo NO dispare signOut.
+  - `network_error(error)` — excepción de fetch (nunca dispara refresh).
+- **Eliminación del fallback productivo a `seedCache` en `app/v2/chat/page.tsx`**: si `bootstrap` es null en el path productivo, no hay tenant ni conversación. `seedCache` queda como cache de replay dev-only.
+- **Single identity validation en `bootstrap/route.ts` (§FASE 4)**: eliminado `auth.getUser()`. El email viaja en los claims verificados por `verifyJwt(token)` (una sola llamada de identidad por request). Se extiende `VerifiedActor` con `email?: string` opcional.
+- **HTTP frontier bootstrap nuevo (`app/api/v2/bootstrap/route.http.integration.test.ts`)** (§FASE 8): spawn `next dev` en puerto aislado 3110, valida contra Supabase local real: 401 sin token, 401 con firma corrupta, 200 con actor A + isolation cross-tenant vs actor B, 404 opaque en POST, correlation-id UUID v4, ausencia de tokens en body, RLS efectivo.
+- **`vitest.client.config.ts` · `fileParallelism: false`**: evita carrera entre dos procesos `next dev` (messages 3109 + bootstrap 3110) sobre el mismo `.next/`. Coste ~500 ms, ganancia determinismo en CI Job B.
+
+### 19.3 · Cobertura de tests añadida en Q3-R
+
+- `session-refresh-coordinator.test.ts` — reescrito: 13 tests que cubren las 4 categorías, in-flight liberado tras transient, principio de seguridad para errores ambiguos.
+- `fetch-with-auth-retry.test.ts` — reescrito: 12 tests para `AuthRetryOutcome` discriminado, un solo retry, preservación byte-idéntica de body/method/headers/clientMessageId.
+- `bootstrap-client.test.ts` — actualizado: 401 con refresh terminal_invalid → unauthorized; 401 con refresh transient_failure → transient (sesión preservada).
+- `bootstrap/route.handler.test.ts` — 4 tests nuevos Q3-R FASE 4/7.C: verifyJwt exactamente 1 vez por request, email de claims propagado al composer, JWT sin email claim → actorEmail="" sin 503, verifyJwt lanzando no-Fase9RequestError → 401 opaco.
+- `auth-recovery-coordinator.test.ts` — nuevo (§FASE 7.D): 6 tests de idempotencia, burst concurrente → 1 sola transición, signOut fallando no cascadea, `shouldTriggerAuth401Recovery` sólo 401.
+- `whatsapp-continuity.test.ts` — nuevo (§FASE 9): 6 escenarios end-to-end wireando los tres coordinators productivos (session-refresh + auth-retry + auth-recovery) con supabase fake + fetch spy, demostrando que la sesión sobrevive polls consecutivos, refresh renewed, transient failures y network errors; solo se destruye ante un refresh terminal_invalid explícito.
+- `bootstrap/route.http.integration.test.ts` — nuevo (§FASE 8): 5 escenarios HTTP-frontier reales (skippean si Supabase local ausente).
+
+### 19.4 · Suite verde (local)
+
+| Suite                                | Estado                              |
+| ------------------------------------ | ----------------------------------- |
+| `tsc --noEmit` (root)                | exit 0                              |
+| ESLint sobre archivos Q3-R           | exit 0 (0 problemas)                |
+| Cliente Vitest (`npm run test:client`) | 13 files passed / 3 skipped (16), 169 passed / 29 skipped (198) |
+| Engine Vitest (`cd engine && npm test`) | 37 files passed / 4 skipped (41), 1057 passed / 63 skipped (1120) |
+| `npx next build`                     | exit 0 (5/5 rutas, `/api/v2/bootstrap` ƒ dynamic) |
+| HTTP frontier bootstrap              | ⏳ skipped local (Supabase local no arrancado); ejecutado en CI Job B |
+| Restore drill                        | ⏳ CI Job C (no reproducible local sin Docker/Supabase) |
+
+### 19.5 · Barrera experimental de 13 escenarios
+
+**NO EJECUTADA en Q3-R** — la orden lo prohíbe explícitamente ("No ejecutar todavía la barrera manual de los 13 escenarios"). La ejecución de la barrera queda para una autorización posterior de Dirección, con las mismas alternativas (a)/(b)/(c) enumeradas en §17.
+
+### 19.6 · Diferencias frente a Q3
+
+- Contratos, ADRs, migraciones, dependencias, workflows: **cero cambios**.
+- Archivos productivos modificados (5):
+  1. `lib/v2/client/session-refresh-coordinator.ts` — nueva taxonomía discriminada de 4 outcomes.
+  2. `lib/v2/client/fetch-with-auth-retry.ts` — nueva `AuthRetryOutcome` discriminada.
+  3. `lib/v2/client/bootstrap-client.ts` — consumidor de `AuthRetryOutcome` (transient_auth → transient, terminal_auth → unauthorized).
+  4. `app/v2/chat/page.tsx` — eliminación del fallback seed-cache productivo; branching de `fetchMessages`/`sendMessage` sobre nueva `AuthRetryOutcome`.
+  5. `app/api/v2/bootstrap/route.ts` + `lib/v2/server/composition.ts` — single identity validation (elimina `auth.getUser()`, email desde JWT claims).
+- Archivos de test añadidos/actualizados (7): los enumerados en §19.3.
+- Config (1): `vitest.client.config.ts` con `fileParallelism: false`.
+- Comportamiento cross-tab (Q1 §7-bis): sin cambios; `signOut({scope:"local"})` sigue siendo el vector destructivo intra-navegador.
+
+### 19.7 · Riesgos residuales tras Q3-R
+
+- **R-Q3R-1**: la barrera experimental §20 sigue **PENDIENTE**. La promoción a la rama oficial permanece bloqueada por contrato.
+- **R-Q3R-2**: el HTTP frontier del bootstrap depende de Supabase local; su ejecución fuera de CI Job B queda skippeada. Aceptado por diseño (mismo patrón que `messages/route.http.integration.test.ts`).
+- **R-Q3R-3**: `fileParallelism: false` en el config cliente añade ~500 ms al tiempo total de CI. Justificado por el determinismo requerido para dos `next dev` concurrentes.
+- **R-Q3R-4** a **R-Q3R-6**: heredados de Q3 (`.claude/` no gitignored, vulnerabilidades dev-only, single-flight intra-instancia).
+
+### 19.8 · GO / NO-GO Q3-R
+
+- ✅ Rectificación técnica implementada.
+- ✅ Todas las suites locales verdes.
+- ⏳ CI Job A/B/C verde en la rama Q3 tras el push (pendiente).
+- ❌ Barrera experimental 13/13 NO EJECUTADA (por orden explícita).
+
+**Veredicto máximo autorizado por la orden Q3-R**: `HITO 9.3.1-Q3-R · RECTIFICACIÓN TÉCNICA COMPLETADA — BARRERA EXPERIMENTAL PENDIENTE`.
+
+La promoción a `spabla-v2/thirteen-languages-activation` permanece bloqueada hasta ejecución experimental de la barrera §20 con evidencia observable.
+
