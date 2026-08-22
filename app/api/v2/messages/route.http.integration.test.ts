@@ -189,6 +189,14 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
 
     // Spawn Next dev on the isolated port. Inherit only the local
     // Supabase env; everything else is scoped to the child.
+    //
+    // Q3-R note: `detached: true` places Next dev in its own process
+    // group so afterAll can kill the whole tree (including the
+    // Turbopack worker child) via `process.kill(-pid, ...)`. Without
+    // this, a lingering worker keeps the "next dev already running"
+    // guard active and prevents a sibling suite (bootstrap HTTP
+    // frontier on 3110) from starting its own Next dev in the same
+    // repo. See §FASE 8 of the Q3-R order.
     const child = spawn(
       "npx",
       ["next", "dev", "-p", String(PORT), "-H", "127.0.0.1"],
@@ -206,6 +214,7 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
           SPABLA_V2_ENABLE_DEV_SEED: "0",
         },
         stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
       },
     );
     nextProcess = child;
@@ -252,20 +261,30 @@ describe("AUTH-RECOVERY · HTTP-frontier integration (Hito 9.2.4)", () => {
     }
 
     // Tear down Next dev — belt-and-braces so no residual process
-    // holds the port if any test throws.
+    // holds the port if any test throws. Kill the whole process
+    // group via `process.kill(-pid, ...)` because `next dev` with
+    // Turbopack spawns a worker child that SIGTERM to the parent
+    // does not reap (Q3-R §FASE 8).
     if (nextProcess !== null) {
       const proc = nextProcess;
       nextProcess = null;
+      const pid = proc.pid;
       await new Promise<void>((resolve) => {
         const timer = setTimeout(() => {
-          proc.kill("SIGKILL");
+          try { if (pid !== undefined) process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
+          try { proc.kill("SIGKILL"); } catch { /* already gone */ }
           resolve();
         }, 5000);
         proc.once("exit", () => {
           clearTimeout(timer);
           resolve();
         });
-        proc.kill("SIGTERM");
+        try {
+          if (pid !== undefined) process.kill(-pid, "SIGTERM");
+          else proc.kill("SIGTERM");
+        } catch {
+          proc.kill("SIGTERM");
+        }
       });
     }
   }, 30_000);

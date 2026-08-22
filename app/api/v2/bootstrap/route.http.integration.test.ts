@@ -134,7 +134,9 @@ describe.skipIf(!ENABLED)("BOOTSTRAP · HTTP-frontier integration (Hito 9.3.1-Q3
     if (signB.error || !signB.data.session) throw new Error(`signIn B failed: ${signB.error?.message ?? "no session"}`);
     validJwtOther = signB.data.session.access_token;
 
-    // Spawn Next dev
+    // Spawn Next dev (detached: true opens a process group so
+    // afterAll can reap the Turbopack worker tree via
+    // `process.kill(-pid, ...)`, per Q3-R §FASE 8).
     const child = spawn("npx", ["next", "dev", "-p", String(PORT), "-H", "127.0.0.1"], {
       cwd: REPO_ROOT,
       env: {
@@ -146,6 +148,7 @@ describe.skipIf(!ENABLED)("BOOTSTRAP · HTTP-frontier integration (Hito 9.3.1-Q3
         SPABLA_V2_ENABLE_DEV_SEED: "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
     });
     nextProcess = child;
     child.stdout.setEncoding("utf8");
@@ -163,11 +166,25 @@ describe.skipIf(!ENABLED)("BOOTSTRAP · HTTP-frontier integration (Hito 9.3.1-Q3
 
   afterAll(async () => {
     if (nextProcess !== null) {
-      nextProcess.kill("SIGTERM");
-      await new Promise<void>((r) => {
-        if (!nextProcess) return r();
-        nextProcess.on("exit", () => r());
-        setTimeout(() => r(), 5_000);
+      const proc = nextProcess;
+      nextProcess = null;
+      const pid = proc.pid;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          try { if (pid !== undefined) process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
+          try { proc.kill("SIGKILL"); } catch { /* already gone */ }
+          resolve();
+        }, 5000);
+        proc.once("exit", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+        try {
+          if (pid !== undefined) process.kill(-pid, "SIGTERM");
+          else proc.kill("SIGTERM");
+        } catch {
+          proc.kill("SIGTERM");
+        }
       });
     }
     if (!admin) return;
