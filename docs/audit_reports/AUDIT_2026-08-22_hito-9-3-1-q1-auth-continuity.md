@@ -341,24 +341,29 @@ Clasificación de afirmaciones técnicas usadas en el diagnóstico:
 
 Todos verdes en el CI basal `32420002095`.
 
-## 10 · Diagnóstico causal
+## 10 · Diagnóstico causal (rectificado en Q1-R1)
 
-Aplicando la matriz de causas §FASE 6 con niveles de confianza declarados:
+Aplicando la matriz de causas §FASE 6 con niveles de confianza **calibrados** para reflejar fielmente las limitaciones experimentales de esta auditoría. Esta tabla sustituye la versión inicial de Q1; los cambios de confianza quedan trazables en el commit de rectificación.
 
-| # | Causa | Evidencia a favor | Evidencia en contra | Nivel | Corrección mínima futura | Pertenencia |
+| # | Causa | Evidencia a favor | Evidencia en contra | Nivel (rectificado) | Corrección mínima futura | Pertenencia |
 |---|---|---|---|---|---|---|
-| 1 | Persistencia Supabase defectuosa | — | `persistSession=true` correcto (§6.1); refresh_token sin `exp` por default (§7); acta 9.2.4 paso 3 (recarga preserva sesión) | Descartado | — | — |
-| 2 | Refresh automático defectuoso (a nivel SDK) | Posible throttling background tabs | `autoRefreshToken=true` correcto; Supabase docs no describen fallo intrínseco | Posible (bajo) | Considerar `refreshSession()` explícito on-focus | Q2 |
-| 3 | Inicialización/orden de bootstrap incorrecto | H-UI-1 microwindow visible entre `supabase` y `getSession()` | Efecto único, cleanup correcto | Probable (transitorio) | Añadir loading state entre `supabase!=null` y `getSession()` resuelto | Q2 |
-| 4 | Estado SPABLA no restaurado aunque la sesión siga válida | H-UI-2 mensaje engañoso; H-UI-1 microwindow | El estado técnico se restaura correctamente cuando ambos flujos terminan | Probable | Distinguir `!session` de `!seed` de `!targetLanguage` en la UI; bootstrap server-authoritative en Q2 | Q2 |
-| 5 | seedCache ausente o caducado | Confirmado en 9.2.4 paso 5 (Actor B navegador incógnito) | No aplica al paso 10 (Actor A ya tenía seedCache) | Demostrado para paso 5; no aplica a paso 10 | Bootstrap server-authoritative que sustituya al seedCache local (Plan V1.2 §5.2 punto 4) | Q2 |
-| 6 | Recuperación de 401 demasiado agresiva | **H-CORE-2 crítico**: cualquier 401 (incluida caducidad natural) dispara sign-out; **H-CORE-3 crítico**: el sign-out elimina el refresh_token de localStorage; H-CORE-1: token capturado en closure puede quedar viejo respecto al refresh silencioso | El coordinator es idempotente y trata correctamente 401s reales (firma corrupta, revocación) | **Altamente probable como causa raíz del paso 10** | (a) `refreshSession()` explícito antes de la recovery; (b) retry con token renovado; (c) recovery destructiva SOLO si el refresh falla | Q2 |
-| 7 | Reinicio del entorno local confundido con pérdida de sesión | — | Actor A en pausa dentro de la misma sesión Next; no hubo reinicio de Supabase local en el paso 10 | Descartado (para este incidente) | — | — |
-| 8 | Error de configuración | `jwt_expiry=3600` estándar; `[auth]` correcta | — | Descartado | — | — |
-| 9 | Limitación estructural de arquitectura A | Ninguna evidencia identificada de que browser-only + persistSession + autoRefreshToken no pueda satisfacer el requisito | La corrección propuesta (refresh explícito + retry antes de recovery destructiva) es implementable puramente cliente-side sin `@supabase/ssr` ni PKCE; el contrato documentado de Supabase soporta el flujo | **Descartado** | — | — |
-| 10 | Incidente no reproducible con evidencia insuficiente | El paso 10 del acta 9.2.4 registra el síntoma pero no el mecanismo interno | El trazado estático + docs oficiales permiten reconstruir la causa raíz con alta confianza | Descartado como causa exclusiva | — | — |
+| 1 | Persistencia Supabase defectuosa | — | `persistSession=true` correcto en `supabase-browser-client.ts:36`; `refresh_token` sin `exp` por default (§7); acta 9.2.4 paso 3 confirma que la recarga preserva sesión y preferencias | **No se detectó defecto mediante trazado estático, documentación oficial o tests existentes; no demostrado experimentalmente en navegador real.** No se afirma que la persistencia funcione correctamente en todos los escenarios (recarga, reapertura, dos pestañas, renovación) hasta que existan pruebas experimentales reales. | Ninguna corrección propuesta en Q2; sujeto a validación experimental de Q3. | Q3 (verificación experimental) |
+| 2 | Refresh automático defectuoso (a nivel SDK) | Posible throttling de background tabs (comportamiento estándar de navegadores modernos, no citado por Supabase docs) | `autoRefreshToken=true` correcto; Supabase docs no describen fallo intrínseco del mecanismo | **Posible.** No se reprodujo la caducidad natural del `access_token`, no se observó rotación del `refresh_token`, no se probó `supabase.auth.refreshSession()` en navegador. La recomendación de refresh explícito antes del logout destructivo (Vector 1 de §14) es una **corrección propuesta, todavía no validada experimentalmente**. | Diseñar en Q2 el contrato de refresh explícito on-focus / on-401 y validarlo en Q3 en navegador real. | Q2 (contrato) + Q3 (validación) |
+| 3 | Inicialización/orden de bootstrap incorrecto | H-UI-1 microwindow visible por trazado estático entre `supabase!=null` y resolución de `getSession()` | Efecto único, cleanup correcto | Probable (transitorio); no reproducido en navegador. | Añadir loading state entre `supabase!=null` y `getSession()` resuelto; diseño en Q2, verificación en Q3. | Q2 + Q3 |
+| 4 | Estado SPABLA no restaurado aunque la sesión siga válida | H-UI-2 mensaje engañoso confirmado por trazado (`page.tsx:516-530`); H-UI-1 microwindow por trazado estático | El estado técnico se restaura correctamente cuando ambos flujos terminan (deducido por trazado, no observado en navegador) | Probable por análisis estático; **no observado en navegador real**. | Distinguir `!session` / `!seed` / `!targetLanguage` en la UI; bootstrap server-authoritative en Q2, verificación en Q3. | Q2 + Q3 |
+| 5 | seedCache ausente o caducado | **Confirmado en 9.2.4 paso 5** (Actor B navegador incógnito, observación directa aprobada por Dirección) | No aplica al paso 10 (Actor A ya tenía seedCache poblado) | **Demostrado experimentalmente para paso 5**; no aplica al paso 10. | Bootstrap server-authoritative que sustituya al `seedCache` local (Plan V1.2 §5.2 punto 4). | Q2 (contrato) + Q3 (validación) |
+| 6 | Recuperación de 401 demasiado agresiva y destructiva | H-CORE-2 (por trazado estático): `applyAuth401Recovery` dispara `signOut({scope:"local"})` en cualquier 401 sin distinguir naturaleza del 401; H-CORE-3 (por trazado + docs oficiales §7): `signOut` en el navegador «removes all items from localstorage», eliminando el `refresh_token` local; H-CORE-1 (por trazado): el `access_token` se captura en el closure del `useCallback` de `fetchMessages`, permitiendo que un tick en vuelo use el token viejo tras un refresh silencioso | El coordinator es idempotente y trata correctamente 401s reales de firma corrupta o JWT revocado (CI Job B verde) | **Defecto de diseño demostrado por trazado estático + documentación oficial**: cualquier 401 conduce directamente a `signOut` local destructivo sin intentar `refreshSession()` explícito. **Causalidad histórica del paso 10 NO demostrada**: es hipótesis principal altamente plausible por el trazado, pero no se observó experimentalmente cuál cadena exacta produjo el estado «no autenticado» de A tras la pausa. | (a) `refreshSession()` explícito antes de la recovery; (b) retry con token renovado si el refresh produce sesión válida; (c) recovery destructiva SOLO si el refresh falla. Contrato en Q2, validación en Q3. | Q2 (contrato) + Q3 (validación) |
+| 7 | Reinicio del entorno local confundido con pérdida de sesión | — | Actor A en pausa dentro de la misma sesión Next; no hubo reinicio de Supabase local en el paso 10 | Descartado para este incidente específico por evidencia del acta 9.2.4. | — | — |
+| 8 | Error de configuración | `jwt_expiry=3600` estándar; bloque `[auth]` de `supabase/config.toml` correcto | — | Descartado por inspección estática de `supabase/config.toml`. | — | — |
+| 9 | Limitación estructural de arquitectura A | La corrección propuesta (refresh explícito + retry antes de la recovery destructiva) es implementable puramente cliente-side sin `@supabase/ssr` ni PKCE; el contrato documentado de Supabase soporta el flujo | Ninguna limitación específica identificada mediante análisis estático ni documentación oficial | **No identificada mediante análisis estático ni documentación oficial; pendiente de validación experimental en navegador (Q3).** La confirmación definitiva de que A basta requiere ejecutar en navegador real la matriz de escenarios de §11 (barrera de Q3). | — | Q3 (verificación experimental) |
+| 10 | Incidente no reproducible con evidencia insuficiente | El paso 10 del acta 9.2.4 registra el síntoma pero no el mecanismo interno; §5.4 del acta lo declara compatible con múltiples cadenas | El trazado estático + docs oficiales permiten formular una hipótesis principal plausible sobre la causa raíz | **El mecanismo exacto del incidente histórico continúa sin reproducirse.** Existe evidencia suficiente para diseñar la siguiente fase (Q2 contrato) y establecer barreras experimentales para Q3, pero **no para atribuir causalidad definitiva** al paso 10 sin reproducción en navegador. | — | Q3 (reproducción intentada de H sin modificar config; si irreproducible con seguridad, aceptar limitación histórica) |
 
-**Causa raíz atribuida con confianza alta**: **combinación de #6 (recuperación 401 demasiado agresiva + destructiva del refresh_token) + #4 (mensaje UI engañoso durante microwindow y ante seedCache incompleto)**. Ambas son puramente cliente-side y corregibles dentro de la Arquitectura A.
+**Reformulación de la causa raíz (Q1-R1)**:
+
+- **Defecto de diseño demostrado por trazado estático + documentación oficial** (independiente del incidente histórico del paso 10): la recuperación ante cualquier 401 es directamente destructiva del `refresh_token` local, sin intento previo de renovación silenciosa. Este defecto es corregible en Q2 dentro de A.
+- **Causalidad histórica no demostrada**: no se observó experimentalmente el mecanismo exacto del paso 10; múltiples cadenas siguen siendo compatibles con la evidencia visual del acta 9.2.4.
+
+Ambas afirmaciones son distintas y esta acta las separa expresamente.
 
 ## 11 · Riesgos de seguridad y privacidad
 
@@ -377,53 +382,121 @@ Aplicando la matriz de causas §FASE 6 con niveles de confianza declarados:
 - **La reproducción independiente §16.F del Hito 9.2.5-F ya está satisfecha** por el commit externo `86d60c46…` (Hito 9.2.5-J); esta auditoría Q1 NO es reproducción independiente sino análisis técnico ejecutado por el mismo actor que promovió el Plan V1.2.
 - **Fuentes secundarias descartadas**: no se ha consultado Stack Overflow, Reddit, blogs ni documentación de terceros; solo `supabase.com/docs` en fecha 2026-08-22.
 
-## 13 · Decisión A/B/C
+## 13 · Decisión A/B/C (rectificada en Q1-R1)
 
-**RESULTADO: A — GO ARQUITECTURA A**
+**RESULTADO: A — GO CONDICIONADO PARA CONTINUAR CON LA ARQUITECTURA A**
 
-Justificación:
-- El incidente 9.2.4 se explica con alta confianza por defectos de **coordinación cliente** (recovery agresiva + captura de token en closure + mensaje UI engañoso), no por una limitación estructural del cliente browser-only de Supabase con `persistSession=true` + `autoRefreshToken=true`.
-- La documentación oficial de Supabase confirma que la persistencia + auto-refresh son mecanismos válidos para la experiencia solicitada, siempre que el cliente **no destruya el refresh_token al primer 401** cuando la sesión todavía es recuperable.
-- La corrección propuesta es implementable puramente cliente-side, sin `@supabase/ssr`, sin cookies SSR, sin migración general a PKCE y sin nueva dependencia de auth. Cumple estrictamente el alcance congelado por el Plan V1.2 §15.1.
-- Ninguna limitación estructural fue identificada. No procede detener y elevar a Dirección.
+Fundamento calibrado:
 
-Barrera §5.2 del Plan **NO se activa** (ninguna evidencia reproducible exige B).
+- **No existe evidencia actual que justifique migrar a B**. Ningún hallazgo del trazado estático ni de las fuentes primarias oficiales apunta a una limitación estructural del cliente browser-only con `persistSession=true` + `autoRefreshToken=true`. La barrera §5.2 del Plan V1.2 **no se activa**.
+- **Los defectos identificados pueden abordarse dentro de A**. El defecto de diseño demostrado (recovery destructiva del `refresh_token` ante cualquier 401) y la anomalía UI (mensaje engañoso durante microwindow o ante seedCache incompleto) son corregibles puramente cliente-side, sin `@supabase/ssr`, sin cookies SSR, sin migración general a PKCE y sin nueva dependencia de auth.
+- **La suficiencia final de A no está demostrada todavía**. No se reprodujo en navegador real ninguno de los escenarios A/C/D/E/F/H/L de la matriz §8, y la causalidad histórica del paso 10 del acta 9.2.4 sigue sin observarse experimentalmente. La documentación oficial de Supabase es compatible con el flujo propuesto, pero la compatibilidad documentada no equivale a validación experimental.
+- **Q2 puede definir el contrato** (recuperación 401 no destructiva, refresh explícito + único retry, clasificación de errores, máquina de estados de bootstrap, bootstrap server-authoritative, mensajes UI diferenciados, observabilidad sin tokens, criterios de aceptación experimentales).
+- **Q3 no podrá cerrarse sin pruebas reales de navegador** que ejecuten la matriz de barrera experimental de §14-bis. Un PASS documental o basado en trazado estático **no** basta para promocionar Q3.
 
-## 14 · Recomendación para Q2
+Consecuencia operativa: Dirección puede autorizar Q2 (contrato) sin migrar a B. Q3 (implementación) queda condicionado a la barrera experimental de §14-bis.
 
-Q2 debe redactarse como orden operativa separada que implemente la corrección coordinada en dos vectores:
+## 14 · Recomendación para Q2 (rectificada en Q1-R1)
 
-### Vector 1 — recovery no destructiva ante 401
+**Q2 se define como fase de CONTRATO, no de implementación.** Q2 diseña los contratos y los criterios de aceptación experimentales; la implementación técnica de la corrección pertenece a Q3.
 
-En `app/v2/chat/page.tsx` `fetchMessages` y/o en `applyAuth401Recovery`:
+Q2 debe redactarse como orden operativa separada que produzca los siguientes contratos:
 
-1. Ante el primer 401, **no** llamar directamente a `notifyExpired`/`signOutLocalScope`.
-2. Intentar `supabase.auth.refreshSession()` explícito.
-3. Si el refresh produce una nueva sesión válida, **retry** el fetch con el nuevo `access_token`.
-4. Si el refresh falla (`error != null` o retorna `session === null`), entonces ejecutar la recovery destructiva actual (`notifyExpired` + `signOutLocalScope`).
-5. Preservar la idempotencia estructural del coordinator (contador global de intentos, guardián `hasAlreadyRecovered`).
+### Vector 1 — contrato de recuperación 401 no destructiva
 
-Alternativa complementaria: comparar `session.expires_at` con `Date.now()` antes de cada tick y ejecutar `refreshSession()` proactivamente si falta menos de un umbral (p. ej. 60 s) para la caducidad.
+Diseñar (no implementar en Q2) el contrato que:
 
-### Vector 2 — cierre operativo de DEUDA-UX-SEED-MISSING
+1. Ante el primer 401, **no** llama directamente a `notifyExpired`/`signOutLocalScope`.
+2. Intenta `supabase.auth.refreshSession()` explícito.
+3. Si el refresh produce una nueva sesión válida, ejecuta **un único retry** del fetch original con el nuevo `access_token`.
+4. Si el refresh falla (error o `session === null` retornado), entonces ejecuta la recovery destructiva actual (`notifyExpired` + `signOutLocalScope`).
+5. Preserva la idempotencia estructural del coordinator (contador global de intentos, guardián `hasAlreadyRecovered`).
 
-Cumple el Plan V1.2 §5.2 punto 3 y §6.1:
+**Nota sobre umbrales**: cualquier umbral temporal (por ejemplo, refresh proactivo cuando falte menos de X segundos para `session.expires_at`) debe tratarse como **parámetro a justificar con fuentes y pruebas experimentales en Q3**, no como contrato definitivo cerrado en Q2. La cifra de 60 s mencionada como ilustración en el borrador inicial de Q1 **no** es todavía valor normativo.
 
-1. Distinguir en la UI los tres motivos de `!canOperate`:
-   - «Cargando…» durante el microwindow `getSession()`.
-   - «Preparando tu conversación…» cuando `session != null` pero `!tenantId || !conversationId`.
-   - Formulario de sign-in solo cuando `!session` **y** `getSession()` ya resolvió.
-2. Sustituir la dependencia productiva del `seedCache` por un **bootstrap server-authoritative** (Plan V1.2 §5.2 punto 4) — endpoint nuevo o extensión de uno existente que devuelva `{tenantId, conversationId, conversaciones accesibles, conversación seleccionada}` a partir del JWT del usuario, sin depender de `runSeed` dev-only.
+### Vector 2 — contrato de clasificación de errores del path autenticado
 
-### Vector 3 — pruebas focalizadas nuevas para Q2
+Diseñar la máquina de estados que distinga:
 
-Añadir a la matriz de aceptación del subhito Q2:
-- Test unitario del coordinator con `refreshSession()` mockeado que devuelve nueva sesión → verifica retry sin destruir refresh_token.
-- Test unitario del coordinator con `refreshSession()` que falla → verifica que la recovery destructiva se ejecuta como fallback.
-- Test integración HTTP-frontier con `access_token` caducado + `refresh_token` válido → verifica renovación silenciosa (posible solo si el runner puede manipular el reloj del JWT o expirar tokens de test).
-- Test UI (si existe framework disponible) que verifica los tres estados de `!canOperate` con mensajes distintos.
+- 401 recuperable (access_token caducado con refresh_token válido).
+- 401 irrecuperable (refresh_token revocado / cadena `reuse detection` disparada / cuenta bloqueada).
+- 4xx no relacionados con auth (400 bad_request, 403 forbidden, 404 not_found, 409 conflict).
+- 5xx (unavailable, internal).
+- Error de red (`poll_network`) — nunca es señal de pérdida de auth.
 
-Estas pruebas deben añadirse en Q2, **no en esta Q1**.
+Cada rama debe tener acción determinista y observabilidad sin exposición de tokens.
+
+### Vector 3 — contrato de máquina de estados de bootstrap
+
+Diseñar los estados de arranque:
+
+- `Loading` (durante microwindow entre `supabase!=null` y resolución de `getSession()`).
+- `SessionRestored` (sesión válida, esperando bootstrap de contexto).
+- `ContextReady` (session + tenant + conversation + preferencias todo listo — `canOperate=true`).
+- `SessionMissing` (sesión inexistente tras `getSession()` resuelto — mostrar formulario de sign-in).
+- `Expired` (session revocada durante uso — mostrar notice de expiración).
+
+Cada estado debe tener mensaje UI diferenciado y transiciones deterministas.
+
+### Vector 4 — contrato de bootstrap server-authoritative
+
+Diseñar (sin implementar en Q2) el endpoint que sustituya a `runSeed`+`seedCache` productivo:
+
+- Recibe JWT del usuario autenticado.
+- Devuelve `{tenantId, conversationId, conversaciones accesibles, conversación seleccionada, preferencias actor-scoped}`.
+- No depende de `NODE_ENV=development` ni de `SPABLA_V2_ENABLE_DEV_SEED=1`.
+- No expone service-role al navegador.
+- Compatible con RLS FORCED del `spabla_v2.*` schema.
+
+### Vector 5 — contrato de mensajes UI diferenciados
+
+Cumple Plan V1.2 §5.2 punto 3 y §6.1:
+
+- «Cargando…» durante `Loading`.
+- «Preparando tu conversación…» durante `SessionRestored → ContextReady`.
+- Formulario de sign-in solo cuando estado = `SessionMissing`.
+- Notice de expiración cuando estado = `Expired`.
+
+### Vector 6 — contrato de observabilidad sin exposición de tokens
+
+Diseñar la telemetría del path autenticado:
+
+- Ningún `access_token`, `refresh_token`, JWT, service-role, contraseña ni OTP en logs.
+- Métricas: nº de refresh silenciosos, nº de retry tras 401, nº de recovery destructiva, nº de bootstrap failures.
+- Correlation-id ya existente (`X-SPABLA-Correlation-Id`) reutilizado.
+
+### Vector 7 — criterios de aceptación experimentales
+
+Q2 debe redactar los criterios de aceptación **de forma que sean verificables experimentalmente en navegador real** por Q3. La barrera de §14-bis define el mínimo experimental que Q3 debe superar.
+
+---
+
+## 14-bis · Barrera experimental obligatoria para Q3
+
+La implementación (Q3) **no podrá promocionarse como cerrada** hasta verificar en navegador real, con PASS/FAIL basado en evidencia observada (Network devtools, DOM, localStorage inspection, timers reales), como mínimo los siguientes escenarios:
+
+| # | Escenario | Criterio PASS |
+|---|---|---|
+| 1 | Login inicial y restauración | Sign-in con `email + password`; UI operable; `session != null`; `Authorization: Bearer` presente en fetch |
+| 2 | Recarga (`Cmd+R`) | Sesión persiste; UI vuelve a operable sin flicker; preferencias y contexto restaurados |
+| 3 | Cierre y reapertura de pestaña | Nueva pestaña restaura la sesión desde `localStorage["spabla_v2_fase9_auth"]`; UI operable |
+| 4 | Segunda pestaña simultánea | Ambas pestañas comparten sesión; refresh silencioso en una se propaga a la otra vía `onAuthStateChange` |
+| 5 | Dos pestañas operando concurrentemente | Sin race conditions; ambos polling loops usan el mismo `access_token` renovado; cero 401 espurios |
+| 6 | Reinicio de Next (`kill next-server` + relanzar) manteniendo el navegador | Navegador mantiene sesión; próximo fetch a `/api/v2/messages` valida contra Supabase sin re-login |
+| 7 | `access_token` caducado con `refresh_token` válido | El SDK renueva silenciosamente o el vector 1 dispara `refreshSession()` explícito; cero login visible; UI operable |
+| 8 | Error transitorio de red | Fetch falla → `poll_network` mostrado; **cero logout**; al recuperarse la red, próximo tick opera sin re-login |
+| 9 | 401 recuperable con refresh + retry | 401 dispara `refreshSession()`; retry con nuevo token devuelve 200; cero logout; UI operable |
+| 10 | 401 irrecuperable con logout controlado | 401 con refresh_token inválido dispara recovery destructiva; formulario de sign-in visible con mensaje inequívoco de expiración; preferencias y (si se decide) seedCache preservados |
+| 11 | seed/bootstrap ausente con sesión válida | Estado UI = «Preparando tu conversación…», **nunca** «Inicia sesión para ver la conversación»; endpoint server-authoritative de Q2 resuelve el contexto sin necesidad de `runSeed` dev-only |
+| 12 | `signOut` local y efecto entre sesiones | `signOut({scope:"local"})` en pestaña A no afecta pestaña B del mismo actor; segunda pestaña permanece operable |
+
+**Reglas de aceptación de la barrera**:
+
+- Cada escenario debe producir **PASS o FAIL con evidencia observada**. `NO EJECUTABLE` no es aceptable para promocionar Q3.
+- La evidencia mínima incluye: registro observable de red (Network devtools o equivalente), inspección de `localStorage`, captura de estado UI, correlation-ids.
+- No se acepta trazado estático como sustituto de la observación experimental.
+- No se acepta documentación oficial de terceros como sustituto de la observación experimental (aunque sigue siendo requisito para el diseño en Q2).
+- Los escenarios que requieran manipulación temporal (7) pueden ejecutarse con el reloj del sistema, con expiración de token generada por medios legítimos (por ejemplo, esperar realmente los 3600 s, o expirar sesiones vía admin API sin modificar `supabase/config.toml` versionado), o con instrumentación de test que no altere código productivo.
 
 ## 15 · Criterios de aceptación propuestos para la implementación (Q2)
 
@@ -456,8 +529,17 @@ Este apartado se completa mecánicamente tras el commit; el hash del blob quedar
 
 ---
 
-## Veredicto del acta
+## Veredicto del acta (rectificado en Q1-R1)
 
-**HITO 9.3.1-Q1 · AUDITORÍA — GO ARQUITECTURA A**
+**HITO 9.3.1-Q1 · AUDITORÍA CERRADA — GO CONDICIONADO PARA CONTINUAR CON LA ARQUITECTURA A**
 
-La Arquitectura A congelada por el Plan V1.2 §15.1 es viable. Los defectos identificados en el incidente 9.2.4 son puramente de coordinación cliente y son corregibles en Q2 sin migrar a la Opción B. La barrera §5.2 del Plan **NO se activa**. Q2 puede redactarse y ejecutarse como orden operativa separada.
+Fundamento consolidado:
+
+- **La Arquitectura A congelada por el Plan V1.2 §15.1 permanece como única arquitectura autorizada.** La barrera §5.2 del Plan **NO se activa**. La Opción B (Next SSR / PKCE con `@supabase/ssr`) sigue prohibida sin nueva autorización expresa de Dirección.
+- **Defecto de diseño demostrado** por trazado estático + documentación oficial: la recuperación ante cualquier 401 es directamente destructiva del `refresh_token` local, sin intento previo de refresh silencioso. Corregible en Q2 (contrato) + Q3 (implementación).
+- **Causalidad histórica del paso 10 no demostrada**: no se observó experimentalmente el mecanismo exacto; múltiples cadenas siguen siendo compatibles con la evidencia visual del acta 9.2.4. La hipótesis principal (defecto de recovery) es altamente plausible por trazado, pero no se afirma como causa histórica definitiva.
+- **La suficiencia final de A no está demostrada todavía**. No se reprodujeron en navegador real los escenarios A/C/D/E/F/H/L de la matriz §8. La confirmación definitiva requiere ejecutar la barrera experimental de §14-bis en Q3.
+- **Q2 puede redactarse y ejecutarse como fase de contrato** con los 7 vectores de §14. La implementación técnica pertenece a Q3.
+- **Q3 no podrá cerrarse sin PASS/FAIL experimental** en los 12 escenarios de §14-bis, con evidencia observada en navegador real. `NO EJECUTABLE` no es aceptable para promocionar Q3.
+
+Trazabilidad de la rectificación: esta versión sustituye el veredicto inicial «GO ARQUITECTURA A» por «GO CONDICIONADO PARA CONTINUAR CON LA ARQUITECTURA A» para reflejar fielmente las limitaciones experimentales de la auditoría (ver §10 y §13 rectificados; §14 rediseñado como fase de contrato; §14-bis añadido con la barrera experimental obligatoria de Q3).
