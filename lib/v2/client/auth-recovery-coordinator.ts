@@ -1,12 +1,24 @@
 /**
  * SPABLA V2 · Hito 9.2.4 · Deterministic auth-recovery coordinator.
+ * SPABLA V2 · Hito 9.3.1-Q3 · Contract preserved; wired as the
+ *   destructive tail of the refresh-first flow.
  *
  * Extracts the recovery transition that `app/v2/chat/page.tsx` runs
- * when the polling loop observes an HTTP 401 from `/api/v2/messages`.
- * Hoisting the coordinator lets us TEST the same code path that the
- * production page uses, instead of writing a mock in the test that
- * pretends to be the client — which is exactly what §5.2 of the
- * plan and the corrective operational order forbid.
+ * when a request against `/api/v2/*` observes an HTTP 401 that could
+ * not be recovered via `refreshSessionOnce`. Hoisting the coordinator
+ * lets us TEST the same code path that the production page uses,
+ * instead of writing a mock in the test that pretends to be the
+ * client — which is exactly what §5.2 of the plan and the corrective
+ * operational order forbid.
+ *
+ * Q3 addition (Q2 §5): the coordinator is now the DESTRUCTIVE TAIL
+ * of the recovery flow. The caller is expected to have first invoked
+ * `refreshSessionOnce(supabase)` and, only when the refresh outcome
+ * was `no_session` or `failed` (or when a retry after `renewed` also
+ * returned 401), invoke `applyAuth401Recovery`. The coordinator
+ * itself does NOT attempt to refresh; that responsibility belongs to
+ * `session-refresh-coordinator.ts` + `fetch-with-auth-retry.ts` so the
+ * three concerns remain independently testable.
  *
  * Contract:
  *   - `applyAuth401Recovery(deps)` is IDEMPOTENT: subsequent calls

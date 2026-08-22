@@ -1,10 +1,17 @@
 /**
  * SPABLA V2 · Hito 9.2.4 · External source of the local seed cache.
+ * SPABLA V2 · Hito 9.3.1-Q3 · Retired from the productive bootstrap
+ *   path. `useSeedCache` remains as a DEV-ONLY convenience for the
+ *   `DeveloperPanel` (which invokes `runSeed()` and consumes
+ *   `writeSeedToCache`), but the productive chat page no longer
+ *   depends on this snapshot: `GET /api/v2/bootstrap` (Q3, Q2 §10)
+ *   is the server-authoritative source of `tenantId`,
+ *   `conversationId`, memberships and selected conversation.
  *
  * The `/api/v2/seed` response is persisted to `window.localStorage` so
- * that both browsers used during dev/demo stay aligned on the same
- * tenant + conversation + demo actor credentials. Previously this was
- * loaded from `useEffect`, which triggered
+ * that the two demo browsers used during dev/demo stay aligned on the
+ * same tenant + conversation + demo actor credentials. Previously this
+ * was loaded from `useEffect`, which triggered
  * `react-hooks/set-state-in-effect`. This module publishes the cache
  * as an external source; components consume it with
  * `useSyncExternalStore`.
@@ -12,6 +19,8 @@
  * Writes go through `writeSeedToCache` (invalidates snapshot + notifies
  * subscribers). Reads through `useSeedCache`. SSR yields the empty
  * snapshot.
+ *
+ * @dev-only — as of Q3 no productive code path reads this snapshot.
  */
 
 import { useSyncExternalStore } from "react";

@@ -44,6 +44,12 @@ import {
   applyAuth401Recovery,
   shouldTriggerAuth401Recovery,
 } from "@/lib/v2/client/auth-recovery-coordinator";
+// Hito 9.3.1-Q3 · continuidad autenticada · el gate productivo del
+// contexto ahora proviene del bootstrap server-authoritative; el fetch
+// autenticado pasa por el retry helper para recuperar 401s sin destruir
+// la sesión al primer fallo.
+import { fetchBootstrap, type BootstrapPayload } from "@/lib/v2/client/bootstrap-client";
+import { fetchWithAuthRetry } from "@/lib/v2/client/fetch-with-auth-retry";
 
 // Hito 9.2.1 · Shell corporativo SPABLA (cabecera + envoltura).
 import { AppHeader } from "./components/AppHeader";
@@ -147,7 +153,10 @@ export default function VisibleConversationPage() {
   // probe de `window.localStorage` y la carga del seed persistido.
   const supabase = useSupabaseBrowserClient();
   const preferenceStorage = usePreferenceStorage();
-  const { seed, tenantId, conversationId } = useSeedCache();
+  // Hito 9.3.1-Q3 · el `seedCache` local queda como fallback dev-only
+  // (`DeveloperPanel` sigue pudiendo poblarlo). La verdad productiva es
+  // el snapshot de bootstrap server-authoritative.
+  const { seed, tenantId: seedTenantId, conversationId: seedConversationId } = useSeedCache();
 
   const [session, setSession] = useState<Session | null>(null);
   const [signInEmail, setSignInEmail] = useState("");
@@ -157,6 +166,32 @@ export default function VisibleConversationPage() {
 
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedBusy, setSeedBusy] = useState(false);
+
+  // Hito 9.3.1-Q3 · Bootstrap server-authoritative. Sustituye la
+  // dependencia productiva del `seedCache` local (que sigue disponible
+  // como fallback dev-only para el `DeveloperPanel`). El fetch se
+  // dispara al alcanzar `SessionReady` y se acompaña con phase para
+  // que la UI diferencie los estados de la máquina de Q2 §9.
+  type BootstrapPhase =
+    | "idle"
+    | "loading"
+    | "ok"
+    | "unauthorized"
+    | "transient"
+    | "malformed"
+    | "network";
+  const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
+  const [bootstrapPhase, setBootstrapPhase] = useState<BootstrapPhase>("idle");
+  const tenantId = bootstrap?.selectedTenantId ?? seedTenantId;
+  const conversationId = bootstrap?.selectedConversationId ?? seedConversationId;
+  // Guardián para evitar disparos concurrentes del bootstrap.
+  const bootstrapInFlightRef = useRef<boolean>(false);
+  // Actor para el que se cacheó el bootstrap actual. Si cambia el actor,
+  // el snapshot se descarta.
+  const [bootstrapForActor, setBootstrapForActor] = useState<string | null>(null);
+  // Marca la resolución inicial de `getSession()` para diferenciar el
+  // estado `Initializing`/`RestoringSession` del `SessionMissing` real.
+  const [sessionRestored, setSessionRestored] = useState<boolean>(false);
 
   // Hito 9.2.4 · Sustituye la reconciliación en efecto por derivación
   // en render. `manualLangs.forActor` marca al dueño del par manual;
@@ -196,12 +231,59 @@ export default function VisibleConversationPage() {
 
   useEffect(() => {
     if (!supabase) return;
-    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: sub } = supabase.auth.onAuthStateChange((_evt, s) => setSession(s));
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+      // Hito 9.3.1-Q3 · marcamos la resolución inicial de la sesión
+      // para que la UI transite de `RestoringSession` al estado
+      // resultante (`SessionMissing` o `SessionReady`) sin mostrar el
+      // formulario de login durante el microwindow.
+      setSessionRestored(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((evt, s) => {
+      setSession(s);
+      // Cualquier evento auth cuenta como resolución de la sesión
+      // (INITIAL_SESSION, SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, …).
+      setSessionRestored(true);
+      // SIGNED_OUT · limpiar el snapshot de bootstrap para evitar
+      // reutilizar contexto de un actor cerrado.
+      if (evt === "SIGNED_OUT") {
+        setBootstrap(null);
+        setBootstrapPhase("idle");
+        setBootstrapForActor(null);
+      }
+    });
     return () => {
       sub.subscription.unsubscribe();
     };
   }, [supabase]);
+
+  // Hito 9.3.1-Q3 · Dispara el bootstrap server-authoritative en cuanto
+  // exista una sesión válida y no tengamos un snapshot para el actor
+  // vigente. Un solo bootstrap in-flight por vez.
+  useEffect(() => {
+    if (!supabase || !session) return;
+    const actorId = session.user.id;
+    if (bootstrap !== null && bootstrapForActor === actorId) return;
+    if (bootstrapInFlightRef.current) return;
+    bootstrapInFlightRef.current = true;
+    setBootstrapPhase("loading");
+    void fetchBootstrap(supabase).then((outcome) => {
+      bootstrapInFlightRef.current = false;
+      if (outcome.kind === "ok") {
+        setBootstrap(outcome.payload);
+        setBootstrapForActor(actorId);
+        setBootstrapPhase("ok");
+      } else if (outcome.kind === "unauthorized") {
+        setBootstrapPhase("unauthorized");
+      } else if (outcome.kind === "transient") {
+        setBootstrapPhase("transient");
+      } else if (outcome.kind === "malformed") {
+        setBootstrapPhase("malformed");
+      } else {
+        setBootstrapPhase("network");
+      }
+    });
+  }, [supabase, session, bootstrap, bootstrapForActor]);
 
   const sessionUserId = session?.user.id ?? null;
   // Actor-scoped derivations. Reads only; no state mutations.
@@ -299,14 +381,19 @@ export default function VisibleConversationPage() {
   const fetchMessages = useCallback(async () => {
     if (!supabase || !session) return;
     if (sessionExpiredRef.current) return;
-    const token = session.access_token;
     const actor = session.user.id;
     try {
-      const res = await fetch(
+      // Hito 9.3.1-Q3 · el fetch autenticado pasa por el retry helper
+      // (`fetchWithAuthRetry`), que atacha `Authorization: Bearer …`
+      // con la sesión actual, reintenta una única vez tras un refresh
+      // single-flight ante 401 y devuelve la respuesta final. Si el
+      // retry devuelve 401 nuevamente o el refresh falla, el flujo
+      // desemboca en `applyAuth401Recovery` más abajo.
+      const res = await fetchWithAuthRetry(
+        supabase,
         `/api/v2/messages?tenantId=${encodeURIComponent(tenantId)}&conversationId=${encodeURIComponent(conversationId)}&to=${encodeURIComponent(targetLanguage)}`,
         {
           method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
         },
       );
@@ -415,12 +502,16 @@ export default function VisibleConversationPage() {
 
   const signOut = useCallback(async () => {
     if (!supabase) return;
-    // AUTH-RECOVERY (Hito 9.2.4): `scope: "local"` limpia la sesión
-    // SÓLO de esta pestaña; otros navegadores del mismo actor quedan
-    // intactos. NO borra ninguna clave localStorage propiedad del
-    // preference store (`spabla_v2:language-preferences:v1:*`) ni del
-    // seed cache (`spabla_v2_fase9_seed`) — se preservan íntegras para
-    // el próximo sign-in.
+    // AUTH-RECOVERY (Hito 9.2.4) · SIGNOUT-SEMANTICS (Hito 9.3.1-Q3):
+    // `scope: "local"` cierra la sesión local del navegador/dispositivo
+    // actual — es decir, elimina del `localStorage` los items propios
+    // de la sesión Supabase (`spabla_v2_fase9_auth`). Otras pestañas
+    // del mismo navegador y origen comparten ese almacenamiento y por
+    // tanto quedan afectadas (Q2 §14 + acta Q1 §7-bis); otros
+    // navegadores, perfiles independientes o dispositivos conservan
+    // sus sesiones. NO borra las claves del preference store
+    // (`spabla_v2:language-preferences:v1:*`) ni del seed cache
+    // (`spabla_v2_fase9_seed`) — se preservan íntegras.
     await supabase.auth.signOut({ scope: "local" });
     sessionExpiredRef.current = false;
     setSessionExpired(false);
@@ -428,28 +519,40 @@ export default function VisibleConversationPage() {
     setRawMessages({ items: [], forActor: null });
     setRawPollError(null);
     setRawSendError(null);
+    // Hito 9.3.1-Q3 · descartamos el snapshot de bootstrap para que la
+    // próxima sign-in vuelva a solicitar el contexto server-authoritative.
+    setBootstrap(null);
+    setBootstrapForActor(null);
+    setBootstrapPhase("idle");
   }, [supabase]);
 
   const sendMessage = useCallback(async () => {
-    if (!session || !draft.trim()) return;
+    if (!supabase || !session || !draft.trim()) return;
     const actor = session.user.id;
     setSending(true);
     setRawSendError(null);
+    // Hito 9.3.1-Q3 · autorizado por Q2 §5.3: el POST usa
+    // `clientMessageId` como idempotency key, por lo que un retry
+    // tras refresh silencioso con el mismo cuerpo es seguro y no
+    // duplica el mensaje (el servidor devuelve 409 conflict si el
+    // ID ya está persistido).
+    const clientMessageId = randomMessageId();
     try {
-      const res = await fetch("/api/v2/messages", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
+      const res = await fetchWithAuthRetry(
+        supabase,
+        "/api/v2/messages",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            tenantId,
+            conversationId,
+            text: draft.trim(),
+            language: myLanguage,
+            clientMessageId,
+          }),
         },
-        body: JSON.stringify({
-          tenantId,
-          conversationId,
-          text: draft.trim(),
-          language: myLanguage,
-          clientMessageId: randomMessageId(),
-        }),
-      });
+      );
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setRawSendError({ code: body.error ?? `send_status_${res.status}`, forActor: actor });
@@ -462,7 +565,7 @@ export default function VisibleConversationPage() {
     } finally {
       setSending(false);
     }
-  }, [session, draft, tenantId, conversationId, myLanguage, fetchMessages]);
+  }, [supabase, session, draft, tenantId, conversationId, myLanguage, fetchMessages]);
 
   return (
     <ChatPageFrame header={<AppHeader />}>
@@ -473,7 +576,14 @@ export default function VisibleConversationPage() {
         onSignOut={session ? signOut : undefined}
       />
 
-      {!session && (
+      {/*
+        Hito 9.3.1-Q3 · el formulario de sign-in solo aparece cuando ya
+        hemos resuelto que no hay sesión (`SessionMissing`/`Expired` de
+        la máquina Q2 §9). Durante el microwindow de restauración
+        (`Initializing`/`RestoringSession`) mostramos un aviso neutro
+        para no confundir al usuario.
+      */}
+      {!session && sessionRestored && (
         <SessionArea
           sessionExpired={sessionExpired}
           sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
@@ -485,6 +595,23 @@ export default function VisibleConversationPage() {
           signInBusy={signInBusy}
           onSignIn={() => { void signIn(); }}
         />
+      )}
+      {!session && !sessionRestored && (
+        <section
+          aria-label="Restaurando sesión"
+          style={{
+            marginTop: "0.75rem",
+            padding: "1.25rem 1rem",
+            background: "#F8FAFC",
+            border: "1px solid #E2E8F0",
+            borderRadius: 10,
+            color: "#475569",
+            fontSize: "0.9rem",
+            textAlign: "center",
+          }}
+        >
+          Restaurando tu sesión…
+        </section>
       )}
 
       {session && (
@@ -527,7 +654,26 @@ export default function VisibleConversationPage() {
             textAlign: "center",
           }}
         >
-          Inicia sesión para ver la conversación.
+          {/*
+            Hito 9.3.1-Q3 · mensajes UI diferenciados por motivo real de
+            `!canOperate` (Q2 §9 máquina de estados):
+              - `!session` post-restauración → «Inicia sesión…» (con
+                formulario visible arriba).
+              - `session` + bootstrap en marcha → «Preparando tu
+                conversación…».
+              - `session` + bootstrap error transitorio → aviso de reintento.
+              - `session` + bootstrap sin memberships/conversaciones →
+                aviso informativo sin acción.
+          */}
+          {!session
+            ? (sessionRestored ? "Inicia sesión para ver la conversación." : "Restaurando tu sesión…")
+            : bootstrapPhase === "loading" || bootstrapPhase === "idle"
+              ? "Preparando tu conversación…"
+              : bootstrapPhase === "transient" || bootstrapPhase === "network" || bootstrapPhase === "malformed"
+                ? "Reintentando cargar tu contexto…"
+                : bootstrap && !bootstrap.canOperate
+                  ? "Tu cuenta todavía no tiene una conversación disponible."
+                  : "Preparando tu conversación…"}
         </section>
       ) : (
       <section
