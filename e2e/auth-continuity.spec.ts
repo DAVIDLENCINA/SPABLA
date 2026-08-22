@@ -248,13 +248,47 @@ type ManagedNext = {
 };
 
 function pidFromPort(port: number): number | null {
-  const r = spawnSync("lsof", ["-nP", "-iTCP:" + String(port), "-sTCP:LISTEN", "-t"], {
+  // Try `ss` first (canonical on modern Linux, present in
+  // ubuntu-latest CI). Falls back to `lsof` (macOS local) and then
+  // `fuser` (last resort). All are unprivileged: they only return
+  // PIDs owned by the current user, which is exactly what we need.
+  const tryParseNumber = (raw: string | undefined): number | null => {
+    if (raw === undefined) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  // 1. `ss -ltnpH sport = :PORT` → `... users:(("next-server",pid=1234,fd=17))`
+  const rss = spawnSync("ss", ["-ltnpH", "sport", "=", ":" + String(port)], { encoding: "utf8" });
+  if (rss.status === 0 && rss.stdout.length > 0) {
+    const m = rss.stdout.match(/pid=(\d+)/);
+    const n = tryParseNumber(m?.[1]);
+    if (n !== null) return n;
+  }
+  // 2. `lsof -nP -iTCP:PORT -sTCP:LISTEN -t`
+  const rlsof = spawnSync("lsof", ["-nP", "-iTCP:" + String(port), "-sTCP:LISTEN", "-t"], {
     encoding: "utf8",
   });
-  if (r.status !== 0) return null;
-  const first = r.stdout.split(/\s+/).filter(Boolean)[0];
-  const n = first ? Number(first) : NaN;
-  return Number.isFinite(n) ? n : null;
+  if (rlsof.status === 0 && rlsof.stdout.length > 0) {
+    const n = tryParseNumber(rlsof.stdout.split(/\s+/).filter(Boolean)[0]);
+    if (n !== null) return n;
+  }
+  // 3. `lsof -nP -i :PORT -sTCP:LISTEN -t` (algunas builds no aceptan -iTCP:PORT).
+  const rlsof2 = spawnSync("lsof", ["-nP", "-i", ":" + String(port), "-sTCP:LISTEN", "-t"], {
+    encoding: "utf8",
+  });
+  if (rlsof2.status === 0 && rlsof2.stdout.length > 0) {
+    const n = tryParseNumber(rlsof2.stdout.split(/\s+/).filter(Boolean)[0]);
+    if (n !== null) return n;
+  }
+  // 4. `fuser PORT/tcp`
+  const rfuser = spawnSync("fuser", [String(port) + "/tcp"], { encoding: "utf8" });
+  if (rfuser.status === 0) {
+    const combined = (rfuser.stdout + " " + rfuser.stderr).trim();
+    const first = combined.split(/\s+/).filter(Boolean).find((tok) => /^\d+$/.test(tok));
+    const n = tryParseNumber(first);
+    if (n !== null) return n;
+  }
+  return null;
 }
 
 async function spawnNextDev(port: number): Promise<ManagedNext> {
@@ -651,8 +685,30 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
       expect(restarted.pid).not.toBe(firstListenerPid);
       expect(await portOpen("127.0.0.1", NEXT_PORT)).toBe(true);
 
-      // Recuperación sin re-identificarse.
-      await page.reload({ waitUntil: "domcontentloaded" });
+      // Pre-warm de la ruta `/v2/chat` — tras el restart Turbopack
+      // recompila y la primera navegación desde el navegador puede
+      // tardar bastante. Un fetch previo asegura que el bundle esté
+      // caliente y el reload posterior no exceda el navigationTimeout.
+      const preWarmStart = Date.now();
+      const preWarmDeadline = 180_000;
+      let preWarmed = false;
+      while (Date.now() - preWarmStart < preWarmDeadline) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, { method: "GET" });
+          if (res.status >= 200 && res.status < 500) { preWarmed = true; break; }
+        } catch { /* still compiling */ }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      expect(preWarmed).toBe(true);
+
+      // Recuperación sin re-identificarse. Usamos `page.goto` en vez
+      // de `page.reload` porque el `reload` sobre un frame que quedó
+      // sin server puede abortar con `net::ERR_ABORTED`. `goto`
+      // fuerza navegación limpia contra el server ya-restarted.
+      await page.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
+        waitUntil: "load",
+        timeout: 90_000,
+      });
       await expectAuthenticatedUi(page);
       await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
     } finally {
