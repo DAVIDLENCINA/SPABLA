@@ -1,11 +1,12 @@
 # SPABLA V2 · Hito 9.3.2-A — Contrato específico del onboarding productivo atómico
 
-**Versión**: `Q1-RR-RECT (Hito 9.3.2-A-Q1-RR-RECT · 2026-08-24)`. Versión final autosuficiente. Rectifica y sustituye **normativamente** las versiones anteriores:
+**Versión**: `Q1-RR-SCOPE (Hito 9.3.2-A-Q1-RR-SCOPE · 2026-08-24)`. Versión final autosuficiente. Rectifica y sustituye **normativamente** las versiones anteriores:
 
 - Q1 (`b99185263500220772f595a921c526ade0bc2acc`) — dejaba pendientes OBS-Q1-1 y OBS-Q1-2.
 - Q1-R (`00d2aa4c5d08c87619dd9d6d4cceaab39d129093`) — rectificaba OBS-Q1-1/2 pero introducía regresiones documentales (matriz reducida de 38 a 20 casos con pérdida de 6+1+1 escenarios, whitelist de locales incorrecta con 5 códigos inexistentes + 5 códigos omitidos + 1 sufijo prohibido, firma RPC insegura por caller privilegiado). Descartado como candidato de promoción por dictamen `HITO 9.3.2-A-Q1-RR · RECTIFICACIÓN DOCUMENTAL ADICIONAL REQUERIDA — NO PROMOVER`.
+- Q1-RR-RECT (`dbb215bf0ad1ca8c682ab1504e7134ab2ccd4b1e`) — resolvía la matriz y las regresiones de Q1-R pero mantenía dos ambigüedades: identificador compuesto `24'` en la matriz (dificultando conteo, crosswalks y automatización de pruebas) y §17-ter I enumeraba un alcance parcial de Q2 («casos 5-9, 11-13, 17-24, 24', 25-46, 47-51, 56, 57») que excluía los casos 1-4 (autenticación), 10 (mapping huérfano detectado) y 52-55 (etiqueta libre + `deletion_pending` + Auth eliminado + mismo email) aunque describen comportamiento observable obligatorio del onboarding. Q1-RR-SCOPE rectifica ambas ambigüedades.
 
-**Rama documental**: `spabla-v2/hito-9-3-2-a-q1-rr-final-contract`.
+**Rama documental**: `spabla-v2/hito-9-3-2-a-q1-rr-scope-rectification`.
 **Base oficial exacta**: `fb0a75676451b33934b149a718f3c4a55b92db3b` (`spabla-v2/thirteen-languages-activation`, cerrada por `HITO 9.3.1-Q3-E2E-R3-P · CONTINUIDAD NATURAL PROMOVIDA A OFICIAL — CERRADO`).
 **CI oficial autorizante de la base**: [`32755010804`](https://github.com/DAVIDLENCINA/SPABLA/actions/runs/32755010804) attempt 1 · success · Jobs A/B/C/D success · Job D 14 passed · PostgreSQL 17 · restore drill PASS.
 **Contrato marco gobernante**: `docs/phases/SPABLA_V2_FASE_9_HITO_9_3_2_PASSWORDLESS_OTP_CONTRACT.md` (R2).
@@ -13,12 +14,13 @@
 **Ramas anteriores (intactas)**:
 - Q1 original: `spabla-v2/hito-9-3-2-a-q1-onboarding-contract` @ `b991852…`.
 - Q1-R descartado: `spabla-v2/hito-9-3-2-a-q1-r-onboarding-contract` @ `00d2aa4…`.
+- Q1-RR-RECT: `spabla-v2/hito-9-3-2-a-q1-rr-final-contract` @ `dbb215b…`.
 
-**Actas previas**: `docs/audit_reports/AUDIT_2026-08-22_hito-9-3-1-q3-auth-continuity-implementation.md` · `docs/audit_reports/AUDIT_2026-08-24_hito-9-3-1-q3-s6-natural-context-r3.md` · `docs/audit_reports/AUDIT_2026-08-24_hito-9-3-2-a-q1-rr-final-contract.md` (esta unidad).
+**Actas previas**: `docs/audit_reports/AUDIT_2026-08-22_hito-9-3-1-q3-auth-continuity-implementation.md` · `docs/audit_reports/AUDIT_2026-08-24_hito-9-3-1-q3-s6-natural-context-r3.md` · `docs/audit_reports/AUDIT_2026-08-24_hito-9-3-2-a-q1-rr-final-contract.md` · `docs/audit_reports/AUDIT_2026-08-24_hito-9-3-2-a-q1-rr-scope-rectification.md` (esta unidad).
 
 **Autoridad**: este documento congela el alcance normativo de la unidad **9.3.2-A** (onboarding productivo mínimo, atómico e idempotente). **No autoriza implementación**. La implementación requerirá la orden operativa 9.3.2-A-Q2, seguida por 9.3.2-A-Q3 (barrera E2E) y 9.3.2-A-Q4 (promoción a la rama oficial).
 
-**Alcance de la rectificación Q1-RR-RECT**: normativa contractual únicamente. Cero migración, cero endpoint, cero código productivo, cero test, cero cambio en Supabase, cero cambio en workflows.
+**Alcance de la rectificación Q1-RR-SCOPE**: normativa contractual únicamente, limitada a (a) renumeración canónica de la matriz §14 a identificadores enteros 1-58 consecutivos eliminando `24'`, (b) rectificación de §17-ter I con la formulación completa del alcance Q2 y la tabla explícita de obligaciones/diferidos, (c) actualización de crosswalks, referencias STRIDE y referencias cruzadas a nueva numeración. Todas las decisiones cerradas en Q1-RR-RECT sobre catálogo de 13 idiomas, RPC de un único parámetro, clave interna `workspace.personal.default`, mapping huérfano, códigos HTTP, RLS, grants, rollback, cero OpenAI y continuidad de sesión se preservan sin cambio. Cero migración, cero endpoint, cero código productivo, cero test, cero cambio en Supabase, cero cambio en workflows.
 
 ---
 
@@ -92,7 +94,7 @@ Ejecutados sobre Supabase local desechable con dos conexiones psql concurrentes.
 - **D-8** *(añadido por Q1-R, mantenido por Q1-RR-RECT)* · Q1 no prohibía explícitamente el reclamo automático del tenant anterior tras re-registro con mismo email. Q1-RR-RECT lo prohíbe (§17-ter D, §17-ter G, I-12).
 - **D-9** *(añadido por Q1-RR-RECT)* · Q1-R proponía firma RPC `admin_ensure_personal_workspace(uuid, text)` con `p_workspace_label text` server-owned pero sin CHECK/enum. Cualquier caller `service_role` (jobs, migraciones futuras, scripts admin) podría pasar texto arbitrario. Q1-RR-RECT elimina el parámetro por completo: la RPC final tiene **un único parámetro** `p_actor_id uuid`.
 - **D-10** *(añadido por Q1-RR-RECT)* · Q1-R §17-bis 6 listaba como whitelist activada `es, ca, eu, gl, en, fr, de, it, pt, nl, sv, ar, zh-Hans`, confundiendo el catálogo técnico del motor (55 códigos, ADR-005) con el catálogo activado por la UI (13 códigos, Plan V1.1 §14). Q1-RR-RECT usa el catálogo real activado (§17-bis 6).
-- **D-11** *(añadido por Q1-RR-RECT)* · Q1-R §14 caso 15 «mapping sin tenant válido» se comportaba como error `500` — pero Q1 §14 caso 10 «tenant personal eliminado → crea uno nuevo (fuera de alcance)» y esa evolución semántica no se documentaba. Q1-RR-RECT distingue explícitamente las cuatro subvariantes A/B/C/D (§5, §14 casos 10 y 47).
+- **D-11** *(añadido por Q1-RR-RECT)* · Q1-R §14 caso 15 «mapping sin tenant válido» se comportaba como error `500` — pero Q1 §14 caso 10 «tenant personal eliminado → crea uno nuevo (fuera de alcance)» y esa evolución semántica no se documentaba. Q1-RR-RECT distingue explícitamente las cuatro subvariantes A/B/C/D (§5, §14 casos 10 y 48).
 
 ## §4 · Semántica del espacio personal (cierre de §9.4 del marco)
 
@@ -432,24 +434,24 @@ const canOperate = selectedTenantId !== null;
 | S5 | Repetición masiva | DoS del onboarding | Cliente | Bucle de POST | Idempotencia + rate limit hosting | Métrica `#onboarding_por_actor_por_minuto` | 200 p95 | Bajo |
 | S6 | Carrera concurrente | Duplicación tenants | Cliente / dos pestañas | Doble POST simultáneo | PK + advisory lock | Test §14 caso 12, 13 | Test §14 caso 12, 13 | Cero |
 | S7 | Escalada mediante `service_role` | Acceso privilegiado | Vuln. server-side | Fuga env var | Encapsulado en `onboarding.supabase.ts` | Escaneo secretos | `logSanitizedError` | Bajo |
-| S8 | Exposición de mensajes SQL | Fuga estructura | Cliente | Provocar error | `opaqueError`; `SQLSTATE` no llega | Test §14 caso 42 | Test §14 caso 42 | Cero |
-| S9 | Creación abusiva de tenants | Inflación tabla | Cliente | Bucle | Idempotencia | Métrica tenants/actor | Test §14 caso 30 | Cero |
+| S8 | Exposición de mensajes SQL | Fuga estructura | Cliente | Provocar error | `opaqueError`; `SQLSTATE` no llega | Test §14 caso 43 | Test §14 caso 43 | Cero |
+| S9 | Creación abusiva de tenants | Inflación tabla | Cliente | Bucle | Idempotencia | Métrica tenants/actor | Test §14 caso 31 | Cero |
 | S10 | DoS mediante locks | Bloqueo otros actores | Cliente | Advisory lock largo | Transaction lock + RPC corta | Latencia p95 | Test §14 caso 13 | Bajo |
-| S11 | Tenant huérfano | Consistencia | Fallo mid-tx | Crash entre RPC | Transacción única | Test §14 caso 14, 32 | Migración test | Cero |
-| S12 | Membership huérfana | Consistencia | Fallo mid-tx | Crash entre INSERTs | Idem S11 | Test §14 caso 15, 33 | Idem | Cero |
+| S11 | Tenant huérfano | Consistencia | Fallo mid-tx | Crash entre RPC | Transacción única | Test §14 caso 14, 33 | Migración test | Cero |
+| S12 | Membership huérfana | Consistencia | Fallo mid-tx | Crash entre INSERTs | Idem S11 | Test §14 caso 15, 34 | Idem | Cero |
 | S13 | Reutilización JWT revocado | Sesión expirada | Ex-usuario | JWT no expirado tras signOut | `verifyJwt` valida `exp` + firma | Log auth-recovery | Test §14 caso 4 | Aceptado |
-| S14 | Confusión personal/empresarial | Selección incorrecta | Bootstrap composer | Ordenamiento `created_at` | Tabla `actor_personal_workspace` | Test §14 caso 34, 35 | Test | Bajo |
-| S15 | Logs con PII/credenciales | Fuga | Accidente server | Volcar body/resp | `logSanitizedError`; cero `email` | Test §14 caso 41 | Escaneo | Bajo |
+| S14 | Confusión personal/empresarial | Selección incorrecta | Bootstrap composer | Ordenamiento `created_at` | Tabla `actor_personal_workspace` | Test §14 caso 35, 36 | Test | Bajo |
+| S15 | Logs con PII/credenciales | Fuga | Accidente server | Volcar body/resp | `logSanitizedError`; cero `email` | Test §14 caso 42 | Escaneo | Bajo |
 | S16 | Escalada via `name` libre del cliente | Persistencia arbitraria | Cliente | Enviar `{"name":"‹script›"}` | Body ignorado; RPC no acepta text | Test §14 caso 17-24 | Test | Cero |
-| S17 | Enumeración vía locale | Detectar estado por `Accept-Language` | Cliente | Repetir con distinto AL | Respuesta idéntica; RPC no depende de locale | Test §14 caso 48, 49 | Test | Cero |
-| S18 | Reclamo automático de tenant tras eliminación Auth | Toma de control huérfano | Ex-actor re-registrado con mismo email | Nuevo signup | Prohibición explícita (I-12, §17-ter D/G); mapping en cuarentena | Job reconciliación §17-ter G | Test §14 caso 52 | Bajo |
-| S19 | Operación durante procedimiento de eliminación | Continuar creando datos | Actor en `deletion_pending` | Reintentar onboarding | Bandera server-side bloquea; `503` | Test §14 caso 50 | Test | Bajo |
-| S20 | Fuga de estado interno en respuesta | Enumeración estados | Cliente | Comparar respuestas | Alfabeto cerrado; opacidad | Test §14 casos 48-53 | Test | Cero |
-| S21 | Persistencia de texto arbitrario vía caller privilegiado (Q1-RR-RECT) | Persistencia `tenants.name` | Jobs internos, migraciones futuras, scripts admin con `service_role` | Llamar `admin_ensure_personal_workspace` | RPC sin parámetro text; clave interna fija codificada (§9, I-14) | Test §14 caso 24' + auditoría estática del código | Test | Cero (constructivo) |
+| S17 | Enumeración vía locale | Detectar estado por `Accept-Language` | Cliente | Repetir con distinto AL | Respuesta idéntica; RPC no depende de locale | Test §14 caso 49, 50 | Test | Cero |
+| S18 | Reclamo automático de tenant tras eliminación Auth | Toma de control huérfano | Ex-actor re-registrado con mismo email | Nuevo signup | Prohibición explícita (I-12, §17-ter D/G); mapping en cuarentena | Job reconciliación §17-ter G | Test §14 caso 55 | Bajo |
+| S19 | Operación durante procedimiento de eliminación | Continuar creando datos | Actor en `deletion_pending` | Reintentar onboarding | Bandera server-side bloquea; `503` | Test §14 caso 53 | Test | Bajo |
+| S20 | Fuga de estado interno en respuesta | Enumeración estados | Cliente | Comparar respuestas | Alfabeto cerrado; opacidad | Test §14 casos 53, 54, 56 | Test | Cero |
+| S21 | Persistencia de texto arbitrario vía caller privilegiado (Q1-RR-RECT) | Persistencia `tenants.name` | Jobs internos, migraciones futuras, scripts admin con `service_role` | Llamar `admin_ensure_personal_workspace` | RPC sin parámetro text; clave interna fija codificada (§9, I-14) | Test §14 caso 25 + auditoría estática del código | Test | Cero (constructivo) |
 
 OTP y sus amenazas específicas **NO** se tratan aquí — corresponden a 9.3.2-B.
 
-## §14 · Matriz contractual final (48 escenarios base + 5 casos nuevos = 53)
+## §14 · Matriz contractual final (58 escenarios numerados 1-58)
 
 Cada caso define: **entrada**, **comportamiento server-side**, **estado persistido**, **respuesta pública**, **invariantes cubiertas**, **auditoría/prueba**. La matriz absorbe los 38 escenarios técnicos originales de Q1 §14 (recuperados sin pérdida), los 20 casos contractuales de Q1-R §14 (integrados), y añade los casos nuevos derivados de OBS-Q1-1, OBS-Q1-2 y la firma RPC final Q1-RR-RECT.
 
@@ -481,49 +483,49 @@ Los crosswalks completos figuran en Anexo C (38 originales → final) y Anexo D 
 | 22 | Body string → 200/ignorado; jamás 500 por parseo | Body `"hello"` | Handler ignora estructuralmente | Estado normal | `200 OK`; jamás `500` por parseo | I-7', I-13 | HTTP-frontier |
 | 23 | Body numérico o null → 200/ignorado; jamás 500 por parseo | Body `42` o `null` | Handler ignora estructuralmente | Estado normal | `200 OK`; jamás `500` por parseo | I-7', I-13 | HTTP-frontier |
 | 24 | Bodies inesperados jamás provocan 500 por parseo | Meta-caso agregado (cubre 20-23) | Handler saneado; parser JSON con `catch` explícito que degrada a body vacío | Idem | Cualquier body no válido devuelve `200 OK`; **jamás** `500` con causa "invalid_json" en respuesta | I-13, S8 | HTTP-frontier con matriz de bodies |
-| 24' *(Q1-RR-RECT)* | Caller privilegiado no puede persistir nombre arbitrario | Script server-side con `service_role` invoca `admin_ensure_personal_workspace(...)` desde fuera del handler | La firma admite un único parámetro `uuid`. Cualquier intento de pasar más argumentos falla en la propia llamada SQL | N/A | N/A | I-14, S21 | Auditoría estática del código: `grep` sobre `admin_ensure_personal_workspace(` verifica la aridad; test SQL comprueba la firma vía `pg_proc` |
-| 25 | `GET` no permitido → 404 opaco | Petición `GET /api/v2/onboarding` | Handler responde `404` | Sin cambios | `404 not_found` opaco | Coherencia 9.2.5-C | HTTP-frontier |
-| 26 | `PUT` no permitido → 404 opaco | Petición `PUT` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
-| 27 | `PATCH` no permitido → 404 opaco | Petición `PATCH` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
-| 28 | `DELETE` no permitido → 404 opaco | Petición `DELETE` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
-| 29 | `HEAD` no permitido → 404 opaco | Petición `HEAD` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
-| 30 | Exactamente un tenant personal por actor tras onboarding | Post-onboarding un actor | Consulta directa DB | `COUNT(*) FROM tenants WHERE id IN (SELECT tenant_id FROM actor_personal_workspace WHERE actor_id=X) = 1` | N/A | I-1, S9, S14 | Integration |
-| 31 | Exactamente una membership por actor sobre su personal | Idem | Consulta directa DB | `COUNT(*) FROM tenant_memberships WHERE actor_id=X AND tenant_id IN (SELECT tenant_id FROM actor_personal_workspace WHERE actor_id=X) = 1` | N/A | I-1, S12 | Integration |
-| 32 | Cero tenant huérfano tras rollback | Post-fallo inyectado | Consulta directa DB | `SELECT COUNT(*) FROM tenants WHERE id NOT IN (SELECT tenant_id FROM tenant_memberships) = 0` | N/A | I-6, S11 | Integration con inyección |
-| 33 | Cero membership huérfana tras rollback | Post-fallo inyectado | Consulta directa DB | `SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id NOT IN (SELECT id FROM tenants) = 0` | N/A | I-6, S12 | Integration con inyección |
-| 34 | Bootstrap selecciona el personal workspace | Post-onboarding sin tenants compartidos | Composer `bootstrap.ts` con selección determinista | N/A | `selectedTenantId=<personal>` | §11 | Integration |
-| 35 | Bootstrap no selecciona arbitrariamente el compartido más antiguo | Post-onboarding con tenant compartido de `created_at` posterior | Composer respeta `created_at ASC`; personal más antiguo prevalece | N/A | `selectedTenantId=<personal>` cuando corresponde; `selectedTenantId=<compartido>` cuando el compartido es más antiguo (selección determinista) | §4 preg. 12 | Integration con fixture temporal |
-| 36 | `canOperate=true` tras onboarding | Post-onboarding, sin conversación | Composer devuelve `canOperate=true` (§11) | N/A | Response bootstrap con `canOperate=true` | §4 preg. 14, §11 | Integration |
-| 37 | Cero conversación creada por el onboarding | Post-onboarding | Consulta directa DB | `SELECT COUNT(*) FROM conversations WHERE tenant_id=<personal> = 0` | N/A | §9.5 marco | Integration |
-| 38 | `authenticated` no puede `SELECT` en `actor_personal_workspace` | Cliente autenticado con JWT válido intenta consultar la tabla vía PostgREST | RLS deniega | N/A | Error opaco o cero filas | §12 | Test SQL integration con role `authenticated` |
-| 39 | RPC no invocable por `anon` | Petición `anon` a la RPC vía PostgREST | GRANT revocado; PostgREST devuelve 404 o 403 según config | N/A | Error opaco | §12 | Test SQL integration con role `anon` |
-| 40 | RPC no invocable directamente por `authenticated` | Cliente `authenticated` intenta invocar `admin_ensure_personal_workspace` vía PostgREST | GRANT revocado; PostgREST devuelve 404 o 403 | N/A | Error opaco | §12 | Test SQL integration con role `authenticated` |
-| 41 | Logs sin PII | Cualquier petición | Handler + adaptador usan `logSanitizedError` | Logs no contienen `email`, `tenantId`, `actorId` (redactados), JWT | N/A | S15 | Escaneo de logs |
-| 42 | Errores sin `SQLSTATE` | Provocar error de DB | `opaqueError` sanitiza | Response body no contiene `SQLSTATE`, código PostgreSQL, mensaje de driver | N/A | S8 | HTTP-frontier |
-| 43 | Rollback `DROP TABLE ... CASCADE` no elimina tenants existentes | Entorno desechable con datos previos; `DROP TABLE spabla_v2.actor_personal_workspace CASCADE` | `tenants` intacta (no depende inversamente); mappings borrados | Tabla del mapping desaparece; tenants intactos | N/A | §15.2 | Test SQL en entorno desechable |
-| 44 | Restore drill PASS | Job C ejecuta dump + restore con la migración aplicada | Restore drill completo | N/A | Job C success | §15, §20 GO 1 | Job C |
-| 45 | Los 14 tests Q3-E2E-R permanecen verdes | Ejecutar `e2e/auth-continuity.spec.ts` tras cambios | Sin regresión | N/A | 14 passed / 0 failed / 0 skipped / 0 did not run | §11, contrato marco §11 | Job D |
-| 46 | Cero llamadas OpenAI o proveedores reales durante las pruebas | Ejecutar Jobs A/B/C/D | Interceptores o env vars deshabilitan proveedores externos | N/A | Cero entrada en `usage_ledger` con proveedor real durante los tests; escaneo de logs | Reproducibilidad y coste | Integration + E2E con guard `SPABLA_TEST_MODE=true` u similar |
-| 47 *(Q1-RR-RECT)* | Tenant eliminado manualmente sin flujo autorizado (D §5) | Fixture elimina tenant directamente vía SQL admin dejando mapping | §9 paso 3.a detecta; RAISE `23503`; adaptador `500` | Sin cambios (rollback) | `500 internal` opaco; cuarentena marcada | I-12, §5 D | Integration con fixture explícito |
-| 48 | Repetición con locale canónico distinto | Actor ya provisionado; `Accept-Language: ja-JP` (canónico `ja` de la whitelist §17-bis 6) | Handler normaliza a `ja`; RPC no recibe el locale; paso (3) devuelve existente | Sin cambios | `200 OK` mismo `tenantId` (opcionalmente con `label` en `ja`) | I-5, I-15, S17 | HTTP-frontier |
-| 49 | Locale desconocido (fuera del catálogo de 13) | `Accept-Language: no-NO` o `xx-YY` | Handler aplica locale por defecto para presentación; RPC intacta | Idéntico al caso 5 | `200 OK` (opcionalmente con `label` en el idioma por defecto) | I-7', I-15 | HTTP-frontier |
-| 50 | Locale no canónico o manipulado | `Accept-Language: '); DROP TABLE tenants; --` o `zh-Hans` (variante prohibida) | Header parseado por librería HTTP estándar; `isLangCode` rechaza; locale por defecto para presentación | Idéntico al caso 5 | `200 OK` idéntico | I-7', I-15, S16, S17 | HTTP-frontier; escaneo logs verifica que no se registra el header crudo |
-| 51 | Intento de enviar etiqueta libre | Body `{"name":"attacker","label":"<script>alert(1)</script>","workspaceName":"pwn"}` | Body ignorado sin efecto; RPC persiste clave interna fija | Idéntico al caso 5 (o 6) | `200 OK` idéntico | I-4″, I-7', I-14, S16 | HTTP-frontier; verificar que `tenants.name` = `workspace.personal.default` |
-| 52 | Actor con solicitud de eliminación en curso | JWT válido, actor con `actor_lifecycle_state.deletion_pending=true` | Bandera server-side detecta; handler responde sin invocar la RPC | Sin cambios | `503 unavailable` opaco | I-11, §17-ter C, S19, S20 | Integration; log `deletion_pending_blocked` sin filtrar al cliente |
-| 53 | Actor Auth ya eliminado | JWT antiguo válido durante gracia o `sub` inexistente | `verifyJwt` rechaza si firma/exp no cuadran; si aún válido durante gracia, se aplica el bloqueo del caso 52 | Sin cambios | `401 unauthorized` opaco o `503` según caso | I-10, I-11, §17-ter D, S18, S20 | Integration |
-| 54 | Re-registro con el mismo email | Nueva alta Auth (nuevo `sub`) que comparte email con identidad previamente eliminada | Nuevo actor: caso 5; el tenant anterior permanece en cuarentena bajo §17-ter G | 1 nuevo mapping/tenant/membership; el huérfano anterior intacto | `200 OK` con `tenantId` **distinto** | I-10, I-12, §17-ter D, §17-ter G, S18 | Integration con fixture Auth |
-| 55 | Actor bajo legal hold | `actor_lifecycle_state.legal_hold=true` | Handler respeta la bandera; no crea ni modifica | Sin cambios | `503 unavailable` opaco | I-11, §17-ter E, S20 | Integration |
-| 56 | Dos actores diferentes | Dos JWTs distintos, dos POST simultáneos | Cada actor tiene su advisory lock y su PK | 2 mappings, 2 tenants, 2 memberships owner | Cada respuesta `200 OK` con `tenantId` distinto | I-1, I-3 | Integration |
-| 57 | Tenant existente sin mapping (estado legacy) | Actor con `tenant_memberships.owner` sobre un tenant preexistente pero sin fila en el mapping | Decisión de Q2: (a) crear la fila apuntando al tenant existente si `admin_ensure_personal_workspace` detecta ese estado; (b) tratarlo como caso 5 creando un nuevo personal, dejando el legacy como compartido | Consistente | `200 OK` | I-1, I-3, I-6 | Integration con fixture legacy; decisión concreta se cierra en Q2 documentando estado inicial |
+| 25 | Caller privilegiado no puede persistir nombre arbitrario | Script server-side con `service_role` invoca `admin_ensure_personal_workspace(...)` desde fuera del handler | La firma admite un único parámetro `uuid`. Cualquier intento de pasar más argumentos falla en la propia llamada SQL | N/A | N/A | I-14, S21 | Auditoría estática del código: `grep` sobre `admin_ensure_personal_workspace(` verifica la aridad; test SQL comprueba la firma vía `pg_proc` |
+| 26 | `GET` no permitido → 404 opaco | Petición `GET /api/v2/onboarding` | Handler responde `404` | Sin cambios | `404 not_found` opaco | Coherencia 9.2.5-C | HTTP-frontier |
+| 27 | `PUT` no permitido → 404 opaco | Petición `PUT` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
+| 28 | `PATCH` no permitido → 404 opaco | Petición `PATCH` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
+| 29 | `DELETE` no permitido → 404 opaco | Petición `DELETE` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
+| 30 | `HEAD` no permitido → 404 opaco | Petición `HEAD` | Idem | Sin cambios | `404 not_found` | Idem | HTTP-frontier |
+| 31 | Exactamente un tenant personal por actor tras onboarding | Post-onboarding un actor | Consulta directa DB | `COUNT(*) FROM tenants WHERE id IN (SELECT tenant_id FROM actor_personal_workspace WHERE actor_id=X) = 1` | N/A | I-1, S9, S14 | Integration |
+| 32 | Exactamente una membership por actor sobre su personal | Idem | Consulta directa DB | `COUNT(*) FROM tenant_memberships WHERE actor_id=X AND tenant_id IN (SELECT tenant_id FROM actor_personal_workspace WHERE actor_id=X) = 1` | N/A | I-1, S12 | Integration |
+| 33 | Cero tenant huérfano tras rollback | Post-fallo inyectado | Consulta directa DB | `SELECT COUNT(*) FROM tenants WHERE id NOT IN (SELECT tenant_id FROM tenant_memberships) = 0` | N/A | I-6, S11 | Integration con inyección |
+| 34 | Cero membership huérfana tras rollback | Post-fallo inyectado | Consulta directa DB | `SELECT COUNT(*) FROM tenant_memberships WHERE tenant_id NOT IN (SELECT id FROM tenants) = 0` | N/A | I-6, S12 | Integration con inyección |
+| 35 | Bootstrap selecciona el personal workspace | Post-onboarding sin tenants compartidos | Composer `bootstrap.ts` con selección determinista | N/A | `selectedTenantId=<personal>` | §11 | Integration |
+| 36 | Bootstrap no selecciona arbitrariamente el compartido más antiguo | Post-onboarding con tenant compartido de `created_at` posterior | Composer respeta `created_at ASC`; personal más antiguo prevalece | N/A | `selectedTenantId=<personal>` cuando corresponde; `selectedTenantId=<compartido>` cuando el compartido es más antiguo (selección determinista) | §4 preg. 12 | Integration con fixture temporal |
+| 37 | `canOperate=true` tras onboarding | Post-onboarding, sin conversación | Composer devuelve `canOperate=true` (§11) | N/A | Response bootstrap con `canOperate=true` | §4 preg. 14, §11 | Integration |
+| 38 | Cero conversación creada por el onboarding | Post-onboarding | Consulta directa DB | `SELECT COUNT(*) FROM conversations WHERE tenant_id=<personal> = 0` | N/A | §9.5 marco | Integration |
+| 39 | `authenticated` no puede `SELECT` en `actor_personal_workspace` | Cliente autenticado con JWT válido intenta consultar la tabla vía PostgREST | RLS deniega | N/A | Error opaco o cero filas | §12 | Test SQL integration con role `authenticated` |
+| 40 | RPC no invocable por `anon` | Petición `anon` a la RPC vía PostgREST | GRANT revocado; PostgREST devuelve 404 o 403 según config | N/A | Error opaco | §12 | Test SQL integration con role `anon` |
+| 41 | RPC no invocable directamente por `authenticated` | Cliente `authenticated` intenta invocar `admin_ensure_personal_workspace` vía PostgREST | GRANT revocado; PostgREST devuelve 404 o 403 | N/A | Error opaco | §12 | Test SQL integration con role `authenticated` |
+| 42 | Logs sin PII | Cualquier petición | Handler + adaptador usan `logSanitizedError` | Logs no contienen `email`, `tenantId`, `actorId` (redactados), JWT | N/A | S15 | Escaneo de logs |
+| 43 | Errores sin `SQLSTATE` | Provocar error de DB | `opaqueError` sanitiza | Response body no contiene `SQLSTATE`, código PostgreSQL, mensaje de driver | N/A | S8 | HTTP-frontier |
+| 44 | Rollback `DROP TABLE ... CASCADE` no elimina tenants existentes | Entorno desechable con datos previos; `DROP TABLE spabla_v2.actor_personal_workspace CASCADE` | `tenants` intacta (no depende inversamente); mappings borrados | Tabla del mapping desaparece; tenants intactos | N/A | §15.2 | Test SQL en entorno desechable |
+| 45 | Restore drill PASS | Job C ejecuta dump + restore con la migración aplicada | Restore drill completo | N/A | Job C success | §15, §20 GO 1 | Job C |
+| 46 | Los 14 tests Q3-E2E-R permanecen verdes | Ejecutar `e2e/auth-continuity.spec.ts` tras cambios | Sin regresión | N/A | 14 passed / 0 failed / 0 skipped / 0 did not run | §11, contrato marco §11 | Job D |
+| 47 | Cero llamadas OpenAI o proveedores reales durante las pruebas | Ejecutar Jobs A/B/C/D | Interceptores o env vars deshabilitan proveedores externos | N/A | Cero entrada en `usage_ledger` con proveedor real durante los tests; escaneo de logs | Reproducibilidad y coste | Integration + E2E con guard `SPABLA_TEST_MODE=true` u similar |
+| 48 | Tenant eliminado manualmente sin flujo autorizado (D §5) | Fixture elimina tenant directamente vía SQL admin dejando mapping | §9 paso 3.a detecta; RAISE `23503`; adaptador `500` | Sin cambios (rollback) | `500 internal` opaco; cuarentena marcada | I-12, §5 D | Integration con fixture explícito |
+| 49 | Repetición con locale canónico distinto | Actor ya provisionado; `Accept-Language: ja-JP` (canónico `ja` de la whitelist §17-bis 6) | Handler normaliza a `ja`; RPC no recibe el locale; paso (3) devuelve existente | Sin cambios | `200 OK` mismo `tenantId` (opcionalmente con `label` en `ja`) | I-5, I-15, S17 | HTTP-frontier |
+| 50 | Locale desconocido (fuera del catálogo de 13) | `Accept-Language: no-NO` o `xx-YY` | Handler aplica locale por defecto para presentación; RPC intacta | Idéntico al caso 5 | `200 OK` (opcionalmente con `label` en el idioma por defecto) | I-7', I-15 | HTTP-frontier |
+| 51 | Locale no canónico o manipulado | `Accept-Language: '); DROP TABLE tenants; --` o `zh-Hans` (variante prohibida) | Header parseado por librería HTTP estándar; `isLangCode` rechaza; locale por defecto para presentación | Idéntico al caso 5 | `200 OK` idéntico | I-7', I-15, S16, S17 | HTTP-frontier; escaneo logs verifica que no se registra el header crudo |
+| 52 | Intento de enviar etiqueta libre | Body `{"name":"attacker","label":"<script>alert(1)</script>","workspaceName":"pwn"}` | Body ignorado sin efecto; RPC persiste clave interna fija | Idéntico al caso 5 (o 6) | `200 OK` idéntico | I-4″, I-7', I-14, S16 | HTTP-frontier; verificar que `tenants.name` = `workspace.personal.default` |
+| 53 | Actor con solicitud de eliminación en curso | JWT válido, actor con `actor_lifecycle_state.deletion_pending=true` | Bandera server-side detecta; handler responde sin invocar la RPC | Sin cambios | `503 unavailable` opaco | I-11, §17-ter C, S19, S20 | Integration; log `deletion_pending_blocked` sin filtrar al cliente |
+| 54 | Actor Auth ya eliminado | JWT antiguo válido durante gracia o `sub` inexistente | `verifyJwt` rechaza si firma/exp no cuadran; si aún válido durante gracia, se aplica el bloqueo del caso 52 | Sin cambios | `401 unauthorized` opaco o `503` según caso | I-10, I-11, §17-ter D, S18, S20 | Integration |
+| 55 | Re-registro con el mismo email | Nueva alta Auth (nuevo `sub`) que comparte email con identidad previamente eliminada | Nuevo actor: caso 5; el tenant anterior permanece en cuarentena bajo §17-ter G | 1 nuevo mapping/tenant/membership; el huérfano anterior intacto | `200 OK` con `tenantId` **distinto** | I-10, I-12, §17-ter D, §17-ter G, S18 | Integration con fixture Auth |
+| 56 | Actor bajo legal hold | `actor_lifecycle_state.legal_hold=true` | Handler respeta la bandera; no crea ni modifica | Sin cambios | `503 unavailable` opaco | I-11, §17-ter E, S20 | Integration |
+| 57 | Dos actores diferentes | Dos JWTs distintos, dos POST simultáneos | Cada actor tiene su advisory lock y su PK | 2 mappings, 2 tenants, 2 memberships owner | Cada respuesta `200 OK` con `tenantId` distinto | I-1, I-3 | Integration |
+| 58 | Tenant existente sin mapping (estado legacy) | Actor con `tenant_memberships.owner` sobre un tenant preexistente pero sin fila en el mapping | Decisión de Q2: (a) crear la fila apuntando al tenant existente si `admin_ensure_personal_workspace` detecta ese estado; (b) tratarlo como caso 5 creando un nuevo personal, dejando el legacy como compartido | Consistente | `200 OK` | I-1, I-3, I-6 | Integration con fixture legacy; decisión concreta se cierra en Q2 documentando estado inicial |
 
-**Total: 57 escenarios únicos** (48 base numerados 1-47 sin el 24' que es Q1-RR-RECT nuevo; +5 casos 48-52 Q1-R; +5 casos 53-57 completando cobertura). La renumeración lineal 1-57 sirve como referencia estable para Q2 y Q3; el crosswalk exacto figura en los Anexos C y D.
+**Total: 58 escenarios únicos numerados 1-58 consecutivos, sin identificadores compuestos**. La renumeración canónica sirve como referencia estable y automatizable para Q2 y Q3; el crosswalk exacto contra los 38 originales de Q1 y los 20 de Q1-R figura en los Anexos C y D.
 
 Notas transversales:
 
-- La matriz **no** enumera respuestas que revelen el estado interno del actor. Los casos 52, 53, 55 comparten códigos opacos.
+- La matriz **no** enumera respuestas que revelen el estado interno del actor. Los casos 53, 54, 56 comparten códigos opacos.
 - La prueba de concurrencia (caso 13) debe comprobar el **estado final en base de datos**, no solo respuestas HTTP.
-- Los 14 escenarios `e2e/auth-continuity.spec.ts` (Q3-E2E-R) deben permanecer verdes (caso 45).
-- Caso 46 (cero OpenAI) es barrera de coste y reproducibilidad; herencia directa del Q1 §14 caso 38 que Q1-R había perdido.
+- Los 14 escenarios `e2e/auth-continuity.spec.ts` (Q3-E2E-R) deben permanecer verdes (caso 46).
+- Caso 47 (cero OpenAI) es barrera de coste y reproducibilidad; herencia directa del Q1 §14 caso 38.
 
 ## §15 · Migración prevista + rollback
 
@@ -679,17 +681,17 @@ Esta sección es normativa. Distingue exhaustivamente los estados y transiciones
 
 - Debe **registrarse antes** de eliminar Auth cuando sea técnicamente posible.
 - **Revoca** sesiones activas.
-- **Impide nuevos onboardings** durante el proceso (§14 caso 52 → `503`).
+- **Impide nuevos onboardings** durante el proceso (§14 caso 53 → `503`).
 - Marca `deletion_pending=true` en la tabla futura `actor_lifecycle_state`.
 - Oculta o restringe contenido según política aplicable.
 - **No** realiza borrado destructivo inmediato si existe periodo de gracia o retención obligatoria.
-- Auditable (`correlationId`, timestamp, motivo interno). Cliente nunca ve la causa (§14 caso 52).
+- Auditable (`correlationId`, timestamp, motivo interno). Cliente nunca ve la causa (§14 caso 53).
 
 ### §17-ter D · Eliminación definitiva de Auth
 
 - La **ausencia de FK directa** hacia `auth.users` (por I-8) **no exime** de responsabilidad sobre mappings huérfanos.
 - La eliminación de Auth **no permite** que una nueva identidad reclame automáticamente el tenant anterior.
-- **Re-registro con el mismo email** = actor nuevo con `sub` distinto (§14 caso 54).
+- **Re-registro con el mismo email** = actor nuevo con `sub` distinto (§14 caso 55).
 - **Email no es identidad** ni **clave de recuperación** (I-10).
 
 ### §17-ter E · Retención legal
@@ -697,7 +699,7 @@ Esta sección es normativa. Distingue exhaustivamente los estados y transiciones
 - Separada de la retención ordinaria.
 - Solo conserva lo **jurídicamente necesario**.
 - Acceso restringido, finalidad definida, plazo controlado.
-- **No permite** operar normalmente (§14 caso 55 → `503`).
+- **No permite** operar normalmente (§14 caso 56 → `503`).
 - Duración **configurable** y **validada jurídicamente**. Cero afirmación de plazo concreto en Q1-RR-RECT.
 - Marca operativa: `legal_hold=true` en `actor_lifecycle_state`.
 
@@ -752,22 +754,58 @@ Rectificado por Q1-RR-RECT con códigos concretos (elegidos dentro del alfabeto 
 
 Ningún código enumera la causa interna. La observabilidad server-side registra la causa con `correlationId` sin filtrar al cliente.
 
-### §17-ter I · Clasificación de decisiones legales por bloqueo real de Q2
+### §17-ter I · Alcance completo de Q2 y funciones diferidas a Q4-bis
 
-Q1-RR-RECT clasifica explícitamente las decisiones legales identificadas en el acta Q1-R para que Q2 pueda avanzar sin esperar todas:
+**Formulación normativa Q1-RR-SCOPE (rectifica y sustituye la lista parcial anterior)**:
 
-| Decisión | Bloquea Q2 mínimo | Bloquea activación productiva de flujos | Diferible a subhito posterior |
-|---|---|---|---|
-| Plazo de gracia tras `deletion_pending` | **No** | Sí (activación eliminación) | — |
-| Duración y criterios de `legal_hold` | **No** | Sí (activación legal hold) | — |
-| Plazo de anonimización/eliminación por categoría | **No** | Sí (activación eliminación) | — |
-| Mecanismo técnico definitivo de anonimización | **No** | Sí (activación eliminación) | — |
-| Política sobre contenido compartido con terceros | **No** | Sí (activación eliminación) | Sí |
-| Frecuencia y ventana del job de reconciliación | **No** | Sí (producción con job automático) | Sí (procedimiento manual auditado como puente) |
-| Autorización explícita del mecanismo de recuperación administrativa | **No** | Sí (activación recuperación) | Sí |
-| Códigos definitivos §17-ter H | **Cerrado por Q1-RR-RECT** (ver tabla arriba) | — | — |
+> Q2 implementará y probará los 58 escenarios de la matriz en cuanto describan comportamiento del endpoint, RPC, persistencia, seguridad, presentación, observabilidad o respuesta ante estados existentes. Q4-bis difiere exclusivamente los workflows operativos y jurídicos que crean, ejecutan o administran eliminación, anonimización, legal hold, recuperación y reconciliación automática.
 
-**Q2 mínimo** puede implementar el onboarding productivo (casos 5-9, 11-13, 17-24, 24', 25-46, 47-51, 56, 57) sin bloqueo por ninguna decisión legal. Los casos 52, 53, 55 requieren la tabla `actor_lifecycle_state` con banderas mínimas; el comportamiento observable ya está fijado en §17-ter H.
+**Regla estructural**: diferir el mecanismo que **crea** un estado (por ejemplo el flujo de solicitud de eliminación o la aplicación administrativa de legal hold) **no** permite diferir el comportamiento seguro de Q2 cuando ese estado ya está presente en base de datos. Un actor con `deletion_pending=true` o `legal_hold=true` debe recibir una respuesta pública opaca y estable **desde el primer día**, aunque el workflow productivo que activa la bandera permanezca desactivado. Los tests de Q2 fijan esas banderas mediante fixtures controlados.
+
+**Tabla explícita de obligaciones Q2 · funciones diferidas Q4-bis · motivo · cobertura de prueba**:
+
+| Dimensión | Obligación Q2 | Diferido a Q4-bis | Motivo de la separación | Cobertura de prueba en Q2 |
+|---|---|---|---|---|
+| Autenticación | JWT ausente/malformado/inválido/expirado responden `401` opaco | — | Comportamiento observable del endpoint | Casos 1-4 (HTTP-frontier) |
+| Creación e idempotencia | Actor nuevo crea; repetición devuelve mismo `tenantId`; concurrencia serializada | — | Núcleo del onboarding | Casos 5, 6, 7, 8, 11, 12, 13, 57 (integration + concurrencia + fixture Auth) |
+| Reactivación | Membership desactivada se reactiva en la misma transacción | — | Consecuencia inmediata de idempotencia | Caso 9 (integration) |
+| Mapping huérfano y corrupción estructural | RPC detecta huérfano (§9 3.a) y devuelve `500` opaco; corrupción manual tratada igual | Job automático de reconciliación de mappings (frecuencia, backoff, dead-letter) | Q2 debe garantizar que la petición nunca reasigna, recrea ni filtra; el job es un mecanismo operativo separable | Casos 10, 48 (integration con fixture de corrupción forzada) |
+| Body inesperado | Objeto/array/string/numérico/null y meta-caso: ignorados sin efecto, jamás `500` por parseo | — | Robustez del handler | Casos 17, 18, 19, 20, 21, 22, 23, 24 (HTTP-frontier con matriz de bodies) |
+| Frontera privilegiada | RPC de un único parámetro `uuid`; ningún caller `service_role` puede pasar texto arbitrario | — | Cierra vector S21 estructuralmente | Caso 25 (auditoría estática + test SQL sobre `pg_proc`) |
+| Métodos HTTP | `GET`/`PUT`/`PATCH`/`DELETE`/`HEAD` responden `404 not_found` opaco | — | Coherencia con hito 9.2.5-C | Casos 26, 27, 28, 29, 30 (HTTP-frontier) |
+| Estado final en DB | Exactamente 1 tenant/1 membership por actor tras onboarding; cero huérfanos tras rollback | — | Consistencia estructural | Casos 31, 32, 33, 34 (SQL directo) |
+| Bootstrap composer | Selecciona tenant personal por defecto; `canOperate=true` sin exigir conversación | — | Ajuste `bootstrap.ts:90` | Casos 35, 36, 37 (integration) |
+| Bootstrap sin efectos colaterales | Cero conversación creada por el onboarding | — | Marco §9.5 | Caso 38 (integration) |
+| RLS + grants | `authenticated` sin `SELECT` sobre el mapping; RPC no invocable por `anon`/`authenticated` | — | Barrera de seguridad estructural | Casos 39, 40, 41 (SQL integration con roles) |
+| Observabilidad | Logs sin PII; errores sin `SQLSTATE`; `correlationId` UUID v4 en cada respuesta | Retención de logs, agregación de métricas de negocio | Núcleo de seguridad server-side | Casos 42, 43 (escaneo de logs + HTTP-frontier) |
+| Rollback y restore | `DROP TABLE ... CASCADE` no toca `tenants`; restore drill PASS | — | Continuidad operativa | Casos 44, 45 (SQL desechable + Job C) |
+| Regresión | 14 escenarios Q3-E2E-R permanecen verdes | — | Marco §11 | Caso 46 (Job D) |
+| Coste y reproducibilidad | Cero llamadas OpenAI/proveedores reales durante las pruebas | — | Reproducibilidad + coste | Caso 47 (guard `SPABLA_TEST_MODE=true`) |
+| Localización server-controlled | Presenter server-side con catálogo cerrado de 13 códigos; `Accept-Language` como pista no confiable; nunca alcanza la RPC | Ampliación BCP-47 (variantes regionales, sufijos script) | Preserva unicidad e identidad independientes del nombre | Casos 49, 50, 51 (HTTP-frontier) |
+| Prohibición de etiqueta libre | Body con `name`/`label`/`workspaceName` ignorado; `tenants.name` = clave interna fija | — | Cierra vector S16 | Caso 52 (HTTP-frontier + verificación en DB) |
+| Estado `deletion_pending` | Actor con bandera `deletion_pending=true` recibe `503 unavailable` opaco; onboarding NO invoca la RPC | Flujo real que registra la solicitud, revoca sesiones y ejecuta gracia/anonimización | Estado ya presente en DB (via fixture) debe recibir respuesta segura desde Q2; el flujo real que crea el estado es un workflow administrativo separable | Caso 53 (integration con fixture `actor_lifecycle_state.deletion_pending=true`) |
+| Auth eliminado | `sub` inexistente o gracia con bandera → `401` opaco o `503` según caso | Ejecución real de la eliminación en Auth | Comportamiento observable ante el estado ya alcanzado | Caso 54 (integration con fixture Auth) |
+| Re-registro con mismo email | Actor nuevo (nuevo `sub`) recibe caso 5; el huérfano anterior permanece en cuarentena | Ejecución real de la eliminación previa que produjo el huérfano | El comportamiento anti-reclamo debe estar activo desde el primer día | Caso 55 (integration con fixture Auth) |
+| Estado `legal_hold` | Actor con `legal_hold=true` recibe `503 unavailable` opaco; onboarding no crea ni modifica | Aplicación administrativa real del legal hold; duración/criterios jurídicos | Estado ya presente en DB debe recibir respuesta segura desde Q2 | Caso 56 (integration con fixture `actor_lifecycle_state.legal_hold=true`) |
+| Aislamiento entre actores | Dos JWTs distintos obtienen tenants distintos; advisory locks independientes | — | Aislamiento multitenant | Caso 57 (integration) |
+| Anonimización | — | Mecanismo técnico (hash, tombstone, disociación) y plazos jurídicos | Requiere dictamen profesional antes de definir política y plazos | — (Q2 no ejecuta anonimización; solo garantiza opacidad ante `deletion_pending`) |
+| Recuperación administrativa | — | Autorización explícita + procedimiento operativo | Requiere autorización formal antes de habilitarse | — |
+| Políticas jurídicas definitivas | — | Plazos, contenidos compartidos con terceros, retención legal | Requiere dictamen profesional | — |
+
+**Regla resumida**: Q2 implementa **los 58 casos**. Los diferidos son mecanismos operativos que **crean o administran** estados; el **comportamiento seguro ante esos estados** cuando ya existen es obligatorio en Q2 (mediante fixtures).
+
+**Decisiones legales pendientes** (identificadas en el acta Q1-R) — todas son diferibles a Q4-bis y **ninguna bloquea Q2**:
+
+| Decisión | Bloquea Q2 | Bloquea activación productiva del workflow correspondiente |
+|---|---|---|
+| Plazo de gracia tras `deletion_pending` | **No** | Sí (activación eliminación) |
+| Duración y criterios de `legal_hold` | **No** | Sí (activación legal hold) |
+| Plazo de anonimización/eliminación por categoría | **No** | Sí (activación eliminación) |
+| Mecanismo técnico definitivo de anonimización | **No** | Sí (activación eliminación) |
+| Política sobre contenido compartido con terceros | **No** | Sí (activación eliminación) |
+| Frecuencia y ventana del job de reconciliación | **No** | Sí (producción con job automático) |
+| Autorización explícita del mecanismo de recuperación administrativa | **No** | Sí (activación recuperación) |
+| Códigos definitivos §17-ter H | **Cerrado por Q1-RR-RECT** | — |
 
 ## §18 · Riesgos residuales
 
@@ -816,7 +854,7 @@ Q1-RR-RECT **no** modifica ninguno: es únicamente documental.
 **GO 9.3.2-A** cuando:
 
 1. Migración aditiva aplica limpiamente en local y en CI (`restore drill` PASS).
-2. Los 57 casos de §14 pasan verdes en Job B/D según su tipo.
+2. Los 58 casos de §14 pasan verdes en Job B/D según su tipo.
 3. Los 14 escenarios Q3-E2E-R permanecen verdes.
 4. Cero cambio en config Supabase.
 5. Cero exposición de `service_role` al cliente.
@@ -827,7 +865,7 @@ Q1-RR-RECT **no** modifica ninguno: es únicamente documental.
 10. Firma RPC de un único parámetro `p_actor_id uuid` implementada; cero parámetro de texto o locale.
 11. Clave interna fija `workspace.personal.default` codificada en la propia RPC.
 12. Prohibición efectiva de reclamo automático del tenant tras re-registro con mismo email.
-13. Comportamiento definido para casos 52-55 (`actor_lifecycle_state` mínimo con banderas `deletion_pending`, `legal_hold`).
+13. Comportamiento definido para casos 53-56 (`actor_lifecycle_state` mínimo con banderas `deletion_pending`, `legal_hold`) probado mediante fixtures controlados en Q2 (§17-ter I).
 14. Job de reconciliación con contrato §17-ter G documentado (implementación diferible a subhito posterior con auditoría manual).
 15. Dictamen jurídico documentado antes de **activar** flujos de eliminación (no bloquea Q2 mínimo).
 16. Acta breve de Dirección.
@@ -846,7 +884,8 @@ Q1-RR-RECT **no** modifica ninguno: es únicamente documental.
 
 ## §21 · Secuencia futura de implementación
 
-- **9.3.2-A-Q1-RR-RECT · Contrato final normativo** — **este documento**.
+- **9.3.2-A-Q1-RR-RECT · Contrato final normativo** — versión anterior, sustituida por Q1-RR-SCOPE.
+- **9.3.2-A-Q1-RR-SCOPE · Rectificación final del alcance Q2** — **este documento**.
 - **9.3.2-A-Q2 · Implementación server-side** — migración + RPC de un parámetro + `lib/v2/server/onboarding*.ts` + `app/api/v2/onboarding/route.ts` + tests unit/integration/HTTP-frontier + ajuste `bootstrap.ts:90` + catálogo cerrado server-owned de 13 + presenter + `actor_lifecycle_state` mínimo con `deletion_pending`, `legal_hold`.
 - **9.3.2-A-Q3 · Barrera E2E** — ampliación de `e2e/auth-continuity.spec.ts` con casos representativos de §14 (creación, idempotencia, concurrencia, membership desactivada, prohibición de campos del cliente, verbos no permitidos, locale canónico) + regresión sobre los 14 existentes.
 - **9.3.2-A-Q4 · Promoción** — fast-forward a `spabla-v2/thirteen-languages-activation`.
@@ -875,7 +914,7 @@ SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnames
 - **E3**: dos RPC separadas → 2 tenants creados. **Observado**.
 - **E4**: `admin_add_membership` sobre existente → `23505`. **Observado**.
 
-## Anexo C · Crosswalk 38 escenarios originales Q1 → matriz final Q1-RR-RECT
+## Anexo C · Crosswalk 38 escenarios originales Q1 → matriz final (numeración 1-58)
 
 | Q1 § | Título Q1 | Final § | Estado | Nota |
 |---|---|---|---|---|
@@ -888,7 +927,7 @@ SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnames
 | 7 | Compartido sin personal → crea personal | 7 | Preservado literal | — |
 | 8 | Personal + compartido → idempotente sobre personal | 8 | Preservado literal | — |
 | 9 | Membership desactivada → reactiva | 9 | Preservado literal | — |
-| 10 | Tenant personal eliminado → crea uno nuevo (fuera de alcance) | 10 + 47 | **Semántica rectificada** | Q1-RR-RECT descarta expresamente la recreación silenciosa (§5 B/D); caso 10 = mapping válido con tenant inexistente → `500`; caso 47 = corrupción manual. La evolución se documenta en §5 y §14 |
+| 10 | Tenant personal eliminado → crea uno nuevo (fuera de alcance) | 10 + 48 | **Semántica rectificada** | Q1-RR-RECT descarta expresamente la recreación silenciosa (§5 B/D); caso 10 = mapping válido con tenant inexistente → `500`; caso 48 = corrupción manual. La evolución se documenta en §5 y §14 |
 | 11 | Dos secuenciales → mismo tenant | 11 | Preservado literal | — |
 | 12 | Dos concurrentes → mismo tenant | 12 | Preservado literal | — |
 | 13 | 20 concurrentes | 13 | Preservado literal | — |
@@ -899,54 +938,54 @@ SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class WHERE relnames
 | 18 | Envía `role:admin` → sin efecto | 18 | Preservado literal | — |
 | 19 | Envía `actorId` → sin efecto | 19 | Preservado literal | — |
 | 20 | Body inesperado arrays/strings → 200 o 400, jamás 500 | 20, 21, 22, 23, 24 | **Ampliado** | Q1-RR-RECT desdobla el escenario en 5 casos explícitos (objeto, array, string, numérico/null, meta) todos con contrato "jamás 500 por parseo" |
-| 21 | Verbos no permitidos → 404 opaco | 25, 26, 27, 28, 29 | **Ampliado** | Q1-RR-RECT lista GET/PUT/PATCH/DELETE/HEAD explícitamente |
-| 22 | Post-onboarding: 1 tenant exacto | 30 | Preservado literal | — |
-| 23 | Post-onboarding: 1 membership | 31 | Preservado literal | — |
-| 24 | Post-fallo: cero tenant huérfano | 32 | Preservado literal | — |
-| 25 | Post-fallo: cero membership huérfana | 33 | Preservado literal | — |
-| 26 | Bootstrap devuelve `selectedTenantId=personal` | 34 | Preservado literal | — |
-| 27 | Bootstrap con compartido más antiguo | 35 | Preservado literal | — |
-| 28 | `canOperate=true` tras onboarding | 36 | Preservado literal | — |
-| 29 | Cero conversación creada | 37 | Preservado literal | — |
-| 30 | RLS: `authenticated` no puede `SELECT` en `actor_personal_workspace` | 38 | Preservado literal | Recuperado de la pérdida Q1-R |
-| 31 | RPC no invocable por `anon` | 39 | Preservado literal | Recuperado |
-| 32 | RPC no invocable por `authenticated` | 40 | Preservado literal | Recuperado |
-| 33 | Logs sin PII | 41 | Preservado literal | — |
-| 34 | Errores sin `SQLSTATE` | 42 | Preservado literal | — |
-| 35 | Rollback DROP TABLE sin efecto sobre tenants | 43 | Preservado literal | Recuperado |
-| 36 | Restore drill PASS | 44 | Preservado literal | — |
-| 37 | 14 tests Q3-E2E-R permanecen verdes | 45 | Preservado literal | — |
-| 38 | Cero llamadas OpenAI durante pruebas | 46 | Preservado literal | Recuperado |
+| 21 | Verbos no permitidos → 404 opaco | 26, 27, 28, 29, 30 | **Ampliado** | Q1-RR-RECT lista GET/PUT/PATCH/DELETE/HEAD explícitamente |
+| 22 | Post-onboarding: 1 tenant exacto | 31 | Preservado literal | — |
+| 23 | Post-onboarding: 1 membership | 32 | Preservado literal | — |
+| 24 | Post-fallo: cero tenant huérfano | 33 | Preservado literal | — |
+| 25 | Post-fallo: cero membership huérfana | 34 | Preservado literal | — |
+| 26 | Bootstrap devuelve `selectedTenantId=personal` | 35 | Preservado literal | — |
+| 27 | Bootstrap con compartido más antiguo | 36 | Preservado literal | — |
+| 28 | `canOperate=true` tras onboarding | 37 | Preservado literal | — |
+| 29 | Cero conversación creada | 38 | Preservado literal | — |
+| 30 | RLS: `authenticated` no puede `SELECT` en `actor_personal_workspace` | 39 | Preservado literal | Recuperado de la pérdida Q1-R |
+| 31 | RPC no invocable por `anon` | 40 | Preservado literal | Recuperado |
+| 32 | RPC no invocable por `authenticated` | 41 | Preservado literal | Recuperado |
+| 33 | Logs sin PII | 42 | Preservado literal | — |
+| 34 | Errores sin `SQLSTATE` | 43 | Preservado literal | — |
+| 35 | Rollback DROP TABLE sin efecto sobre tenants | 44 | Preservado literal | Recuperado |
+| 36 | Restore drill PASS | 45 | Preservado literal | — |
+| 37 | 14 tests Q3-E2E-R permanecen verdes | 46 | Preservado literal | — |
+| 38 | Cero llamadas OpenAI durante pruebas | 47 | Preservado literal | Recuperado |
 
-**Resultado**: 38 originales → cobertura completa en 46 escenarios finales (5 originales se expanden en varios; 6 recuperados de la pérdida Q1-R; 1 con semántica rectificada). **Cero pérdida.**
+**Resultado**: 38 originales → cobertura completa dentro de los 58 escenarios finales (5 originales se expanden en varios; 6 recuperados de la pérdida Q1-R; 1 con semántica rectificada). **Cero pérdida.**
 
-## Anexo D · Crosswalk 20 casos Q1-R → matriz final Q1-RR-RECT
+## Anexo D · Crosswalk 20 casos Q1-R → matriz final (numeración 1-58)
 
 | Q1-R § | Título Q1-R | Final § | Estado | Nota |
 |---|---|---|---|---|
-| 1 | Primer onboarding | 5 + 48 | Preservado | El caso 5 final absorbe la creación; el caso 48 añade la variante con locale canónico |
+| 1 | Primer onboarding | 5 + 49 | Preservado | El caso 5 final absorbe la creación; el caso 49 añade la variante con locale canónico |
 | 2 | Repetición inmediata | 6 | Preservado literal | — |
 | 3 | Dos solicitudes concurrentes | 12 + 13 | Preservado | Desdoblado en dos concurrentes y veinte concurrentes |
-| 4 | Repetición con otro locale | 48 | **Rectificado** | El ejemplo Q1-R usaba `eu-ES` (inválido); Q1-RR-RECT usa `ja-JP` (canónico `ja`) |
-| 5 | Locale desconocido | 49 | Preservado | — |
-| 6 | Locale manipulado | 50 | Preservado | — |
-| 7 | Etiqueta libre enviada por el cliente | 51 | Preservado | — |
+| 4 | Repetición con otro locale | 49 | **Rectificado** | El ejemplo Q1-R usaba `eu-ES` (inválido); Q1-RR-RECT usa `ja-JP` (canónico `ja`) |
+| 5 | Locale desconocido | 50 | Preservado | — |
+| 6 | Locale manipulado | 51 | Preservado | — |
+| 7 | Etiqueta libre enviada por el cliente | 52 | Preservado | — |
 | 8 | Actor sin sesión | 1-4 | Desagregado | Q1-RR-RECT restaura el desglose original por causa de rechazo del JWT |
 | 9 | Membership activa | 6 | Fusionado con idempotencia | Membership activa = comportamiento del caso 6 |
 | 10 | Membership desactivada | 9 | Preservado literal | — |
-| 11 | Solicitud de eliminación en curso | 52 | Preservado | — |
-| 12 | Actor Auth ya eliminado | 53 | Preservado | — |
-| 13 | Mapping huérfano | 10 + 47 | **Rectificado** | Q1-R lo dejaba en `sin cambios; cuarentena`; Q1-RR-RECT distingue detección inmediata (10 → `500`) de cuarentena (por §17-ter G → `503`) |
-| 14 | Tenant existente sin mapping | 57 | Preservado | — |
-| 15 | Mapping existente sin tenant válido | 10 + 47 | **Rectificado** | Q1-R devolvía `500 internal` sin diferenciar corrupción de eliminación legítima; Q1-RR-RECT distingue B/D (§5) |
-| 16 | Actor bajo legal hold | 55 | Preservado | — |
-| 17 | Re-registro con el mismo email | 54 | Preservado | — |
+| 11 | Solicitud de eliminación en curso | 53 | Preservado | — |
+| 12 | Actor Auth ya eliminado | 54 | Preservado | — |
+| 13 | Mapping huérfano | 10 + 48 | **Rectificado** | Q1-R lo dejaba en `sin cambios; cuarentena`; Q1-RR-RECT distingue detección inmediata (10 → `500`) de cuarentena (por §17-ter G → `503`) |
+| 14 | Tenant existente sin mapping | 58 | Preservado | — |
+| 15 | Mapping existente sin tenant válido | 10 + 48 | **Rectificado** | Q1-R devolvía `500 internal` sin diferenciar corrupción de eliminación legítima; Q1-RR-RECT distingue B/D (§5) |
+| 16 | Actor bajo legal hold | 56 | Preservado | — |
+| 17 | Re-registro con el mismo email | 55 | Preservado | — |
 | 18 | Fallo intermedio y rollback | 14 + 15 | Desagregado | Q1-RR-RECT restaura la distinción tras crear vs antes de commit |
-| 19 | Dos actores diferentes | 56 | Preservado | — |
+| 19 | Dos actores diferentes | 57 | Preservado | — |
 | 20 | Intento de enviar `tenantId`, `role` u `ownerId` | 17 + 18 + 19 | Desagregado | Q1-RR-RECT restaura los tres casos por separado |
 
 **Resultado**: 20 casos Q1-R → cobertura completa en el conjunto final, con 3 casos rectificados semánticamente y 4 casos desagregados para mayor precisión. **Cero pérdida.**
 
 ---
 
-**Estado del contrato final Q1-RR-RECT**: cerrado. Ninguna implementación autorizada por esta rama documental. La siguiente orden autorizada es **9.3.2-A-Q2 · Implementación server-side atómica del onboarding**, sin bloqueo por decisiones jurídicas pendientes (§17-ter I) para el alcance mínimo definido en §21.
+**Estado del contrato final Q1-RR-SCOPE**: cerrado. Ninguna implementación autorizada por esta rama documental. La siguiente orden autorizada es **9.3.2-A-Q2 · Implementación server-side atómica del onboarding**, sin bloqueo por decisiones jurídicas pendientes (§17-ter I) y con el alcance completo de los 58 escenarios de la matriz §14 según §17-ter I.
