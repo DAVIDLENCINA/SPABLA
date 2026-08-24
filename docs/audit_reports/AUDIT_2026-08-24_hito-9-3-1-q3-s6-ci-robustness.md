@@ -83,16 +83,25 @@ Cero `.claude/` versionado.
 
 ## 6 · Corrección aplicada
 
-**Cambios mínimos en `e2e/auth-continuity.spec.ts`**:
+**Iteración A (commit 73b78ba, insuficiente para CI)**:
 
-- (1) Eliminación de un `type BrowserContext` importado pero no usado (regresión de linting existente pre-R2). Cero cambio semántico.
-- (2) Reducción del deadline interno de `spawnNextDev` de `180_000 ms` a `120_000 ms`, con **cortocircuito de fallo rápido** si el proceso muere antes de servir. Cero cambio en semántica de la barrera (Next tiene que arrancar y responder a `/api/v2/bootstrap`), pero ahora ante muerte prematura se lanza excepción con log tail en vez de agotar el deadline.
-- (3) Reducción del deadline del pre-warm de `/v2/chat` de `180_000 ms` a `60_000 ms`, con **cortocircuito** que verifica `pidAlive(restarted.pid)` + `pidFromPort(NEXT_PORT)` en cada iteración y falla rápido con diagnóstico útil (última `status` + timing + log tail).
-- (4) Cambio de `freshPage.goto(URL, { waitUntil: "load", timeout: 90_000 })` a `{ waitUntil: "domcontentloaded", timeout: 45_000 }`. Motivo: `load` espera al evento `load` de window (incluye sockets HMR de Turbopack y sub-recursos), lo que en cold-compile CI es un plazo indeterminado. `domcontentloaded` es suficiente para que `expectAuthenticatedUi` verifique el DOM autenticado.
-- (5) Instrumentación por sub-fase: cada barrera (`login`, `kill`, `persist`, `spawn`, `preWarm`, `goto`) reporta su duración en `phaseTimes`. En fallo de pre-warm se imprime el objeto con los timings acumulados, dando **diagnóstico útil si vence el plazo**.
-- (6) Ajuste de `test.setTimeout(240_000)` a `test.setTimeout(300_000)`. **NO es la única modificación**: es la consecuencia de que las sub-fases quedan acotadas a `≈20 + 1.5 + 120 + 60 + 45 + 10 ≈ 260 s` y añadimos buffer. Con las sub-fases anteriores (sin cambios) la aritmética permitía 471 s en el peor caso, incoherente con 240 s.
+- (A1) Eliminación de un `type BrowserContext` importado pero no usado (regresión de linting existente pre-R2). Cero cambio semántico.
+- (A2) Reducción del deadline interno de `spawnNextDev` de `180_000 ms` a `120_000 ms`, con **cortocircuito de fallo rápido** si el proceso muere antes de servir. Cero cambio en semántica de la barrera (Next tiene que arrancar y responder a `/api/v2/bootstrap`), pero ahora ante muerte prematura se lanza excepción con log tail en vez de agotar el deadline.
+- (A3) Reducción del deadline del pre-warm de `/v2/chat` de `180_000 ms` a `60_000 ms`, con **cortocircuito** que verifica `pidAlive(restarted.pid)` + `pidFromPort(NEXT_PORT)` en cada iteración y falla rápido con diagnóstico útil (última `status` + timing + log tail).
+- (A4) Cambio de `freshPage.goto(URL, { waitUntil: "load", timeout: 90_000 })` a `{ waitUntil: "domcontentloaded", timeout: 45_000 }`. Motivo: `load` espera al evento `load` de window (incluye sockets HMR de Turbopack y sub-recursos), lo que en cold-compile CI es un plazo indeterminado. `domcontentloaded` es suficiente para que `expectAuthenticatedUi` verifique el DOM autenticado.
+- (A5) Instrumentación por sub-fase: cada barrera (`login`, `kill`, `persist`, `spawn`, `preWarm`, `goto`) reporta su duración en `phaseTimes`. Try/catch en el escenario reporta timings acumulados ante fallo → **diagnóstico útil si vence el plazo**.
+- (A6) Ajuste de `test.setTimeout(240_000)` a `test.setTimeout(300_000)`. **NO es la única modificación**: es la consecuencia de que las sub-fases quedan acotadas a `≈20 + 1.5 + 120 + 60 + 45 + 10 ≈ 260 s` y añadimos buffer.
 
-Ver rango exacto en `git diff`:
+**Resultado iteración A en CI [`32743618373`](https://github.com/DAVIDLENCINA/SPABLA/actions/runs/32743618373)**: Job D failure. Attempt 1. §20-6 volvió a agotar el nuevo timeout de 300 s. Stack trace apunta a `browserContext.newPage: Test ended.` en `e2e/auth-continuity.spec.ts:755:35` (línea `const freshPage = await ctx.newPage()`). Escenarios 1-12 pasan idénticos; escenario 14 did-not-run.
+
+**Diagnóstico refinado**: `ctx.newPage()` sobre un contexto que quedó con requests colgados hacia un puerto muerto se bloquea durante minutos en Ubuntu CI mientras Chromium/Playwright intenta crear una nueva target CDP. En local (macOS) el mismo `ctx.newPage()` completa en <2 s. El problema es específico de la interacción entre Chromium headless-shell, contexto con requests pendientes y ambiente Ubuntu.
+
+**Iteración B (commit adicional en la misma rama)**:
+
+- (B1) **Sustitución del patrón `page.close + ctx.newPage`** por **`storageState swap`**: captura `state = await ctx.storageState()`, cierra `ctx` contaminado, crea `browser.newContext({ storageState: state })`, abre una `page` limpia en él y navega al Next restarted. Es el mismo mecanismo canónico que Playwright ofrece para "cerrar y reabrir el navegador manteniendo la sesión" y el que `Q2 §20-3` usa con `chromium.launchPersistentContext(userDataDir)`. **No es "restauración artificial"**: el `storageState` es la serialización idéntica de las cookies + localStorage del contexto ya autenticado por UI real — es equivalente al comportamiento nativo de un navegador que persiste storage entre lanzamientos.
+- (B2) Intento previo con `page.goto('about:blank') + page.goto(URL)` sobre la misma page: **descartado** tras evidencia local — colisiona con la re-navegación automática del navegador cuando Next reaparece (`Error: page.goto: Navigation to "about:blank" is interrupted by another navigation to "http://127.0.0.1:3111/v2/chat"`).
+
+**Ver rango exacto**:
 
 ```
 git diff 383b0c04..HEAD -- e2e/auth-continuity.spec.ts
@@ -154,24 +163,24 @@ No se aplica ninguna de las técnicas prohibidas:
 
 Ejecutado `bash scripts/e2e/run-auth-continuity.sh --reset` sobre entorno macOS limpio (Supabase local detenido, `test-results/` purgado, cero next/playwright/chromium residuales, puertos 3111 / 3112 / 54321 / 54322 libres). Cleanup completo entre rondas.
 
-### Ronda 1
+Se ejecutaron cuatro rondas locales en total (dos para la iteración A previa al fallo del CI, dos para la iteración B tras la corrección final). Las cuatro cerraron en 14/14 verde. Los tiempos relevantes son los de la iteración B (versión definitiva de la rama).
 
-- Inicio: 17:07:58 → Fin: 17:09:11 (local).
-- Playwright: **14 passed (23.6 s)**.
-- Escenarios 1-14 verdes.
-- **§20-6 · Reinicio Next real · 3.7 s**.
-- Escenario 14 (anti-falso-positivo): ejecutado, 1 ms.
-- `Playwright finished with exit code 0`. Cleanup Next dev + supabase stop.
+### Iteración A · rondas locales (versión que falló en CI)
 
-### Ronda 2
+- Ronda A1: **14 passed (23.6 s)**, §20-6 = 3.7 s.
+- Ronda A2: **14 passed (22.4 s)**, §20-6 = 3.6 s.
 
-- Inicio: 17:09:45 → Fin: 17:10:55 (local).
-- Playwright: **14 passed (22.4 s)**.
-- **§20-6 · Reinicio Next real · 3.6 s**.
-- Escenario 14 (anti-falso-positivo): ejecutado, 1 ms.
+Ambas verdes localmente. El CI [`32743618373`](https://github.com/DAVIDLENCINA/SPABLA/actions/runs/32743618373) rompió esta versión con timeout de 300 s en `ctx.newPage()`.
+
+### Iteración B · rondas locales (versión final con `storageState swap`)
+
+- Ronda B1: **14 passed (27.7 s)**, §20-6 = 4.7 s.
+- Ronda B2: **14 passed (26.3 s)**, §20-6 = 5.0 s.
+- Escenario 14 (anti-falso-positivo): ejecutado en ambas rondas.
 - `Playwright finished with exit code 0`.
+- Cleanup completo entre rondas (`supabase stop --no-backup` + `test-results/` purgado; puertos y contenedores libres).
 
-Ambas rondas: 14 passed / 0 failed / 0 skipped / 0 did not run.
+Ambas rondas de la iteración B: 14 passed / 0 failed / 0 skipped / 0 did not run.
 
 ## 11 · Controles antifraude
 

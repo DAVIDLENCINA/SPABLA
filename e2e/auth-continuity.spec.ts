@@ -667,10 +667,11 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
     expect(await portOpen("127.0.0.1", NEXT_PORT)).toBe(true);
 
     // Contexto dedicado + login previo.
-    const ctx = await browser.newContext();
+    let ctx = await browser.newContext();
     let restarted: ManagedNext | null = null;
+    let page: Page | null = null;
     try {
-      const page = await ctx.newPage();
+      page = await ctx.newPage();
       const loginStart = Date.now();
       await page.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, { waitUntil: "domcontentloaded" });
       await signInViaUi(page, fixtures!.userAEmail, PASSWORD);
@@ -743,23 +744,53 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
       mark("preWarm", preWarmStart);
       expect(preWarmed, `pre-warm never returned 2xx/3xx/4xx within ${preWarmDeadline}ms; last=${preWarmLastStatus}; timings=${JSON.stringify(phaseTimes)}`).toBe(true);
 
-      // ── FASE E · recuperación real sin re-identificarse. Página
-      // nueva dentro del mismo BrowserContext (comparte cookies +
-      // storage) para evitar colisión con requests pendientes de la
-      // page vieja. `waitUntil: "domcontentloaded"` es suficiente: la
-      // app SPABLA se pinta al DCL; esperar `load` bloquea hasta que
-      // todos los sub-recursos y sockets HMR de Turbopack terminen,
-      // lo que en cold-compile CI puede exceder timeouts razonables. ──
+      // ── FASE E · recuperación real sin re-identificarse.
+      //
+      // Aproximación canónica de Playwright para "cerrar y reabrir el
+      // navegador manteniendo la sesión": capturamos `storageState`
+      // (serialización idéntica de cookies + localStorage del ctx ya
+      // autenticado por UI real), cerramos el ctx contaminado por
+      // requests pendientes hacia el Next muerto y creamos un ctx
+      // nuevo con ese `storageState`. Sobre él abrimos una page limpia
+      // que navega al Next restarted. Es el mismo mecanismo que
+      // `Q2 §20-3` usa con `chromium.launchPersistentContext(userDataDir)`
+      // — no es "restauración artificial": preserva la sesión
+      // realmente vigente, no inyecta tokens fabricados. Evita las
+      // dos patologías observadas:
+      //   · `page.close` + `ctx.newPage` cuelga en Ubuntu CI por
+      //     target CDP no serviciable sobre requests hacia puerto
+      //     muerto;
+      //   · `page.goto('about:blank')` sobre la misma page colisiona
+      //     con una re-navegación automática del navegador cuando
+      //     detecta que el server volvió (HMR reconecta o polling
+      //     reintenta).
+      //
+      // El nuevo ctx arranca limpio + con cookies/localStorage
+      // válidos. Cero cambio en la semántica de continuidad de
+      // sesión: la aserción `expectAuthenticatedUi` confirma que la
+      // sesión persistida sobrevive al kill+restart real.
+      const stateStart = Date.now();
+      const state = await ctx.storageState();
+      await ctx.close();
+      ctx = await browser.newContext({ storageState: state });
+      page = await ctx.newPage();
+      mark("stateSwap", stateStart);
+
       const gotoStart = Date.now();
-      await page.close({ runBeforeUnload: false }).catch(() => undefined);
-      const freshPage = await ctx.newPage();
-      await freshPage.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
+      await page.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
         waitUntil: "domcontentloaded",
         timeout: 45_000,
       });
       mark("goto", gotoStart);
-      await expectAuthenticatedUi(freshPage);
-      await expect(freshPage.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
+      await expectAuthenticatedUi(page);
+      await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
+    } catch (err) {
+      // Diagnóstico útil (R2 §FASE 3): reporta timings acumulados por
+      // sub-fase para localizar exactamente dónde se consumió el
+      // presupuesto cuando el timeout se dispara en una expresión
+      // sincrónica de Playwright (por ejemplo dentro de `newPage`).
+      process.stderr.write(`[Q2 §20-6] failure timings=${JSON.stringify(phaseTimes)} error=${err instanceof Error ? err.message : String(err)}\n`);
+      throw err;
     } finally {
       await ctx.close();
     }
