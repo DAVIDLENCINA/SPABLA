@@ -27,7 +27,6 @@ import {
   test,
   expect,
   chromium,
-  type BrowserContext,
   type Page,
 } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -317,15 +316,30 @@ async function spawnNextDev(port: number): Promise<ManagedNext> {
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (d: string) => { logTail.push(d); if (logTail.length > 60) logTail.shift(); });
   child.stderr.on("data", (d: string) => { logTail.push(d); if (logTail.length > 60) logTail.shift(); });
-  // Espera hasta que Next responda algún status HTTP (2xx/3xx/4xx).
+  // Q3-E2E-R2 · barrera acotada de arranque real (Ubuntu CI cold
+  // compile suele completar en 30-90s; damos margen razonable de 120s
+  // con cortocircuito ante muerte prematura del proceso).
   const start = Date.now();
-  const deadline = 180_000;
+  const deadline = 120_000;
+  let ready = false;
   while (Date.now() - start < deadline) {
+    if (!pidAlive(wrapperPid) && pidFromPort(port) === null) {
+      throw new Error(
+        `spawnNextDev: process died before serving on port ${port}. `
+        + `Log tail: ${logTail.slice(-15).join("")}`,
+      );
+    }
     try {
       const res = await fetch(`http://127.0.0.1:${port}/api/v2/bootstrap`, { method: "GET" });
-      if (res.status >= 200 && res.status < 500) break;
+      if (res.status >= 200 && res.status < 500) { ready = true; break; }
     } catch { /* still booting */ }
     await new Promise((r) => setTimeout(r, 500));
+  }
+  if (!ready) {
+    throw new Error(
+      `spawnNextDev: readiness deadline ${deadline}ms exceeded on port ${port}. `
+      + `Log tail: ${logTail.slice(-15).join("")}`,
+    );
   }
   // PID real del proceso que escucha en el puerto (next-server /
   // turbopack). `wrapperPid` (npx) puede haber muerto ya.
@@ -631,8 +645,19 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
   // puerto y comprobamos que la sesión sobrevive sin login. Los
   // tests anteriores dependen del server; por eso 6 va al final.
   test("Q2 §20-6 · Reinicio Next real (kill + restart process group)", async ({ browser }) => {
-    // Restart total de Next+Turbopack puede tardar 30-60s. Timeout 4 min.
-    test.setTimeout(240_000);
+    // Q3-E2E-R2 · Timeout aritméticamente coherente con las sub-fases
+    // acotadas más abajo (kill≤20 s + wait 1.5 s + spawnNextDev≤120 s
+    // + pre-warm≤60 s + freshPage.goto≤45 s + assertions≤10 s + buffer
+    // ≈ 260 s). Redondeamos a 5 min. El aumento respecto de los 240 s
+    // previos NO es la corrección; es la consecuencia de que cada
+    // barrera interna tiene ahora su propio deadline observable.
+    test.setTimeout(300_000);
+
+    // Timing por sub-fase para diagnóstico útil ante fallo (§FASE 3 R2).
+    const phaseTimes: Record<string, number> = {};
+    const mark = (phase: string, start: number) => {
+      phaseTimes[phase] = Date.now() - start;
+    };
 
     // El wrapper del runner (líder del pgid) debe estar exportado.
     expect(RUNNER_WRAPPER_PID).toBeGreaterThan(0);
@@ -643,20 +668,20 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
 
     // Contexto dedicado + login previo.
     const ctx = await browser.newContext();
+    let restarted: ManagedNext | null = null;
     try {
       const page = await ctx.newPage();
+      const loginStart = Date.now();
       await page.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, { waitUntil: "domcontentloaded" });
       await signInViaUi(page, fixtures!.userAEmail, PASSWORD);
       await expectAuthenticatedUi(page);
       expect(await storageKeyPresent(page)).toBe(true);
+      mark("login", loginStart);
 
-      // Kill REAL del process group del runner (líder = wrapper) y,
-      // como cinturón y tirantes, mata también el PID del listener
-      // (next-server puede haber sido re-agrupado por Turbopack).
+      // ── FASE A · kill REAL del process group + belt-and-braces ──
+      const killStart = Date.now();
       try { process.kill(-RUNNER_WRAPPER_PID, "SIGTERM"); } catch { /* dead already */ }
       try { process.kill(firstListenerPid!, "SIGTERM"); } catch { /* dead already */ }
-      // Wait real death.
-      const killStart = Date.now();
       while (Date.now() - killStart < 15_000) {
         const listener = pidFromPort(NEXT_PORT);
         if (listener === null && !pidAlive(firstListenerPid!)) break;
@@ -664,54 +689,75 @@ test.describe.serial("Q3-E2E-R · Barrera experimental de continuidad (13 escena
       }
       try { process.kill(-RUNNER_WRAPPER_PID, "SIGKILL"); } catch { /* already gone */ }
       try { process.kill(firstListenerPid!, "SIGKILL"); } catch { /* already gone */ }
-      // Espera final de purga.
       const purgeStart = Date.now();
       while (Date.now() - purgeStart < 5_000) {
         if (!pidAlive(firstListenerPid!) && pidFromPort(NEXT_PORT) === null) break;
         await new Promise((r) => setTimeout(r, 200));
       }
+      mark("kill", killStart);
       expect(pidAlive(firstListenerPid!)).toBe(false);
       expect(await portOpen("127.0.0.1", NEXT_PORT)).toBe(false);
 
-      // La sesión persiste en storage; sin login visible.
+      // ── FASE B · sesión persistida sobrevive al kill ──
+      const persistStart = Date.now();
       await page.waitForTimeout(1500);
       expect(await storageKeyPresent(page)).toBe(true);
       await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
+      mark("persist", persistStart);
 
-      // Restart real en el MISMO puerto: arrancamos un nuevo next dev.
-      const restarted = await spawnNextDev(NEXT_PORT);
+      // ── FASE C · restart REAL con readiness acotada (deadline
+      // interno de spawnNextDev = 120s, con cortocircuito si el
+      // proceso muere durante el arranque). ──
+      const spawnStart = Date.now();
+      restarted = await spawnNextDev(NEXT_PORT);
       managedNexts.push(restarted);
+      mark("spawn", spawnStart);
       expect(pidAlive(restarted.pid)).toBe(true);
       expect(restarted.pid).not.toBe(firstListenerPid);
       expect(await portOpen("127.0.0.1", NEXT_PORT)).toBe(true);
 
-      // Pre-warm de la ruta `/v2/chat` — tras el restart Turbopack
-      // recompila y la primera navegación desde el navegador puede
-      // tardar bastante. Un fetch previo asegura que el bundle esté
-      // caliente y el reload posterior no exceda el navigationTimeout.
+      // ── FASE D · pre-warm de la ruta `/v2/chat` con salida rápida
+      // si Next muere durante la compilación. Deadline reducido a
+      // 60s: `spawnNextDev` ya garantizó bundle base caliente. ──
       const preWarmStart = Date.now();
-      const preWarmDeadline = 180_000;
+      const preWarmDeadline = 60_000;
       let preWarmed = false;
+      let preWarmLastStatus: number | null = null;
       while (Date.now() - preWarmStart < preWarmDeadline) {
+        // Cortocircuito: si Next murió durante el pre-warm, fallar
+        // rápido con diagnóstico útil en vez de agotar el deadline.
+        if (!pidAlive(restarted.pid) || pidFromPort(NEXT_PORT) === null) {
+          throw new Error(
+            `pre-warm: Next died during compilation. `
+            + `last status=${preWarmLastStatus} elapsed=${Date.now() - preWarmStart}ms `
+            + `log tail=${restarted.logTail.slice(-10).join("")}`,
+          );
+        }
         try {
           const res = await fetch(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, { method: "GET" });
+          preWarmLastStatus = res.status;
           if (res.status >= 200 && res.status < 500) { preWarmed = true; break; }
         } catch { /* still compiling */ }
-        await new Promise((r) => setTimeout(r, 1000));
+        await new Promise((r) => setTimeout(r, 500));
       }
-      expect(preWarmed).toBe(true);
+      mark("preWarm", preWarmStart);
+      expect(preWarmed, `pre-warm never returned 2xx/3xx/4xx within ${preWarmDeadline}ms; last=${preWarmLastStatus}; timings=${JSON.stringify(phaseTimes)}`).toBe(true);
 
-      // Recuperación sin re-identificarse. Abrimos una PÁGINA nueva
-      // dentro del mismo BrowserContext (comparte cookies + storage
-      // → sesión persistida sigue disponible) para evitar chocar con
-      // navegaciones pendientes de la página original (que quedó
-      // colgada intentando refetch mientras Next estaba muerto).
+      // ── FASE E · recuperación real sin re-identificarse. Página
+      // nueva dentro del mismo BrowserContext (comparte cookies +
+      // storage) para evitar colisión con requests pendientes de la
+      // page vieja. `waitUntil: "domcontentloaded"` es suficiente: la
+      // app SPABLA se pinta al DCL; esperar `load` bloquea hasta que
+      // todos los sub-recursos y sockets HMR de Turbopack terminen,
+      // lo que en cold-compile CI puede exceder timeouts razonables. ──
+      const gotoStart = Date.now();
       await page.close({ runBeforeUnload: false }).catch(() => undefined);
       const freshPage = await ctx.newPage();
       await freshPage.goto(`http://127.0.0.1:${NEXT_PORT}/v2/chat`, {
-        waitUntil: "load",
-        timeout: 90_000,
+        waitUntil: "domcontentloaded",
+        timeout: 45_000,
       });
+      mark("goto", gotoStart);
       await expectAuthenticatedUi(freshPage);
       await expect(freshPage.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
     } finally {
