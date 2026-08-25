@@ -42,8 +42,41 @@ E2E_BASE_URL="http://127.0.0.1:${E2E_NEXT_PORT}"
 NEXT_PID=""
 NEXT_PGID=""
 NEXT_LOG="$(mktemp -t spabla-e2e-onboarding-next.XXXXXX)"
+CUSTODY_LOG="${SPABLA_E2E_CUSTODY_LOG:-$(mktemp -t spabla-e2e-onboarding-custody.XXXXXX)}"
+SUPABASE_STARTED_BY_RUNNER=0  # Q3-R custody flag
 
 log() { printf '[e2e-onboarding] %s\n' "$*" >&2; }
+
+# Q3-R · Custody snapshot: containers, next dev processes, port
+# usage. Called at start and end of the run. If the end snapshot
+# diverges from the initial snapshot the runner logs a warning.
+# When the runner started Supabase itself, the divergence is
+# corrected in cleanup (`supabase stop`); when the developer had
+# Supabase running before, the runner NEVER touches it.
+_snapshot() {
+  # `set -e -o pipefail` would abort the runner if any grep/lsof
+  # returns 1 (which happens whenever the pattern is absent — a
+  # legitimate outcome, not an error). Disable it locally.
+  local tag="$1"
+  set +e
+  {
+    echo "== custody snapshot [${tag}] =="
+    echo "-- containers --"
+    docker ps --format '{{.Names}}|{{.Status}}' 2>/dev/null | grep -E "spabla|supabase" | sort
+    echo "-- next/playwright/chromium PIDs from this runner --"
+    if [ -n "${NEXT_PID:-}" ]; then
+      ps -p "${NEXT_PID}" -o pid,command 2>/dev/null | tail -n +2
+    fi
+    echo "-- port ${E2E_NEXT_PORT} --"
+    if lsof -iTCP:"${E2E_NEXT_PORT}" -sTCP:LISTEN >/dev/null 2>&1; then
+      lsof -iTCP:"${E2E_NEXT_PORT}" -sTCP:LISTEN 2>/dev/null | awk 'NR>1 {print "BUSY", $1, "pid="$2}'
+    else
+      echo "port ${E2E_NEXT_PORT} free"
+    fi
+    echo ""
+  } >> "${CUSTODY_LOG}"
+  set -e
+}
 
 _cleanup() {
   local ec=$?
@@ -60,6 +93,17 @@ _cleanup() {
     kill -KILL "${NEXT_PID}" 2>/dev/null || true
   fi
   pkill -f "chromium.*--remote-debugging" 2>/dev/null || true
+  # Q3-R · Only tear down Supabase if the RUNNER started it. If the
+  # developer had it running (or Job E started it earlier), leave
+  # it alone — matches the initial custody state.
+  if [ "${SUPABASE_STARTED_BY_RUNNER}" = "1" ]; then
+    log "cleanup: stopping Supabase (runner started it)"
+    supabase stop --no-backup 2>/dev/null || true
+  else
+    log "cleanup: leaving Supabase running (pre-existing before runner)"
+  fi
+  _snapshot "final"
+  log "custody log: ${CUSTODY_LOG}"
   if [ -f "${NEXT_LOG}" ]; then rm -f "${NEXT_LOG}"; fi
   exit "$ec"
 }
@@ -71,12 +115,17 @@ command -v python3   >/dev/null || { echo "python3 missing" >&2; exit 1; }
 command -v curl      >/dev/null || { echo "curl missing" >&2; exit 1; }
 command -v lsof      >/dev/null || { echo "lsof missing" >&2; exit 1; }
 
+# Q3-R · Record whether Supabase was already up BEFORE this runner
+# invoked anything. Determines the cleanup policy at the end.
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "_spabla-hito-8-2-local$"; then
-  log "supabase local already up (skipping start)"
+  log "supabase local already up (custody: pre-existing, will NOT be stopped)"
+  SUPABASE_STARTED_BY_RUNNER=0
 else
-  log "starting supabase local (supabase start)"
+  log "starting supabase local (custody: runner-owned, will be stopped in cleanup)"
   supabase start >/dev/null
+  SUPABASE_STARTED_BY_RUNNER=1
 fi
+_snapshot "initial"
 
 if [ "$RESET" -eq 1 ]; then
   log "applying migration chain via scripts/ci/apply-migrations.sh"

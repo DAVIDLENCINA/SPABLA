@@ -77,7 +77,9 @@ Todos en `e2e/onboarding.spec.ts`, ejecutados serialmente por `test.describe.ser
 - Login vía UI real: `page.goto("/v2/chat")` + fill `#spabla-session-email` + `#spabla-session-password` + click `Iniciar sesión`.
 - Espera hasta que `localStorage[spabla_v2_fase9_auth]` no sea null — prueba de que el SDK cacheó la sesión en la misma clave productiva.
 - `window.__spablaSupabase.auth.getSession()` — obtiene el `access_token` real desde el SDK cacheado por el hook `NEXT_PUBLIC_SPABLA_E2E_HOOK=1`.
-- Header `Authorization: Bearer <access_token>` en cada llamada a `POST /api/v2/onboarding` a través de `page.request` (network stack de Chromium).
+- Header `Authorization: Bearer <access_token>` en cada llamada a `POST /api/v2/onboarding`.
+
+> **Rectificación Q3-R (2026-08-25):** la afirmación original de esta línea decía «a través de `page.request` (network stack de Chromium)». Es técnicamente **incorrecta**: `page.request` en Playwright expone `APIRequestContext`, un cliente HTTP del lado Node (undici bajo el capó), NO el network stack del navegador. En Q3 sólo el test 3 (concurrencia) usaba `window.fetch` desde `page.evaluate`; los 12 restantes usaban `page.request`. Q3-R rectifica la implementación: todas las llamadas contractuales al endpoint se hacen ahora vía `page.evaluate(() => fetch(...))` (helper `browserFetchOnboarding`), que sí corre dentro del renderer Chromium. Además Q3-R sustituye la prueba de concurrencia por una barrera coordinada con `pg_advisory_xact_lock` y observación de `pg_stat_activity`. Ver `AUDIT_2026-08-25_hito-9-3-2-a-q3-r-browser-concurrency-proof.md`.
 
 Cero fabricación de JWT. Cero mock de Auth. Cero manipulación artificial del token (excepto en test 5, que envía un JWT alienígena con firma inválida a propósito para verificar el 401).
 

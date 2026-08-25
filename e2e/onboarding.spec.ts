@@ -5,10 +5,26 @@
  * This suite drives the productive endpoint `POST /api/v2/onboarding`
  * from Chromium — real navigator, real Supabase local, real Auth
  * users, real sessions, real cookies (via Supabase SDK localStorage),
- * real PostgreSQL reads for post-conditions. The endpoint is invoked
- * via `page.request.post()` so the transport is Chromium's network
- * stack; the `Authorization: Bearer <access_token>` header carries the
- * token as returned by the Supabase SDK inside the page.
+ * real PostgreSQL reads for post-conditions.
+ *
+ * Q3-R RECTIFICATION (2026-08-25):
+ *   · All contract calls to `/api/v2/onboarding` are dispatched via
+ *     `page.evaluate(() => fetch(...))` — i.e. `window.fetch` running
+ *     INSIDE the Chromium renderer, whose request goes through
+ *     Chromium's network stack. The prior Q3 revision used
+ *     `page.request.post()`, which is Playwright's Node-side
+ *     APIRequestContext (undici under the hood), NOT the browser
+ *     network stack. That divergence was documented as a defect and
+ *     is corrected here (`browserFetch(page, ...)`).
+ *   · Anti-regression: the anti-false-positive test 12 refuses to
+ *     let this spec regress to `page.request` / `context.request` /
+ *     `APIRequestContext` for the onboarding endpoint.
+ *   · Concurrency proof (test 3) is no longer a wall-clock upper
+ *     bound. It coordinates with a control PostgreSQL connection
+ *     that acquires the RPC's own `pg_advisory_xact_lock` and then
+ *     observes `pg_stat_activity` until ≥2 backends are waiting on
+ *     that lock. Only then does control release. Every request lands
+ *     on the endpoint from Chromium; overlap is proven, not inferred.
  *
  * The suite is orchestrated by `scripts/e2e/run-onboarding-e2e.sh`
  * which brings up Supabase local + `next dev` on an isolated port
@@ -147,7 +163,19 @@ async function signInAsUserInPage(page: Page, email: string): Promise<UserFixtur
   };
 }
 
-async function callOnboarding(
+/**
+ * Dispatches a request to the onboarding endpoint from INSIDE the
+ * Chromium renderer via `window.fetch`. Returns status, text,
+ * parsed JSON and correlation id. Optional body may be an object
+ * (JSON.stringified) or a raw string; optional Accept-Language
+ * header is passed through.
+ *
+ * This helper is the sole authorised transport for contract calls
+ * to `/api/v2/onboarding` in this spec. Any regression to
+ * `page.request` / `context.request` / `APIRequestContext` is
+ * caught by the anti-false-positive test 12.
+ */
+async function browserFetchOnboarding(
   page: Page,
   token: string,
   opts: {
@@ -157,47 +185,43 @@ async function callOnboarding(
   } = {},
 ): Promise<{ status: number; json: unknown; correlationId: string | null; text: string }> {
   const method = opts.method ?? "POST";
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-  };
-  if (opts.acceptLanguage) headers["Accept-Language"] = opts.acceptLanguage;
   const bodyRaw =
     opts.body === undefined
-      ? undefined
+      ? null
       : typeof opts.body === "string"
         ? opts.body
         : JSON.stringify(opts.body);
-  if (bodyRaw !== undefined) headers["Content-Type"] = "application/json";
-  const req = page.request;
-  const url = `${BASE_URL}/api/v2/onboarding`;
-  let res;
-  switch (method) {
-    case "POST":
-      res = await req.post(url, { headers, data: bodyRaw ?? "" });
-      break;
-    case "GET":
-      res = await req.get(url, { headers });
-      break;
-    case "PUT":
-      res = await req.put(url, { headers, data: bodyRaw ?? "" });
-      break;
-    case "PATCH":
-      res = await req.patch(url, { headers, data: bodyRaw ?? "" });
-      break;
-    case "DELETE":
-      res = await req.delete(url, { headers });
-      break;
-  }
-  const status = res.status();
-  const text = await res.text();
+  const result = await page.evaluate(
+    async ({ baseUrl, token, method, bodyRaw, acceptLanguage }) => {
+      const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
+      if (acceptLanguage) headers["Accept-Language"] = acceptLanguage;
+      if (bodyRaw !== null) headers["Content-Type"] = "application/json";
+      const init: RequestInit = { method, headers };
+      if (method !== "GET" && method !== "DELETE" && bodyRaw !== null) {
+        init.body = bodyRaw;
+      }
+      const res = await fetch(`${baseUrl}/api/v2/onboarding`, init);
+      const text = await res.text();
+      return {
+        status: res.status,
+        text,
+        correlationId: res.headers.get("x-spabla-correlation-id"),
+      };
+    },
+    { baseUrl: BASE_URL, token, method, bodyRaw, acceptLanguage: opts.acceptLanguage ?? null },
+  );
   let json: unknown = null;
   try {
-    json = JSON.parse(text);
+    json = JSON.parse(result.text);
   } catch {
     json = null;
   }
-  const correlationId = res.headers()["x-spabla-correlation-id"] ?? null;
-  return { status, json, correlationId, text };
+  return {
+    status: result.status,
+    text: result.text,
+    correlationId: result.correlationId ?? null,
+    json,
+  };
 }
 
 // ─── PostgreSQL post-condition helpers ───────────────────────────────
@@ -350,7 +374,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s1+${RUN_ID}@spabla.test`);
-      const res = await callOnboarding(page, fx.access_token);
+      const res = await browserFetchOnboarding(page, fx.access_token);
       expect(res.status).toBe(200);
       const body = res.json as { tenantId: string; role: string; label: string };
       expect(body.role).toBe("owner");
@@ -391,14 +415,14 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s2+${RUN_ID}@spabla.test`);
-      const r1 = await callOnboarding(page, fx.access_token);
+      const r1 = await browserFetchOnboarding(page, fx.access_token);
       expect(r1.status).toBe(200);
       const tenantId1 = (r1.json as { tenantId: string }).tenantId;
       await trackTenantIfPresent(userId);
       const stateAfter1 = await readWorkspaceState(userId);
       expect(stateAfter1.mappingCount).toBe(1);
 
-      const r2 = await callOnboarding(page, fx.access_token);
+      const r2 = await browserFetchOnboarding(page, fx.access_token);
       expect(r2.status).toBe(200);
       const body2 = r2.json as { tenantId: string; role: string; label: string };
       expect(body2.tenantId).toBe(tenantId1);
@@ -416,23 +440,59 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // 3 · Concurrency of the same actor
-  //   §14 rows 12-13: N simultaneous requests → all 200 with the same
-  //   tenantId. Post-condition: COUNT=1 in DB. Anti-serialization: all
-  //   requests are dispatched inside a single `Promise.all` from the
-  //   browser context; wall-clock upper bound asserts they overlapped.
+  // 3 · Concurrency of the same actor — DETERMINISTIC proof (Q3-R)
+  //
+  //   §14 rows 12-13. The prior wall-clock threshold has been
+  //   removed. Overlap is now PROVEN via a control PostgreSQL
+  //   connection that holds the same advisory lock the RPC will try
+  //   to acquire:
+  //
+  //     pg_advisory_xact_lock(hashtextextended($actor::text, 9321))
+  //
+  //   Sequence:
+  //     (a) control BEGIN + acquire the advisory lock for the actor.
+  //     (b) dispatch N `window.fetch` requests from Chromium.
+  //     (c) poll `pg_stat_activity` until we see ≥2 backends whose
+  //         wait_event = 'advisory' (i.e. RPC calls stuck behind the
+  //         control lock). Snapshot their PIDs, wait events, and
+  //         `pg_blocking_pids`.
+  //     (d) COMMIT control (releases the lock).
+  //     (e) await all fetches. All must be 200 with the same tenantId.
+  //     (f) DB post-condition: COUNT=1 for mapping / tenant / active.
+  //
+  //   This proves the requests OVERLAP (they were all in-flight
+  //   simultaneously at step (c)) and does not depend on any
+  //   wall-clock heuristic. It also proves the endpoint went all the
+  //   way through the RPC path from Chromium.
   // ─────────────────────────────────────────────────────────────────
-  test("3 · 20 concurrent same-actor requests → one mapping / one tenant / one membership", async () => {
+  test("3 · N concurrent same-actor fetches from Chromium proven to overlap via PostgreSQL advisory lock", async () => {
     const userId = await createUser("s3");
+    const N = 8;
+    const control = new PgClient({ connectionString: PG_URL });
+    await control.connect();
+    let controlOpen = true;
+    let dispatchPromise: Promise<{ status: number; text: string }[]> | null = null;
     const browser = await chromium.launch();
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s3+${RUN_ID}@spabla.test`);
-      const wallStart = Date.now();
-      const outcomes = await page.evaluate(
+
+      // (a) Acquire the same advisory lock the RPC will contend on.
+      await control.query("BEGIN");
+      // Capture the control backend PID so we can filter it out of
+      // pg_stat_activity scans.
+      const ctrlPidRes = await control.query("SELECT pg_backend_pid()::int AS pid");
+      const controlPid: number = ctrlPidRes.rows[0].pid;
+      await control.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 9321))",
+        [userId],
+      );
+
+      // (b) Dispatch N requests from Chromium. Do NOT await here —
+      // we need to observe them piling up on the lock first.
+      dispatchPromise = page.evaluate(
         async ({ baseUrl, token, n }) => {
-          const started = Date.now();
           const jobs = Array.from({ length: n }, () =>
             fetch(`${baseUrl}/api/v2/onboarding`, {
               method: "POST",
@@ -440,36 +500,143 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
               body: "",
             }).then(async (r) => ({
               status: r.status,
-              body: await r.text(),
+              text: await r.text(),
             })),
           );
-          const results = await Promise.all(jobs);
-          return { started, finished: Date.now(), results };
+          return Promise.all(jobs);
         },
-        { baseUrl: BASE_URL, token: fx.access_token, n: 20 },
+        { baseUrl: BASE_URL, token: fx.access_token, n: N },
       );
-      const wallEnd = Date.now();
-      const wall = wallEnd - wallStart;
-      for (const r of outcomes.results) {
+
+      // (c) Poll pg_stat_activity until ≥2 backends are waiting on
+      // the advisory lock. Poll uses a SEPARATE connection so a
+      // blocked or in-transaction control does not shadow its own
+      // view. Cap the poll to 6 s so a genuine failure does not
+      // hang; PostgREST's statement_timeout on service_role is
+      // effectively unlimited on this schema, so waiters would
+      // remain until we COMMIT the control transaction.
+      const poll = new PgClient({ connectionString: PG_URL });
+      await poll.connect();
+      const pollDeadline = Date.now() + 6_000;
+      let waiters: Array<{ pid: number; wait_event_type: string; wait_event: string; blockers: number[] }> = [];
+      let lastSnapshot: unknown[] = [];
+      try {
+        while (Date.now() < pollDeadline) {
+          const rows = await poll.query(
+            `
+              SELECT pid, state, wait_event_type, wait_event, query,
+                     pg_blocking_pids(pid) AS blockers
+                FROM pg_catalog.pg_stat_activity
+               WHERE pid <> pg_backend_pid()
+                 AND state IS NOT NULL
+                 AND state <> 'idle'
+            `,
+          );
+          lastSnapshot = rows.rows;
+          waiters = rows.rows
+            .filter(
+              (r: { wait_event: string | null }) =>
+                r.wait_event === "advisory",
+            )
+            .map((r: { pid: number; wait_event_type: string; wait_event: string; blockers: number[] }) => ({
+              pid: r.pid,
+              wait_event_type: r.wait_event_type,
+              wait_event: r.wait_event,
+              blockers: r.blockers ?? [],
+            }));
+          if (waiters.length >= 2) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      } finally {
+        await poll.end().catch(() => undefined);
+      }
+      if (waiters.length < 2) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[Q3-R concurrency DIAG] no waiters found; last activity snapshot=${JSON.stringify(
+            lastSnapshot,
+            null,
+            2,
+          )}`,
+        );
+        // Peek dispatch outcomes to see if requests failed early
+        // (e.g. 401 before reaching the RPC).
+        const peek = await Promise.race([
+          dispatchPromise!.then((v) => ({ done: true, v })),
+          new Promise<{ done: false }>((r) => setTimeout(() => r({ done: false }), 200)),
+        ]);
+        // eslint-disable-next-line no-console
+        console.log(`[Q3-R concurrency DIAG] dispatch peek=${JSON.stringify(peek)}`);
+      }
+
+      // Log observed waiters for the audit trail (Playwright captures
+      // stdout of the test worker in the CI job log).
+      // eslint-disable-next-line no-console
+      console.log(
+        `[Q3-R concurrency] control_pid=${controlPid} waiters=${JSON.stringify(waiters)}`,
+      );
+
+      // Assertion A: at least two RPC backends were simultaneously
+      // waiting on the advisory lock. This is the deterministic
+      // proof of overlap.
+      expect(waiters.length).toBeGreaterThanOrEqual(2);
+
+      // Assertion B: every waiter is blocked by the control PID.
+      for (const w of waiters) {
+        expect(w.wait_event).toBe("advisory");
+        expect(w.blockers).toContain(controlPid);
+      }
+
+      // Assertion C: no dispatched request has resolved yet. If any
+      // did before we released the lock, they would not have executed
+      // the RPC — a hidden failure mode we must reject.
+      let anyResolved = false;
+      const raceCheck = Promise.race([
+        dispatchPromise.then(() => "resolved" as const),
+        new Promise<"pending">((r) => setTimeout(() => r("pending"), 50)),
+      ]);
+      const raceResult = await raceCheck;
+      if (raceResult === "resolved") anyResolved = true;
+      expect(anyResolved).toBe(false);
+
+      // (d) Release the control lock.
+      await control.query("COMMIT");
+      controlOpen = false;
+
+      // (e) Now await all responses.
+      const outcomes = await dispatchPromise;
+      dispatchPromise = null;
+      for (const r of outcomes) {
         expect(r.status).toBe(200);
       }
-      const tenantIds = outcomes.results.map(
-        (r) => (JSON.parse(r.body) as { tenantId: string }).tenantId,
+      const tenantIds = outcomes.map(
+        (r) => (JSON.parse(r.text) as { tenantId: string }).tenantId,
       );
       const uniqueTenants = Array.from(new Set(tenantIds));
       expect(uniqueTenants.length).toBe(1);
       await trackTenantIfPresent(userId);
 
+      // (f) Post-condition on DB.
       const state = await readWorkspaceState(userId);
       expect(state.mappingCount).toBe(1);
       expect(state.tenantCount).toBe(1);
       expect(state.activeMembershipCount).toBe(1);
       expect(state.inactiveMembershipCount).toBe(0);
-      // Anti-serialization proof: 20 requests within a reasonable
-      // wall-clock budget. If Playwright had serialized them the
-      // budget would be roughly 20 × single-call latency.
-      expect(wall).toBeLessThan(10_000);
     } finally {
+      // Safety net: if we bailed out before COMMIT, release the lock
+      // so subsequent tests are not blocked.
+      if (controlOpen) {
+        try {
+          await control.query("ROLLBACK");
+        } catch {
+          /* connection already closed */
+        }
+      }
+      if (dispatchPromise) {
+        // Await pending fetches to prevent unhandled rejections.
+        await dispatchPromise.catch(() => undefined);
+      }
+      await control.end().catch(() => undefined);
       await ctx.close();
       await browser.close();
     }
@@ -499,7 +666,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
         workspaceName: "pwn-workspace",
         internal_key: "workspace.personal.attacker",
       };
-      const res = await callOnboarding(page, fx.access_token, { body: injected });
+      const res = await browserFetchOnboarding(page, fx.access_token, { body: injected });
       expect(res.status).toBe(200);
       const body = res.json as { tenantId: string; role: string; label: string };
       expect(body.role).toBe("owner");
@@ -535,32 +702,56 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const ctx = await browser.newContext();
     const page = await ctx.newPage();
     try {
-      // No Authorization header at all
-      const url = `${BASE_URL}/api/v2/onboarding`;
-      const r1 = await page.request.post(url, { data: "" });
-      expect(r1.status()).toBe(401);
-      // Malformed Bearer
-      const r2 = await page.request.post(url, {
-        headers: { Authorization: "Bearer bogus" },
-        data: "",
-      });
-      expect(r2.status()).toBe(401);
-      // Corrupt JWT structure (three dots, garbage payload)
-      const r3 = await page.request.post(url, {
-        headers: { Authorization: "Bearer aaa.bbb.ccc" },
-        data: "",
-      });
-      expect(r3.status()).toBe(401);
-      // Alien signature (valid structure, wrong key)
+      // All four probes dispatch from Chromium's `window.fetch`. We
+      // load an HTML page first so `page.evaluate` has a document to
+      // run in (the Supabase SDK singleton is not needed here).
+      await page.goto("/v2/chat", { waitUntil: "domcontentloaded" });
+      // (a) No Authorization header at all.
+      const r1 = await page.evaluate(async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/v2/onboarding`, {
+          method: "POST",
+          body: "",
+        });
+        return res.status;
+      }, BASE_URL);
+      expect(r1).toBe(401);
+      // (b) Malformed Bearer.
+      const r2 = await page.evaluate(async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/v2/onboarding`, {
+          method: "POST",
+          headers: { Authorization: "Bearer bogus" },
+          body: "",
+        });
+        return res.status;
+      }, BASE_URL);
+      expect(r2).toBe(401);
+      // (c) Corrupt JWT structure (three dots, garbage payload).
+      const r3 = await page.evaluate(async (baseUrl) => {
+        const res = await fetch(`${baseUrl}/api/v2/onboarding`, {
+          method: "POST",
+          headers: { Authorization: "Bearer aaa.bbb.ccc" },
+          body: "",
+        });
+        return res.status;
+      }, BASE_URL);
+      expect(r3).toBe(401);
+      // (d) Alien signature (valid structure, wrong key).
       const alien =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
         "eyJzdWIiOiJhbGllbi1zdWIiLCJpYXQiOjE1MTYyMzkwMjJ9." +
         "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
-      const r4 = await page.request.post(url, {
-        headers: { Authorization: `Bearer ${alien}` },
-        data: "",
-      });
-      expect(r4.status()).toBe(401);
+      const r4 = await page.evaluate(
+        async ({ baseUrl, token }) => {
+          const res = await fetch(`${baseUrl}/api/v2/onboarding`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+            body: "",
+          });
+          return res.status;
+        },
+        { baseUrl: BASE_URL, token: alien },
+      );
+      expect(r4).toBe(401);
 
       // Prove zero side-effect in DB: any actor id that might have
       // been fabricated from the alien JWT (`alien-sub`) MUST have
@@ -622,7 +813,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
       const stored = JSON.parse(storedRaw as string) as { access_token: string };
       expect(stored.access_token).toBe(fx.access_token);
 
-      const res = await callOnboarding(page, fx.access_token);
+      const res = await browserFetchOnboarding(page, fx.access_token);
       expect(res.status).toBe(401);
       const body = res.json as { error: string; correlationId: string };
       expect(body.error).toBe("unauthorized");
@@ -650,7 +841,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s7+${RUN_ID}@spabla.test`);
-      const r1 = await callOnboarding(page, fx.access_token);
+      const r1 = await browserFetchOnboarding(page, fx.access_token);
       expect(r1.status).toBe(200);
       const tenantId = (r1.json as { tenantId: string }).tenantId;
       await trackTenantIfPresent(userId);
@@ -662,7 +853,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
       expect(inactiveState.inactiveMembershipCount).toBe(1);
 
       // Second onboarding reactivates.
-      const r2 = await callOnboarding(page, fx.access_token);
+      const r2 = await browserFetchOnboarding(page, fx.access_token);
       expect(r2.status).toBe(200);
       expect((r2.json as { tenantId: string }).tenantId).toBe(tenantId);
       const reactivated = await readWorkspaceState(userId);
@@ -689,7 +880,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s8a+${RUN_ID}@spabla.test`);
-      const res = await callOnboarding(page, fx.access_token);
+      const res = await browserFetchOnboarding(page, fx.access_token);
       expect(res.status).toBe(503);
       const body = res.json as { error: string };
       expect(body.error).toBe("unavailable");
@@ -711,7 +902,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const page = await ctx.newPage();
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s8b+${RUN_ID}@spabla.test`);
-      const res = await callOnboarding(page, fx.access_token);
+      const res = await browserFetchOnboarding(page, fx.access_token);
       expect(res.status).toBe(503);
       const body = res.json as { error: string };
       expect(body.error).toBe("unavailable");
@@ -742,32 +933,32 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s9+${RUN_ID}@spabla.test`);
 
       // Default (no Accept-Language) → en → "My space"
-      const rDefault = await callOnboarding(page, fx.access_token);
+      const rDefault = await browserFetchOnboarding(page, fx.access_token);
       expect(rDefault.status).toBe(200);
       expect((rDefault.json as { label: string }).label).toBe("My space");
       await trackTenantIfPresent(userId);
 
       // `es` → "Mi espacio"
-      const rEs = await callOnboarding(page, fx.access_token, { acceptLanguage: "es" });
+      const rEs = await browserFetchOnboarding(page, fx.access_token, { acceptLanguage: "es" });
       expect((rEs.json as { label: string }).label).toBe("Mi espacio");
 
       // `ja-JP` normalises to `ja` → "マイスペース"
-      const rJa = await callOnboarding(page, fx.access_token, { acceptLanguage: "ja-JP" });
+      const rJa = await browserFetchOnboarding(page, fx.access_token, { acceptLanguage: "ja-JP" });
       expect((rJa.json as { label: string }).label).toBe("マイスペース");
 
       // Unknown locale → default "My space"
-      const rXx = await callOnboarding(page, fx.access_token, { acceptLanguage: "xx-YY" });
+      const rXx = await browserFetchOnboarding(page, fx.access_token, { acceptLanguage: "xx-YY" });
       expect((rXx.json as { label: string }).label).toBe("My space");
 
       // Injection-shaped locale → default "My space"; MUST NOT surface header text
-      const rInj = await callOnboarding(page, fx.access_token, {
+      const rInj = await browserFetchOnboarding(page, fx.access_token, {
         acceptLanguage: "'); DROP TABLE tenants; --",
       });
       expect((rInj.json as { label: string }).label).toBe("My space");
       expect(rInj.text).not.toContain("DROP TABLE");
 
       // Client body attempting to impose the label
-      const rBody = await callOnboarding(page, fx.access_token, {
+      const rBody = await browserFetchOnboarding(page, fx.access_token, {
         body: { label: "hijacked", locale: "en" },
         acceptLanguage: "fr",
       });
@@ -799,7 +990,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     try {
       const fx = await signInAsUserInPage(page, `e2e-onboarding-s10+${RUN_ID}@spabla.test`);
       for (const method of ["GET", "PUT", "PATCH", "DELETE"] as const) {
-        const res = await callOnboarding(page, fx.access_token, { method });
+        const res = await browserFetchOnboarding(page, fx.access_token, { method });
         expect(res.status).toBe(404);
         const body = res.json as { error: string; correlationId: string };
         expect(body.error).toBe("not_found");
@@ -832,8 +1023,8 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     try {
       const fxA = await signInAsUserInPage(pageA, `e2e-onboarding-s11a+${RUN_ID}@spabla.test`);
       const fxB = await signInAsUserInPage(pageB, `e2e-onboarding-s11b+${RUN_ID}@spabla.test`);
-      const rA = await callOnboarding(pageA, fxA.access_token);
-      const rB = await callOnboarding(pageB, fxB.access_token);
+      const rA = await browserFetchOnboarding(pageA, fxA.access_token);
+      const rB = await browserFetchOnboarding(pageB, fxB.access_token);
       expect(rA.status).toBe(200);
       expect(rB.status).toBe(200);
       const tA = (rA.json as { tenantId: string }).tenantId;
@@ -859,7 +1050,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
       expect(cross).toBe(0);
 
       // Repeating actor A's onboarding does not create anything on B.
-      const rA2 = await callOnboarding(pageA, fxA.access_token);
+      const rA2 = await browserFetchOnboarding(pageA, fxA.access_token);
       expect(rA2.status).toBe(200);
       expect((rA2.json as { tenantId: string }).tenantId).toBe(tA);
       const stateB = await readWorkspaceState(userBId);
@@ -878,18 +1069,54 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
   //   Fails the suite if any of these guards degrade.
   // ─────────────────────────────────────────────────────────────────
   test("12 · anti-false-positive guards on the suite itself", async () => {
-    // (a) Concurrency test uses fetch inside Promise.all (not
-    //     awaited sequentially).
     const specText = await import("node:fs").then((m) =>
       m.readFileSync(__filename, "utf8"),
     );
+
+    // (a) Concurrency test uses fetch inside Promise.all in a
+    // browser context, not a Node-sequential loop.
     expect(specText).toMatch(/Promise\.all\(jobs\)/);
     expect(specText).not.toMatch(/for \(const j of jobs\) await j/);
 
+    // (a-bis · Q3-R) The concurrency test coordinates with a
+    // control PostgreSQL connection that acquires the RPC's own
+    // advisory lock. Presence of the exact lock expression is
+    // required — the test cannot silently degrade to a wall-clock
+    // heuristic.
+    expect(specText).toMatch(
+      /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 9321\)\)/,
+    );
+    expect(specText).toMatch(/wait_event = 'advisory'/);
+    expect(specText).toMatch(/pg_blocking_pids/);
+    // The wall-clock upper bound heuristic must NOT reappear.
+    expect(specText).not.toMatch(/wall.*toBeLessThan\(10_000\)/);
+
+    // (a-tris · Q3-R) Every contract call to /api/v2/onboarding
+    // MUST dispatch from Chromium via `window.fetch` in a
+    // `page.evaluate`. `page.request` / `context.request` /
+    // `APIRequestContext` are Node-side transports and are
+    // forbidden for the endpoint itself.
+    const contractLineForbidden = specText
+      .split(/\r?\n/)
+      .map((line, i) => ({ line, i }))
+      .filter(
+        ({ line }) =>
+          /\/api\/v2\/onboarding/.test(line) &&
+          /page\.request|context\.request|APIRequestContext|request\.newContext/.test(line),
+      );
+    expect(contractLineForbidden).toEqual([]);
+    // Positive proof: every dispatcher is a `fetch(...)` inside
+    // `page.evaluate(...)`. The helper `browserFetchOnboarding`
+    // encapsulates this pattern.
+    expect(specText).toMatch(/async function browserFetchOnboarding/);
+    expect(specText).toMatch(
+      /const res = await fetch\(`\$\{baseUrl\}\/api\/v2\/onboarding`/,
+    );
+
     // (b) Deleted-actor test reuses the pre-delete access_token; it
-    //     never calls `signIn` after `deleteUser`. We isolate the
-    //     region between `admin.deleteUser` and the closing `finally`
-    //     and assert that no fresh sign-in appears in it.
+    // never calls `signIn` after `deleteUser`. We isolate the
+    // region between `admin.deleteUser` and the closing `finally`
+    // and assert that no fresh sign-in appears in it.
     const s6Body = specText.split(
       /test\("6 · deleted actor with original non-expired JWT/,
     )[1]?.split(/^\s{2}\}\);/m)[0];
@@ -897,7 +1124,7 @@ test.describe.serial("[Q3-onboarding-e2e] atomic personal workspace, browser bar
     const postDelete = s6Body!.split(/const del = await a\.auth\.admin\.deleteUser/)[1];
     expect(postDelete).toBeDefined();
     expect(postDelete).not.toMatch(/signInAsUserInPage\(/);
-    expect(postDelete).toMatch(/callOnboarding\(page, fx\.access_token\)/);
+    expect(postDelete).toMatch(/browserFetchOnboarding\(page, fx\.access_token\)/);
 
     // (c) Post-conditions consult PostgreSQL directly (via `pg`
     //     Client + service_role credentials), never via the endpoint
