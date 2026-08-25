@@ -56,12 +56,13 @@ describe("V1-ERADICATION · root route + app tree structure (Hito 9.2.6)", () =>
     expect(existsSync(apiV2)).toBe(true);
     const entries = readdirSync(apiV2).sort();
     // The V2 endpoint set is closed. Any additional folder here
-    // indicates uncontrolled scope drift. As of Hito 9.3.1-Q3 the
-    // authorised set is `{bootstrap, messages, seed}`; `bootstrap`
-    // was added to sustain the server-authoritative session bootstrap
-    // that replaces the productive dependency on `runSeed` +
-    // `spabla_v2_fase9_seed`.
-    expect(entries).toEqual(["bootstrap", "messages", "seed"]);
+    // indicates uncontrolled scope drift. As of Hito 9.3.2-A-Q2 the
+    // authorised set is `{bootstrap, messages, onboarding, seed}`.
+    // `bootstrap` was added by hito 9.3.1-Q3 to sustain the
+    // server-authoritative session bootstrap. `onboarding` was added
+    // by hito 9.3.2-A-Q2 to expose the atomic personal-workspace
+    // creation endpoint governed by contract Q1-RR-SCOPE.
+    expect(entries).toEqual(["bootstrap", "messages", "onboarding", "seed"]);
   });
 
   test("app/v2/chat page is preserved (the redirect target must exist)", () => {

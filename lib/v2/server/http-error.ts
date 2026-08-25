@@ -99,6 +99,20 @@ const KNOWN_INTERNAL_KINDS = new Set<string>([
   // Internal / uncaught (500)
   "unknown",
   "constraint_violation",
+  // Hito 9.3.2-A-Q2 · atomic onboarding server-side (contract §10, §14
+  // rows 10/48/53/56, §17-ter H). Whitelisted internal reasons for the
+  // sanitized log line. Never leak to the public body.
+  "orphan_mapping_detected",
+  "deletion_pending_blocked",
+  "legal_hold_blocked",
+  "lifecycle_query_failed",
+  "onboarding_env_missing",
+  "onboarding_rpc_failed",
+  "onboarding_rpc_empty_result",
+  "onboarding_body_fields_ignored",
+  "onboarding_locale_hint_rejected",
+  "method_not_allowed",
+  "supabase_env_missing",
 ]);
 
 const KNOWN_PHASES = new Set<ErrorPhase>([

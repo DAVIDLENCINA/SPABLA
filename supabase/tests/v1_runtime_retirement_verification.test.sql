@@ -145,9 +145,13 @@ END $$;
 -- ────────────────────────────────────────────────────────────────
 -- 5. `spabla_v2` schema untouched — table shape.
 -- ────────────────────────────────────────────────────────────────
--- Six tables shipped by Fase 8 (bootstrap) + Fase 9.1.1 (translations):
--- tenants, memberships, usage_ledger, purge_ledger, adapter_backfill_ledger,
--- message_translations. Match Fase 8 restore-drill's structural expectation.
+-- Eight tables shipped by Fase 8 (bootstrap) + Fase 9.1.1
+-- (translations) + Fase 9.3.2-A-Q2 (atomic onboarding): tenants,
+-- tenant_memberships, conversations, messages, usage_ledger,
+-- message_translations, actor_personal_workspace, actor_lifecycle_state.
+-- Match Fase 8 restore-drill's structural expectation as evolved by
+-- Q2 (contract §14 rows 39-41, 44 + migration
+-- `20260824180000_hito_9_3_2_a_atomic_onboarding.sql`).
 DO $$
 DECLARE
     v_count int;
@@ -158,8 +162,8 @@ BEGIN
      WHERE n.nspname = 'spabla_v2'
        AND c.relkind = 'r';
 
-    IF v_count <> 6 THEN
-        RAISE EXCEPTION 'v1_retirement: spabla_v2 table count expected 6, got %', v_count;
+    IF v_count <> 8 THEN
+        RAISE EXCEPTION 'v1_retirement: spabla_v2 table count expected 8, got %', v_count;
     END IF;
 END $$;
 
@@ -189,8 +193,9 @@ BEGIN
 END $$;
 
 -- ────────────────────────────────────────────────────────────────
--- 7. `spabla_v2` admin functions untouched — 5 functions still present
---    and owned by postgres.
+-- 7. `spabla_v2` admin functions untouched — 6 functions still present
+--    and owned by postgres. Fase 9.3.2-A-Q2 adds
+--    `admin_ensure_personal_workspace(uuid)` (contract §9).
 -- ────────────────────────────────────────────────────────────────
 DO $$
 DECLARE
@@ -203,10 +208,11 @@ BEGIN
      WHERE n.nspname = 'spabla_v2'
        AND p.proname IN ('admin_create_tenant','admin_add_membership',
                          'admin_deactivate_membership','admin_append_usage',
-                         'admin_purge_usage_by_tenant');
+                         'admin_purge_usage_by_tenant',
+                         'admin_ensure_personal_workspace');
 
-    IF v_count <> 5 THEN
-        RAISE EXCEPTION 'v1_retirement: spabla_v2 admin function count expected 5, got %', v_count;
+    IF v_count <> 6 THEN
+        RAISE EXCEPTION 'v1_retirement: spabla_v2 admin function count expected 6, got %', v_count;
     END IF;
 
     SELECT string_agg(p.proname, ',' ORDER BY p.proname)
@@ -217,7 +223,8 @@ BEGIN
      WHERE n.nspname = 'spabla_v2'
        AND p.proname IN ('admin_create_tenant','admin_add_membership',
                          'admin_deactivate_membership','admin_append_usage',
-                         'admin_purge_usage_by_tenant')
+                         'admin_purge_usage_by_tenant',
+                         'admin_ensure_personal_workspace')
        AND r.rolname <> 'postgres';
 
     IF v_bad_owner IS NOT NULL THEN

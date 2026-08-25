@@ -45,4 +45,9 @@ echo "[run-integration-tests] applying message_translations.test.sql"
 psql --no-psqlrc --set ON_ERROR_STOP=1 \
      -f supabase/tests/message_translations.test.sql
 
+# Hito 9.3.2-A-Q2 · atomic onboarding SQL integration suite
+echo "[run-integration-tests] applying atomic_onboarding.test.sql"
+psql --no-psqlrc --set ON_ERROR_STOP=1 \
+     -f supabase/tests/atomic_onboarding.test.sql
+
 echo "[run-integration-tests] SUITES OK"

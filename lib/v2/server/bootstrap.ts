@@ -6,11 +6,14 @@
  * enforces isolation. NEVER uses service_role. Returns the deterministic
  * selection defined by contract Q2 §10.
  *
- * Ordering rules (Q2 §10):
+ * Ordering rules (Q2 §10; refined by 9.3.2-A onboarding contract §11):
  *   - `selectedTenantId`  = first ACTIVE membership by `created_at ASC`.
  *   - `selectedConversationId` = first conversation of `selectedTenantId`
  *     by `created_at ASC`.
- *   - `canOperate` = `selectedTenantId !== null && selectedConversationId !== null`.
+ *   - `canOperate` = `selectedTenantId !== null`. Q1-RR-SCOPE §11
+ *     removes the conversation requirement: a freshly onboarded actor
+ *     with an active membership but no conversation yet must be able
+ *     to operate (start the first conversation from the chat).
  *
  * Both `tenant_memberships` and `conversations` carry `created_at`
  * columns per the phase-8 bootstrap migration (`20260730160000_phase8_bootstrap.sql`).
@@ -90,7 +93,11 @@ export async function buildBootstrapPayload(
     ? conversations[0].conversationId
     : null;
 
-  const canOperate = selectedTenantId !== null && selectedConversationId !== null;
+  // 9.3.2-A onboarding contract §11: canOperate no longer requires an
+  // existing conversation. A freshly onboarded actor with an active
+  // membership but zero conversations must be able to enter the chat
+  // and start the first conversation naturally.
+  const canOperate = selectedTenantId !== null;
 
   return {
     actor: { actorId: deps.actorId, email: deps.actorEmail },
