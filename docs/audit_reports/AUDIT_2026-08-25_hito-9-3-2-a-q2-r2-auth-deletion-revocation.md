@@ -160,6 +160,8 @@ Test `Q2-55 · re-registration with same email yields a new sub and a new tenant
 
 Escenario C (carrera onboarding + eliminación simultánea) no se automatizó como test unitario por su naturaleza no-determinista, pero está cubierto normativamente por el orden de locks documentado en §10: garantiza que sólo hay dos outcomes válidos (onboarding gana → estado A creado, eliminación posterior deja huérfano en cuarentena; o eliminación gana → onboarding aborta P0002 → 401 sin escritura). Cero estado parcial. Cero 500 esperado.
 
+**Rectificación Q2-R3 (2026-08-25):** el razonamiento normativo del párrafo anterior era insuficiente. La comprobación introducida por Q2-R2 (`PERFORM 1 FROM auth.users WHERE id = p_actor_id`) **no bloquea la fila** de Auth, por lo que la carrera podía materializarse: (1) onboarding lee y ve el actor, (2) `deleteUser` commit, (3) onboarding continúa y crea mapping/tenant/membership para un actor Auth inexistente. El advisory lock del paso (2) del §10 no sincroniza `deleteUser` porque Supabase Auth nunca lo adquiere. Q2-R3 sustituye la lectura por un row-lock `SELECT id FROM auth.users WHERE id = p_actor_id FOR KEY SHARE` que es incompatible con DELETE y compatible con SELECTs normales, y añade una prueba concurrente controlada con dos backends PostgreSQL reales (`scripts/ci/onboarding-auth-race.sh`) que demuestra los tres outcomes con evidencia de `pg_locks`. Ver acta `AUDIT_2026-08-25_hito-9-3-2-a-q2-r3-auth-delete-race.md` para el detalle. Carrera cerrada.
+
 ## 15 · RLS y grants
 
 Sin cambios respecto a Q2 original:

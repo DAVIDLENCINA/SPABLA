@@ -589,4 +589,86 @@ BEGIN
     END IF;
 END $$;
 
-\echo '=== atomic_onboarding.test.sql · OK (Q2-05..Q2-15, Q2-25, Q2-31..Q2-34, Q2-38..Q2-41, Q2-44, Q2-48, Q2-53, Q2-56, Q2-58) ==='
+-- =================================================================
+-- Hito 9.3.2-A-Q2-R3 · Structural checks on the row-locked RPC.
+--
+-- Guards the invariants introduced by Q2-R3:
+--   · The RPC body performs `FOR KEY SHARE` on `auth.users`.
+--   · The RPC search_path lists ONLY `pg_catalog` and `spabla_v2`
+--     (no `auth`); the reference to `auth.users` is schema-qualified.
+--   · The RPC signature and volatility are invariant.
+--
+-- Failure of any of these implies a regression on the auth-delete
+-- race hardening. Structural checks read `pg_get_functiondef` and
+-- `pg_proc` — zero data mutation.
+-- =================================================================
+
+\echo '--- Q2-R3 · structural checks ---'
+
+DO $$
+DECLARE
+    v_body text;
+    v_config text[];
+BEGIN
+    SELECT pg_catalog.pg_get_functiondef(p.oid),
+           p.proconfig
+      INTO v_body, v_config
+      FROM pg_catalog.pg_proc p
+     WHERE p.proname = 'admin_ensure_personal_workspace'
+       AND p.pronamespace = 'spabla_v2'::regnamespace;
+
+    -- Q2-R3-1: body contains `FOR KEY SHARE` on `auth.users`.
+    IF v_body NOT LIKE '%FOR KEY SHARE%' THEN
+        RAISE EXCEPTION 'Q2-R3-1: RPC body missing FOR KEY SHARE row lock';
+    END IF;
+
+    -- Q2-R3-2: `auth.users` reference is present and schema-qualified.
+    IF v_body NOT LIKE '%auth.users%' THEN
+        RAISE EXCEPTION 'Q2-R3-2: RPC body missing schema-qualified auth.users reference';
+    END IF;
+
+    -- Q2-R3-3: search_path lists only pg_catalog + spabla_v2. It
+    -- MUST NOT include `auth`. The proconfig array stores raw
+    -- `key=value` settings such as
+    --   `search_path=pg_catalog, spabla_v2`.
+    IF v_config IS NULL THEN
+        RAISE EXCEPTION 'Q2-R3-3: RPC missing search_path config';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM unnest(v_config) e
+         WHERE e LIKE 'search_path=%'
+    ) THEN
+        RAISE EXCEPTION 'Q2-R3-3: RPC missing search_path setting';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM unnest(v_config) e
+         WHERE e LIKE 'search_path=%'
+           AND e ~ '(^|[=, ])auth([, ]|$)'
+    ) THEN
+        RAISE EXCEPTION 'Q2-R3-3: RPC search_path must NOT include auth (got: %)', v_config;
+    END IF;
+END $$;
+
+DO $$
+DECLARE
+    v_argtypes text;
+    v_volat text;
+BEGIN
+    -- Q2-R3-4: signature invariant — single `uuid` argument, volatile.
+    SELECT pg_catalog.pg_get_function_arguments(p.oid), p.provolatile::text
+      INTO v_argtypes, v_volat
+      FROM pg_catalog.pg_proc p
+     WHERE p.proname = 'admin_ensure_personal_workspace'
+       AND p.pronamespace = 'spabla_v2'::regnamespace;
+
+    IF v_argtypes IS DISTINCT FROM 'p_actor_id uuid' THEN
+        RAISE EXCEPTION 'Q2-R3-4: RPC signature changed (got: %)', v_argtypes;
+    END IF;
+    IF v_volat <> 'v' THEN
+        RAISE EXCEPTION 'Q2-R3-4: RPC volatility must be VOLATILE (got: %)', v_volat;
+    END IF;
+END $$;
+
+\echo '--- Q2-R3 · structural checks OK ---'
+
+\echo '=== atomic_onboarding.test.sql · OK (Q2-05..Q2-15, Q2-25, Q2-31..Q2-34, Q2-38..Q2-41, Q2-44, Q2-48, Q2-53, Q2-56, Q2-58, Q2-R3-1..Q2-R3-4) ==='

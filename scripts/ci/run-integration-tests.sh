@@ -50,4 +50,11 @@ echo "[run-integration-tests] applying atomic_onboarding.test.sql"
 psql --no-psqlrc --set ON_ERROR_STOP=1 \
      -f supabase/tests/atomic_onboarding.test.sql
 
+# Hito 9.3.2-A-Q2-R3 · concurrency proof with two independent psql backends.
+# Verifies the FOR KEY SHARE row lock serializes onboarding against a
+# concurrent DELETE FROM auth.users (the exact operation performed by
+# `admin.auth.admin.deleteUser` on the Supabase Auth backend).
+echo "[run-integration-tests] running onboarding-auth-race.sh (two-backend concurrency)"
+"${SCRIPT_DIR}/onboarding-auth-race.sh"
+
 echo "[run-integration-tests] SUITES OK"
