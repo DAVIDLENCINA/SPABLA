@@ -26,7 +26,23 @@ import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import type { CanonicalLocale } from "./onboarding";
+import {
+  buildLabelPresenter,
+  DEFAULT_LOCALE,
+} from "./onboarding-labels";
+
 const SCHEMA = "spabla_v2";
+
+/**
+ * Clave interna fija que la RPC `admin_ensure_personal_workspace`
+ * persiste en `tenants.name` para el personal workspace de cada actor
+ * (contract §9, I-14). NUNCA debe filtrarse al cliente: cuando el
+ * composer detecta esta clave en `tenants.name`, sustituye el valor
+ * por la etiqueta localizada del catálogo server-owned antes de
+ * devolverlo en el payload (§17-bis 8-10 · 15).
+ */
+const PERSONAL_WORKSPACE_INTERNAL_KEY = "workspace.personal.default";
 
 export type BootstrapActor = {
   readonly actorId: string;
@@ -71,6 +87,15 @@ export type BootstrapDeps = {
    * so this composer stays a pure query orchestrator.
    */
   readonly actorEmail: string;
+  /**
+   * Canonical locale used to project a presentation label for the
+   * personal workspace. Optional so pre-9.3.2-A-Q2-R callers keep
+   * working (they get the `DEFAULT_LOCALE` label). The handler
+   * normalises `Accept-Language` with `normaliseLocaleHint` before
+   * building deps; the client can never inject text through this
+   * channel (contract §17-bis 4-7).
+   */
+  readonly canonicalLocale?: CanonicalLocale;
 };
 
 /**
@@ -81,7 +106,15 @@ export type BootstrapDeps = {
 export async function buildBootstrapPayload(
   deps: BootstrapDeps,
 ): Promise<BootstrapPayload> {
-  const memberships = await loadMemberships(deps.authenticated);
+  const rawMemberships = await loadMemberships(deps.authenticated);
+  // 9.3.2-A-Q2-R: sustituir la clave interna `workspace.personal.default`
+  // por la etiqueta localizada del catálogo cerrado server-owned antes
+  // de devolver el payload. Cero cambio en la persistencia; cero
+  // dependencia del cliente para la selección del texto. La clave
+  // sigue existiendo en la base de datos y en las respuestas
+  // server-side sanitizadas — nunca en la superficie pública.
+  const memberships = projectPresentationLabels(rawMemberships, deps.canonicalLocale);
+
   const active = memberships.filter((m) => m.isActive);
   const selectedTenantId = active.length > 0 ? active[0].tenantId : null;
 
@@ -107,6 +140,28 @@ export async function buildBootstrapPayload(
     selectedConversationId,
     canOperate,
   };
+}
+
+/**
+ * Reemplaza `tenantName === "workspace.personal.default"` por la
+ * etiqueta localizada del catálogo cerrado server-owned. Cero
+ * modificación de las demás filas (tenants compartidos preservan
+ * su nombre visible tal cual). Cero mutación de la base de datos.
+ *
+ * @internal Cero exposición fuera del composer.
+ */
+function projectPresentationLabels(
+  memberships: ReadonlyArray<BootstrapMembership>,
+  canonicalLocale: CanonicalLocale | undefined,
+): ReadonlyArray<BootstrapMembership> {
+  const locale = canonicalLocale ?? DEFAULT_LOCALE;
+  const presenter = buildLabelPresenter();
+  const personalLabel = presenter.labelFor(locale);
+  return memberships.map((m) =>
+    m.tenantName === PERSONAL_WORKSPACE_INTERNAL_KEY
+      ? { ...m, tenantName: personalLabel }
+      : m,
+  );
 }
 
 async function loadMemberships(

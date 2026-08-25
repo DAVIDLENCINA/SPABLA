@@ -61,6 +61,7 @@ import {
   type ErrorPhase,
   type PublicErrorCode,
 } from "@/lib/v2/server/http-error";
+import { normaliseLocaleHint } from "@/lib/v2/server/onboarding-labels";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -132,9 +133,20 @@ export async function GET(req: NextRequest): Promise<Response> {
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
 
+  // 9.3.2-A-Q2-R: pista no confiable de idioma normalizada al catálogo
+  // cerrado server-owned. Se usa exclusivamente para proyectar la
+  // etiqueta visible del personal workspace en el payload; nunca
+  // alcanza persistencia (contract §17-bis 4-7).
+  const canonicalLocale = normaliseLocaleHint(req.headers.get("accept-language"));
+
   let payload: Awaited<ReturnType<typeof buildBootstrapPayload>>;
   try {
-    payload = await buildBootstrapPayload({ authenticated, actorId, actorEmail });
+    payload = await buildBootstrapPayload({
+      authenticated,
+      actorId,
+      actorEmail,
+      canonicalLocale,
+    });
   } catch (err: unknown) {
     if (err instanceof BootstrapQueryError) {
       return failure(503, "unavailable", "infrastructure", "db_transient", correlationId, "GET");

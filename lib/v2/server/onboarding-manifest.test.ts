@@ -90,6 +90,39 @@ describe("[Q2-manifest] traceability 58 scenarios Q2-01..Q2-58", () => {
     expect(missing).toStrictEqual([]);
   });
 
+  it("Q2-54 and Q2-55 appear inside an executable test() body, not only in comments", () => {
+    // 9.3.2-A-Q2-R (contract §17-ter I, orden R FASE 8): endurecer
+    // el manifiesto para que Q2-54 (Auth eliminado) y Q2-55
+    // (re-registro con mismo email) requieran identificador dentro
+    // de un `test(...)` o `it(...)` ejecutable — no basta con una
+    // mención en un JSDoc o comentario. Los demás derivados
+    // pueden seguir apuntando a suites existentes verificables.
+    const REQUIRE_EXECUTABLE = ["Q2-54", "Q2-55"] as const;
+    const tsFiles = files.filter(
+      (f) => f.endsWith(".test.ts") || f.endsWith(".test.tsx"),
+    );
+    const offenders: string[] = [];
+    for (const id of REQUIRE_EXECUTABLE) {
+      // Match `test("... Q2-54 ...", ...)` or `it("... Q2-55 ...", ...)`.
+      // Vitest permits both single and double quotes and backticks.
+      const rex = new RegExp(
+        `\\b(?:test|it)\\s*\\(\\s*(?:"[^"]*\\b${id}\\b[^"]*"|'[^']*\\b${id}\\b[^']*'|\`[^\`]*\\b${id}\\b[^\`]*\`)`,
+      );
+      let found = false;
+      for (const f of tsFiles) {
+        const content = readFileSync(f, "utf-8");
+        if (rex.test(content)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        offenders.push(id);
+      }
+    }
+    expect(offenders).toStrictEqual([]);
+  });
+
   it("no identifier outside Q2-01..Q2-58 range is used", () => {
     const invalid: string[] = [];
     const re = /\bQ2-(\d{2,3})\b/g;
