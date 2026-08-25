@@ -29,6 +29,7 @@ import type {
   PersonalWorkspaceResult,
 } from "./onboarding";
 import {
+  OnboardingAuthActorDeletedError,
   OnboardingInternalError,
   OnboardingOrphanMappingError,
   OnboardingTransientError,
@@ -85,8 +86,14 @@ export class SupabasePersonalWorkspaceProvider implements PersonalWorkspaceProvi
       // Mapeo estricto de SQLSTATE al alfabeto de excepciones de
       // dominio. NUNCA se filtran mensajes, códigos ni identidades.
       const code = extractSqlState(error);
+      if (code === "P0002") {
+        // Q2-R2 · el actor ya no existe en `auth.users`. La RPC
+        // rechazó la operación antes de cualquier escritura.
+        // Handler → 401 unauthorized opaco.
+        throw new OnboardingAuthActorDeletedError();
+      }
       if (code === "23503") {
-        // Orphan mapping detectado por §9 paso 3.a.
+        // Orphan mapping detectado por §9 paso 4.a.
         throw new OnboardingOrphanMappingError();
       }
       if (isTransient(code)) {

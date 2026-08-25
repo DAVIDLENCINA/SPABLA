@@ -52,6 +52,7 @@ import {
   type PublicErrorCode,
 } from "@/lib/v2/server/http-error";
 import {
+  OnboardingAuthActorDeletedError,
   OnboardingInternalError,
   OnboardingOrphanMappingError,
   OnboardingTransientError,
@@ -224,6 +225,13 @@ export async function POST(req: NextRequest): Promise<Response> {
   try {
     outcome = await runOnboarding(deps, { actorId, canonicalLocale });
   } catch (err: unknown) {
+    if (err instanceof OnboardingAuthActorDeletedError) {
+      // Q2-R2 · el actor Auth fue eliminado tras la emisión del JWT
+      // vigente. verifyJwt local aceptó firma+exp, pero la RPC
+      // detectó que `auth.users` ya no contiene el sub. Respuesta:
+      // 401 opaco, cero escritura, cero causa filtrada al cliente.
+      return failure(401, "unauthorized", "authentication", "auth_actor_deleted", correlationId, "POST");
+    }
     if (err instanceof OnboardingOrphanMappingError) {
       return failure(500, "internal", "integrity", "orphan_mapping_detected", correlationId, "POST");
     }

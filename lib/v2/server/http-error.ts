@@ -113,6 +113,12 @@ const KNOWN_INTERNAL_KINDS = new Set<string>([
   "onboarding_locale_hint_rejected",
   "method_not_allowed",
   "supabase_env_missing",
+  // Hito 9.3.2-A-Q2-R2 · Auth-actor existence check inside the RPC.
+  // The JWT was cryptographically valid (signature + exp) but the
+  // actor has been removed from `auth.users` after the token was
+  // issued. Handler responds `401 unauthorized` opaque; this kind
+  // is server-side observable only.
+  "auth_actor_deleted",
 ]);
 
 const KNOWN_PHASES = new Set<ErrorPhase>([

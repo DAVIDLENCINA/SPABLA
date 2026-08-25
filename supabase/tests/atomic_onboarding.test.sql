@@ -39,7 +39,12 @@
 \echo '=== atomic_onboarding.test.sql · begin ==='
 
 -- ────────────────────────────────────────────────────────────────
--- Preparación: reset controlado del estado del onboarding
+-- Preparación: reset controlado del estado del onboarding + seed de
+-- actores Auth (contract Q2-R2). Desde Q2-R2 la RPC exige que el
+-- `p_actor_id` exista en `auth.users`. Esta suite crea filas
+-- mínimas en `auth.users` para los UUIDs sintéticos que utiliza en
+-- los tests. Los actores 8888…, 9999… y `cccc…` se usan también
+-- en escenarios de eliminación real y se insertan igualmente.
 -- ────────────────────────────────────────────────────────────────
 BEGIN;
 SET session_replication_role = 'replica';
@@ -47,6 +52,22 @@ DELETE FROM spabla_v2.actor_lifecycle_state;
 DELETE FROM spabla_v2.tenant_memberships;
 DELETE FROM spabla_v2.actor_personal_workspace;
 -- No tocar tenants preexistentes: comprobado en Q2-44.
+
+-- Seed determinista de actores Auth utilizados por esta suite. Cada
+-- fila usa placeholders no verificables (`encrypted_password='x'`,
+-- `aud='authenticated'`) porque estos actores nunca hacen sign-in
+-- HTTP; sólo existen como referencia FK para la comprobación
+-- `auth.users` que introdujo Q2-R2 en la RPC.
+INSERT INTO auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, created_at, updated_at)
+VALUES
+  ('55555555-5555-5555-5555-555555555555', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-05@example.test', 'x', now(), now(), now()),
+  ('66666666-6666-6666-6666-666666666666', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-07@example.test', 'x', now(), now(), now()),
+  ('77777777-7777-7777-7777-777777777777', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-09@example.test', 'x', now(), now(), now()),
+  ('88888888-8888-8888-8888-888888888888', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-10@example.test', 'x', now(), now(), now()),
+  ('99999999-9999-9999-9999-999999999999', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-14@example.test', 'x', now(), now(), now()),
+  ('cccccccc-cccc-cccc-cccc-cccccccccccc', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'q2-58@example.test', 'x', now(), now(), now())
+ON CONFLICT (id) DO NOTHING;
+
 SET session_replication_role = 'origin';
 COMMIT;
 

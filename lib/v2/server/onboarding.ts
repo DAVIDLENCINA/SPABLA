@@ -99,6 +99,24 @@ export class OnboardingOrphanMappingError extends Error {
 }
 
 /**
+ * Excepción de dominio: el actor Auth ya no existe en `auth.users`
+ * (contract §17-ter D, §17-ter H, matrix row 54). Q2-R2 introduce
+ * una comprobación server-side dentro de la RPC transaccional que
+ * rechaza cualquier onboarding cuyo `p_actor_id` haya sido eliminado
+ * de Supabase Auth. El adaptador lanza esta excepción cuando recibe
+ * `SQLSTATE 'P0002'` (`no_data_found`) desde
+ * `admin_ensure_personal_workspace`; el handler HTTP la mapea a
+ * `401 unauthorized` opaco con `internalKind = "auth_actor_deleted"`.
+ * No PII, no `sub`, no SQLSTATE alcanzan la respuesta pública.
+ */
+export class OnboardingAuthActorDeletedError extends Error {
+  constructor() {
+    super("onboarding: auth actor deleted");
+    this.name = "OnboardingAuthActorDeletedError";
+  }
+}
+
+/**
  * Excepción de dominio: fallo transitorio de la persistencia. El
  * handler HTTP la mapea a `503 unavailable` opaco.
  */
