@@ -233,24 +233,27 @@ TGT_ADMIN_FN=$(psql_tgt -c "
    WHERE n.nspname = 'spabla_v2'
      AND p.proname IN ('admin_create_tenant','admin_add_membership',
                        'admin_deactivate_membership','admin_append_usage',
-                       'admin_purge_usage_by_tenant')
+                       'admin_purge_usage_by_tenant',
+                       'admin_ensure_personal_workspace')
 ")
 
 {
   echo "== Structural (target) =="
   # Fase 8 shipped five tables in spabla_v2; Fase 9.1.1 added
-  # message_translations so the productive baseline is now six.
-  echo "  spabla_v2 tables:     ${TGT_SCHEMA_TABLES} (expected 6)"
+  # message_translations; Fase 9.3.2-A-Q2 added
+  # actor_personal_workspace + actor_lifecycle_state — productive
+  # baseline is now eight.
+  echo "  spabla_v2 tables:     ${TGT_SCHEMA_TABLES} (expected 8)"
   # V1 tables retired by Hito 9.2.6 (V1-ERADICATION) — expected 0.
   echo "  V1 public tables:     ${TGT_V1_TABLES} (expected 0)"
   echo "  spabla_v2 policies:   ${TGT_POLICIES}"
-  echo "  ENABLE+FORCE RLS:     ${TGT_RLS_OK} of 6 spabla_v2 tables"
-  echo "  admin_* functions:    ${TGT_ADMIN_FN} of 5"
+  echo "  ENABLE+FORCE RLS:     ${TGT_RLS_OK} of 8 spabla_v2 tables"
+  echo "  admin_* functions:    ${TGT_ADMIN_FN} of 6"
   echo ""
 } >> "${REPORT_PATH}"
 
-if [ "${TGT_SCHEMA_TABLES}" != "6" ] || [ "${TGT_V1_TABLES}" != "0" ] \
-   || [ "${TGT_RLS_OK}" != "6" ] || [ "${TGT_ADMIN_FN}" != "5" ]; then
+if [ "${TGT_SCHEMA_TABLES}" != "8" ] || [ "${TGT_V1_TABLES}" != "0" ] \
+   || [ "${TGT_RLS_OK}" != "8" ] || [ "${TGT_ADMIN_FN}" != "6" ]; then
   log "FATAL: structural mismatch after restore"
   exit 1
 fi
@@ -269,7 +272,8 @@ TGT_OWNERS_OK=$(psql_tgt -c "
    WHERE n.nspname = 'spabla_v2'
      AND p.proname IN ('admin_create_tenant','admin_add_membership',
                        'admin_deactivate_membership','admin_append_usage',
-                       'admin_purge_usage_by_tenant')
+                       'admin_purge_usage_by_tenant',
+                       'admin_ensure_personal_workspace')
      AND r.rolname = 'postgres'
 ")
 
@@ -295,7 +299,8 @@ for fsig in \
   "spabla_v2.admin_purge_usage_by_tenant(uuid,text)" \
   "spabla_v2.admin_create_tenant(text)" \
   "spabla_v2.admin_add_membership(uuid,uuid,text)" \
-  "spabla_v2.admin_deactivate_membership(uuid,uuid)"
+  "spabla_v2.admin_deactivate_membership(uuid,uuid)" \
+  "spabla_v2.admin_ensure_personal_workspace(uuid)"
 do
   acl_check "${fsig}" "service_role" "t"
   acl_check "${fsig}" "anon" "f"
@@ -304,11 +309,11 @@ done
 
 {
   echo ""
-  echo "  admin_* functions owned by postgres: ${TGT_OWNERS_OK} of 5"
+  echo "  admin_* functions owned by postgres: ${TGT_OWNERS_OK} of 6"
   echo ""
 } >> "${REPORT_PATH}"
 
-if [ "${TGT_OWNERS_OK}" != "5" ]; then
+if [ "${TGT_OWNERS_OK}" != "6" ]; then
   log "FATAL: ownership mismatch"
   exit 1
 fi
