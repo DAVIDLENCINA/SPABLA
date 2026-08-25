@@ -183,7 +183,7 @@ SPABLA_E2E_SUPABASE_SERVICE_ROLE_KEY="${SERVICE_KEY}" \
 SPABLA_E2E_NEXT_PORT="${E2E_NEXT_PORT}" \
 SPABLA_E2E_NEXT_WRAPPER_PID="${NEXT_PID}" \
 SPABLA_E2E_REPO_ROOT="${REPO_ROOT}" \
-  npx playwright test --project chromium
+  npx playwright test e2e/auth-continuity.spec.ts --project chromium
 PLAYWRIGHT_EC=$?
 set -e
 
