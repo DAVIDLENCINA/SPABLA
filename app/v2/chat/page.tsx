@@ -69,6 +69,9 @@ import { LanguageControls } from "./components/LanguageControls";
 import { MessageComposer } from "./components/MessageComposer";
 import { SessionArea } from "./components/SessionArea";
 import { DeveloperPanel } from "./components/DeveloperPanel";
+// Hito 9.3.2-B-Q2 · Acceso passwordless por OTP email. Convive con
+// SessionArea (password); ninguno reemplaza al otro (contract §7 §11).
+import { OtpForm } from "./components/OtpForm";
 
 type Message = {
   readonly messageId: string;
@@ -163,6 +166,10 @@ export default function VisibleConversationPage() {
   const [signInPassword, setSignInPassword] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
   const [signInBusy, setSignInBusy] = useState(false);
+  // Hito 9.3.2-B-Q2 · Modo de acceso alternativo. "password" preserva
+  // el flujo existente byte-por-byte. "otp" muestra `OtpForm`. El
+  // usuario alterna sin recargar (contract §11 orden Q2).
+  const [authMethod, setAuthMethod] = useState<"password" | "otp">("password");
 
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedBusy, setSeedBusy] = useState(false);
@@ -618,17 +625,53 @@ export default function VisibleConversationPage() {
         (`Initializing`/`RestoringSession`) mostramos un aviso neutro
         para no confundir al usuario.
       */}
-      {!session && sessionRestored && (
-        <SessionArea
-          sessionExpired={sessionExpired}
-          sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
-          signInEmail={signInEmail}
-          signInPassword={signInPassword}
-          onSignInEmailChange={setSignInEmail}
-          onSignInPasswordChange={setSignInPassword}
-          signInError={signInError}
-          signInBusy={signInBusy}
-          onSignIn={() => { void signIn(); }}
+      {!session && sessionRestored && authMethod === "password" && (
+        <>
+          <SessionArea
+            sessionExpired={sessionExpired}
+            sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
+            signInEmail={signInEmail}
+            signInPassword={signInPassword}
+            onSignInEmailChange={setSignInEmail}
+            onSignInPasswordChange={setSignInPassword}
+            signInError={signInError}
+            signInBusy={signInBusy}
+            onSignIn={() => { void signIn(); }}
+          />
+          <button
+            type="button"
+            onClick={() => setAuthMethod("otp")}
+            style={{
+              marginTop: "0.5rem",
+              padding: "0.4rem 0.9rem",
+              fontSize: "0.85rem",
+              fontWeight: 500,
+              color: "#0B0F19",
+              background: "transparent",
+              border: "1px solid #E2E8F0",
+              borderRadius: 8,
+              cursor: "pointer",
+              alignSelf: "flex-start",
+            }}
+            aria-label="Acceder con código enviado por email"
+          >
+            Acceder con código
+          </button>
+        </>
+      )}
+      {!session && sessionRestored && authMethod === "otp" && supabase && (
+        <OtpForm
+          supabase={supabase}
+          onAuthenticated={() => {
+            // Q3.2-Q2 · Tras verificar el OTP y ejecutar onboarding
+            // OK, limpiamos el aviso de expiración y volvemos al modo
+            // password para futuras reaperturas. `page.tsx` recibe la
+            // sesión vía `onAuthStateChange`; no fabricamos nada aquí.
+            sessionExpiredRef.current = false;
+            setSessionExpired(false);
+            setAuthMethod("password");
+          }}
+          onSwitchToPassword={() => setAuthMethod("password")}
         />
       )}
       {!session && !sessionRestored && (

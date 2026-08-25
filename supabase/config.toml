@@ -56,8 +56,15 @@ enabled = true
 enabled = false
 port = 54323
 
+# Hito 9.3.2-B-Q2 · Local SMTP enabled so `supabase start` levanta el
+# contenedor Inbucket/Mailpit local en el puerto 54324. Necesario para
+# que el flujo OTP local (signInWithOtp → verifyOtp) tenga un destino
+# real donde leer el código durante tests de integración y desarrollo.
+# NO afecta a Supabase Cloud: la configuración productiva de SMTP se
+# gestiona exclusivamente en el Dashboard (bloqueo de producción, ver
+# `SPABLA_V2_FASE_9_HITO_9_3_2_B_OTP_CONTRACT.md` §13).
 [local_smtp]
-enabled = false
+enabled = true
 
 [storage]
 enabled = false
@@ -76,6 +83,17 @@ enable_manual_linking = false
 enable_signup = true
 double_confirm_changes = false
 enable_confirmations = false
+
+# Hito 9.3.2-B-Q2 · Plantilla OTP obligatoria. GoTrue usa la
+# categoría `magic_link` para el flujo `signInWithOtp` de email. La
+# plantilla contiene EXCLUSIVAMENTE `{{ .Token }}` (código de 6
+# dígitos) — cero `{{ .ConfirmationURL }}` para evitar el magic link
+# funcional (contract §4 OTP + Q1 §4 T17). Test estático
+# `lib/v2/client/otp-template.test.ts` bloquea cualquier regresión
+# que reintroduzca URLs de autenticación en el cuerpo.
+[auth.email.template.magic_link]
+subject = "SPABLA · tu código de acceso"
+content_path = "./supabase/templates/otp_email.html"
 
 [edge_runtime]
 enabled = false
