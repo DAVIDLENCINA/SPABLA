@@ -158,14 +158,33 @@ describe("page.tsx · integración con OtpForm sin destruir password", () => {
     expect(PAGE_SRC).toMatch(/Acceder con código/);
   });
 
-  it("OtpForm.onAuthenticated re-arma el estado y vuelve a modo password", () => {
-    // Encontrar el fragmento entre `onAuthenticated={() => {` y su
-    // cierre balanceado — cadena arbitrariamente larga incl.
-    // comentarios explicativos.
+  it("OtpForm.onAuthenticated NO fuerza retorno a password (Q2-R rectificado)", () => {
+    // Rectificado en Q2-R: OTP es método principal; onAuthenticated
+    // limpia el aviso de expiración pero deja `authMethod = "otp"`.
+    // La barrera antifraude estricta vive en
+    // `lib/v2/client/otp-antifraud.test.ts § onAuthenticated NO
+    // fuerza setAuthMethod('password')` con parseo balanceado de
+    // llaves. Aquí conservamos la comprobación equivalente sin
+    // ámbito acotado exhaustivo — sirve como oracle mínimo.
     const idx = PAGE_SRC.indexOf("onAuthenticated={() => {");
     expect(idx).toBeGreaterThan(-1);
-    const region = PAGE_SRC.slice(idx, idx + 1500);
-    expect(region).toMatch(/setAuthMethod\("password"\)/);
-    expect(region).toMatch(/setSessionExpired\(false\)/);
+    // Restringimos hasta el cierre del arrow con parseo balanceado.
+    let depth = 0;
+    let end = -1;
+    for (let i = idx + "onAuthenticated=".length; i < PAGE_SRC.length; i += 1) {
+      const c = PAGE_SRC[i];
+      if (c === "{") depth += 1;
+      else if (c === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    expect(end).toBeGreaterThan(idx);
+    const body = PAGE_SRC.slice(idx, end);
+    expect(body).not.toMatch(/setAuthMethod\("password"\)/);
+    expect(body).toMatch(/setSessionExpired\(false\)/);
   });
 });

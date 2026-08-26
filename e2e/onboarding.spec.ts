@@ -113,6 +113,15 @@ async function signInAsUserInPage(page: Page, email: string): Promise<UserFixtur
   // (`window.__spablaSupabase`) mounts under
   // `NEXT_PUBLIC_SPABLA_E2E_HOOK=1`. The runner exports the flag.
   await page.goto("/v2/chat", { waitUntil: "domcontentloaded" });
+  // Hito 9.3.2-B-Q2-R · OTP es el método principal. Cambiamos a la
+  // vista password (via botón "Acceder con contraseña") si visible.
+  const switchToPassword = page.getByRole("button", { name: "Acceder con contraseña" });
+  try {
+    await switchToPassword.waitFor({ timeout: 5_000, state: "visible" });
+    await switchToPassword.click();
+  } catch {
+    // La vista password ya estaba activa — seguimos.
+  }
   await expect(page.locator('section[aria-label="Iniciar sesión"]')).toBeVisible({
     timeout: 30_000,
   });

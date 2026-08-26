@@ -22,9 +22,16 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    // Hito 9.3.2-B-Q2-R · Los tests conductuales de OtpForm/page
+    // usan un environment DOM real (`happy-dom`) mediante el pragma
+    // por-archivo `// @vitest-environment happy-dom` (Vitest 4.x
+    // reemplaza el legacy `environmentMatchGlobs` por este mecanismo
+    // declarativo). El resto de la suite corre bajo Node.
     include: [
       "app/**/*.test.ts",
+      "app/**/*.test.tsx",
       "lib/v2/client/**/*.test.ts",
+      "lib/v2/client/**/*.test.tsx",
       // Hito 9.2.5-C: server-side V2 helpers (e.g. the log sanitizer
       // used by /api/v2/seed) also run under this Node-environment
       // vitest project so they share the same aliases and shims.

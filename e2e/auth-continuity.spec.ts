@@ -151,6 +151,19 @@ async function gotoChat(page: Page): Promise<void> {
 }
 
 async function expectSignInFormVisible(page: Page): Promise<void> {
+  // Hito 9.3.2-B-Q2-R · OTP es el método principal. Cuando la
+  // página monta la vista OTP, hay un botón "Acceder con contraseña"
+  // que transita a `SessionArea`. Este helper lo pulsa si es visible
+  // para dejar la vista password ya lista antes de que los tests de
+  // continuidad esperen el `section[aria-label="Iniciar sesión"]`.
+  const switchToPassword = page.getByRole("button", { name: "Acceder con contraseña" });
+  try {
+    await switchToPassword.waitFor({ timeout: 5_000, state: "visible" });
+    await switchToPassword.click();
+  } catch {
+    // La vista password ya estaba activa (o el botón no existe en
+    // esta ruta) — seguimos con la espera del SessionArea abajo.
+  }
   await expect(page.locator('section[aria-label="Iniciar sesión"]')).toBeVisible({ timeout: 30_000 });
 }
 

@@ -166,10 +166,11 @@ export default function VisibleConversationPage() {
   const [signInPassword, setSignInPassword] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
   const [signInBusy, setSignInBusy] = useState(false);
-  // Hito 9.3.2-B-Q2 · Modo de acceso alternativo. "password" preserva
-  // el flujo existente byte-por-byte. "otp" muestra `OtpForm`. El
-  // usuario alterna sin recargar (contract §11 orden Q2).
-  const [authMethod, setAuthMethod] = useState<"password" | "otp">("password");
+  // Hito 9.3.2-B-Q2-R · Modo de acceso. OTP es el método principal;
+  // "password" queda como alternativa secundaria. El usuario alterna
+  // sin recargar. La transición OTP → password NO se dispara
+  // automáticamente por éxito de autenticación (contract Q2-R §1).
+  const [authMethod, setAuthMethod] = useState<"password" | "otp">("otp");
 
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedBusy, setSeedBusy] = useState(false);
@@ -554,6 +555,10 @@ export default function VisibleConversationPage() {
     setBootstrap(null);
     setBootstrapForActor(null);
     setBootstrapPhase("idle");
+    // Q2-R · Al cerrar sesión volvemos por defecto a OTP (método
+    // principal, contract Q2-R §1). El usuario puede alternar a
+    // password si lo prefiere en la nueva sesión.
+    setAuthMethod("otp");
   }, [supabase]);
 
   const sendMessage = useCallback(async () => {
@@ -625,6 +630,21 @@ export default function VisibleConversationPage() {
         (`Initializing`/`RestoringSession`) mostramos un aviso neutro
         para no confundir al usuario.
       */}
+      {!session && sessionRestored && authMethod === "otp" && supabase && (
+        <OtpForm
+          supabase={supabase}
+          onAuthenticated={() => {
+            // Q2-R · Tras verificar el OTP y ejecutar onboarding OK,
+            // limpiamos el aviso de expiración. NO forzamos retorno a
+            // password — OTP es el método principal (contract Q2-R §1).
+            // `page.tsx` recibe la sesión vía `onAuthStateChange`; no
+            // fabricamos actor/tenant/membership aquí.
+            sessionExpiredRef.current = false;
+            setSessionExpired(false);
+          }}
+          onSwitchToPassword={() => setAuthMethod("password")}
+        />
+      )}
       {!session && sessionRestored && authMethod === "password" && (
         <>
           <SessionArea
@@ -653,26 +673,11 @@ export default function VisibleConversationPage() {
               cursor: "pointer",
               alignSelf: "flex-start",
             }}
-            aria-label="Acceder con código enviado por email"
+            aria-label="Acceder con código enviado por email (método principal)"
           >
             Acceder con código
           </button>
         </>
-      )}
-      {!session && sessionRestored && authMethod === "otp" && supabase && (
-        <OtpForm
-          supabase={supabase}
-          onAuthenticated={() => {
-            // Q3.2-Q2 · Tras verificar el OTP y ejecutar onboarding
-            // OK, limpiamos el aviso de expiración y volvemos al modo
-            // password para futuras reaperturas. `page.tsx` recibe la
-            // sesión vía `onAuthStateChange`; no fabricamos nada aquí.
-            sessionExpiredRef.current = false;
-            setSessionExpired(false);
-            setAuthMethod("password");
-          }}
-          onSwitchToPassword={() => setAuthMethod("password")}
-        />
       )}
       {!session && !sessionRestored && (
         <section
