@@ -50,16 +50,31 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-describe("Q2-R antifraude · authMethod y onAuthenticated", () => {
-  it("authMethod inicial DEBE ser 'otp' — no regresa a 'password'", () => {
-    expect(PAGE).toMatch(/useState<"password" \| "otp">\("otp"\)/);
-    expect(PAGE).not.toMatch(/useState<"password" \| "otp">\("password"\)/);
-    expect(PAGE).not.toMatch(/useState<"otp" \| "password">\("password"\)/);
+describe("Q2-R3 antifraude · política delegada al hook useAuthMethod", () => {
+  it("page.tsx importa y usa el hook productivo useAuthMethod", () => {
+    expect(PAGE).toMatch(/from "@\/lib\/v2\/client\/use-auth-method"/);
+    expect(PAGE).toMatch(/useAuthMethod\(\)/);
+    // Cero useState paralelo: la política vive en el hook.
+    expect(PAGE).not.toMatch(/useState<"password" \| "otp">/);
+    expect(PAGE).not.toMatch(/useState<"otp" \| "password">/);
   });
 
-  it("signOut vuelve por defecto a 'otp'", () => {
+  it("hook useAuthMethod · default OTP + reset a OTP", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const hookSrc = readFileSync(
+      resolve(REPO, "lib", "v2", "client", "use-auth-method.ts"),
+      "utf8",
+    );
+    // Default productivo es "otp"
+    expect(hookSrc).toMatch(/useState<AuthMethod>\("otp"\)/);
+    // reset restaura a "otp"
+    expect(hookSrc).toMatch(/resetOnLogout[\s\S]{0,200}setAuthMethod\("otp"\)/);
+  });
+
+  it("signOut invoca la política de reset del hook", () => {
     // Dentro del cuerpo de `signOut`, después del setBootstrapPhase.
-    expect(PAGE).toMatch(/setBootstrapPhase\("idle"\);[\s\S]{0,600}setAuthMethod\("otp"\)/);
+    expect(PAGE).toMatch(/setBootstrapPhase\("idle"\);[\s\S]{0,600}resetAuthMethodOnLogout\(\)/);
   });
 
   it("onAuthenticated NO fuerza setAuthMethod('password')", () => {

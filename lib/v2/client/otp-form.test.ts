@@ -146,12 +146,12 @@ describe("page.tsx · integración con OtpForm sin destruir password", () => {
     expect(PAGE_SRC).toMatch(/<UnauthGate/);
   });
 
-  it("mantiene authMethod con toggle password/otp (setter en UnauthGate)", () => {
-    expect(PAGE_SRC).toMatch(/authMethod.*"password"\s*\|\s*"otp"/);
-    // `setAuthMethod("otp")` sigue viviendo en page.tsx (dentro de
-    // signOut) tras la extracción de UnauthGate.
-    expect(PAGE_SRC).toMatch(/setAuthMethod\("otp"\)/);
-    // `setAuthMethod("password")` se movió a UnauthGate.tsx —
+  it("mantiene authMethod con toggle password/otp (delegado al hook + UnauthGate)", () => {
+    // Q2-R3 · La política vive en `useAuthMethod`. `page.tsx`
+    // consume el hook y pasa el setter a `UnauthGate`.
+    expect(PAGE_SRC).toMatch(/useAuthMethod\(\)/);
+    expect(PAGE_SRC).toMatch(/from "@\/lib\/v2\/client\/use-auth-method"/);
+    // `setAuthMethod("password")` se llama desde UnauthGate.tsx —
     // verificamos allí que existe la transición.
     const gateSrc = readFileSync(
       resolve(__dirname, "..", "..", "..", "app", "v2", "chat", "components", "UnauthGate.tsx"),

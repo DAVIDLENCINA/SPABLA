@@ -76,6 +76,10 @@ import { OtpForm } from "./components/OtpForm";
 // conductuales de la decisión sobre el propio componente productivo,
 // sin renderizar la máquina completa de sesión/bootstrap/polling.
 import { UnauthGate } from "./components/UnauthGate";
+// Hito 9.3.2-B-Q2-R3 · Hook productivo con la política de método
+// de acceso (OTP principal, reset a OTP tras logout). Los tests
+// conductuales importan el MISMO hook — cero duplicación de reglas.
+import { useAuthMethod } from "@/lib/v2/client/use-auth-method";
 
 type Message = {
   readonly messageId: string;
@@ -170,11 +174,11 @@ export default function VisibleConversationPage() {
   const [signInPassword, setSignInPassword] = useState("");
   const [signInError, setSignInError] = useState<string | null>(null);
   const [signInBusy, setSignInBusy] = useState(false);
-  // Hito 9.3.2-B-Q2-R · Modo de acceso. OTP es el método principal;
-  // "password" queda como alternativa secundaria. El usuario alterna
-  // sin recargar. La transición OTP → password NO se dispara
-  // automáticamente por éxito de autenticación (contract Q2-R §1).
-  const [authMethod, setAuthMethod] = useState<"password" | "otp">("otp");
+  // Hito 9.3.2-B-Q2-R3 · Política delegada al hook productivo
+  // `useAuthMethod` (autoridad única de la política Q2-R). Q3-R3
+  // suprime la duplicación de reglas en tests reproduciendo el
+  // hook manualmente — ahora se importa el mismo módulo.
+  const { authMethod, setAuthMethod, resetOnLogout: resetAuthMethodOnLogout } = useAuthMethod();
 
   const [seedError, setSeedError] = useState<string | null>(null);
   const [seedBusy, setSeedBusy] = useState(false);
@@ -559,11 +563,11 @@ export default function VisibleConversationPage() {
     setBootstrap(null);
     setBootstrapForActor(null);
     setBootstrapPhase("idle");
-    // Q2-R · Al cerrar sesión volvemos por defecto a OTP (método
-    // principal, contract Q2-R §1). El usuario puede alternar a
-    // password si lo prefiere en la nueva sesión.
-    setAuthMethod("otp");
-  }, [supabase]);
+    // Q2-R3 · Al cerrar sesión aplicamos la política de reset del
+    // hook productivo (autoridad única de la decisión). El usuario
+    // puede alternar a password si lo prefiere en la nueva sesión.
+    resetAuthMethodOnLogout();
+  }, [supabase, resetAuthMethodOnLogout]);
 
   const sendMessage = useCallback(async () => {
     if (!supabase || !session || !draft.trim()) return;
