@@ -173,6 +173,11 @@ export function OtpForm({
   const latestVerifyOpRef = useRef(0);
   const mountedRef = useRef(true);
   useEffect(() => {
+    // Reset on mount so React 19 StrictMode's double-invoked cleanup
+    // (which fires between the two dev-mode mounts) does not leave the
+    // ref stuck at `false` and silently drop every stale-op guard on
+    // the second real render.
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };

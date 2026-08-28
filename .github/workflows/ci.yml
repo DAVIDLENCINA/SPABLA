@@ -452,3 +452,48 @@ jobs:
       - name: Stop Supabase local stack
         if: always()
         run: supabase stop --no-backup || true
+
+  # SPABLA V2 · Hito 9.3.2-B-Q3 · Job F — real OTP browser barrier
+  # (9 escenarios: nuevo/existente/idempotencia/password/wrong/resend/
+  # expiración/concurrencia/anti-leak/aislamiento). Aislado del Job E
+  # para que un flake de uno no derribe al otro, y para que la barrera
+  # OTP pueda escalar independientemente. Prohibido `continue-on-error`,
+  # `allow-failure`, `|| true`, `retries` o skip condicional.
+  e2e-otp:
+    name: Job F — OTP browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium only
+        run: npx playwright install --with-deps chromium
+
+      - name: Run barrier (scripts/e2e/run-otp-browser-e2e.sh --reset)
+        run: bash scripts/e2e/run-otp-browser-e2e.sh --reset
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup || true

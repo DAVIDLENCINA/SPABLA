@@ -83,6 +83,13 @@ enable_manual_linking = false
 enable_signup = true
 double_confirm_changes = false
 enable_confirmations = false
+# Hito 9.3.2-B-Q3 · Expiración OTP corta para permitir tests E2E
+# reales de expiración en un CI acotado (60 s + margen ≈ 70 s).
+# NOTA CRÍTICA: éste es EXCLUSIVAMENTE el valor local. La
+# recomendación de producción es 300 s (contrato §3, audit Q1 §16)
+# y se gestiona ÚNICAMENTE en Supabase Cloud Dashboard. Este
+# `otp_expiry` afecta al stack local; NO al Cloud.
+otp_expiry = 60
 
 # Hito 9.3.2-B-Q2 · Plantilla OTP obligatoria. GoTrue usa la
 # categoría `magic_link` para el flujo `signInWithOtp` de email. La
@@ -94,6 +101,7 @@ enable_confirmations = false
 [auth.email.template.magic_link]
 subject = "SPABLA · tu código de acceso"
 content_path = "./supabase/templates/otp_email.html"
+
 
 [edge_runtime]
 enabled = false
