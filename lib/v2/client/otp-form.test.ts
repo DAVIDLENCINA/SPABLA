@@ -136,26 +136,44 @@ describe("OtpForm · structural guard", () => {
 });
 
 describe("page.tsx · integración con OtpForm sin destruir password", () => {
-  it("importa OtpForm y SessionArea coexisten", () => {
+  it("importa OtpForm/SessionArea via UnauthGate (extraído en Q2-R2)", () => {
+    // Q2-R2 · La decisión unauth vive en el componente productivo
+    // `UnauthGate` (usado por page.tsx). page.tsx importa OtpForm y
+    // SessionArea pero los renderiza a través de UnauthGate.
     expect(PAGE_SRC).toMatch(/from "\.\/components\/OtpForm"/);
     expect(PAGE_SRC).toMatch(/from "\.\/components\/SessionArea"/);
+    expect(PAGE_SRC).toMatch(/from "\.\/components\/UnauthGate"/);
+    expect(PAGE_SRC).toMatch(/<UnauthGate/);
   });
 
-  it("mantiene authMethod con toggle password/otp", () => {
+  it("mantiene authMethod con toggle password/otp (setter en UnauthGate)", () => {
     expect(PAGE_SRC).toMatch(/authMethod.*"password"\s*\|\s*"otp"/);
+    // `setAuthMethod("otp")` sigue viviendo en page.tsx (dentro de
+    // signOut) tras la extracción de UnauthGate.
     expect(PAGE_SRC).toMatch(/setAuthMethod\("otp"\)/);
-    expect(PAGE_SRC).toMatch(/setAuthMethod\("password"\)/);
+    // `setAuthMethod("password")` se movió a UnauthGate.tsx —
+    // verificamos allí que existe la transición.
+    const gateSrc = readFileSync(
+      resolve(__dirname, "..", "..", "..", "app", "v2", "chat", "components", "UnauthGate.tsx"),
+      "utf8",
+    );
+    expect(gateSrc).toMatch(/setAuthMethod\("password"\)/);
   });
 
-  it("SessionArea recibe los mismos props productivos (login password intacto)", () => {
-    // Firma invariante: onSignIn / signInBusy / signInError permanecen.
+  it("SessionArea recibe los mismos props productivos vía UnauthGate", () => {
+    // page.tsx pasa a UnauthGate los mismos props que antes pasaba
+    // a SessionArea inline.
     expect(PAGE_SRC).toMatch(/signInEmail=\{signInEmail\}/);
     expect(PAGE_SRC).toMatch(/signInPassword=\{signInPassword\}/);
     expect(PAGE_SRC).toMatch(/onSignIn=\{\(\) => \{ void signIn\(\); \}\}/);
   });
 
-  it("botón 'Acceder con código' visible desde el modo password", () => {
-    expect(PAGE_SRC).toMatch(/Acceder con código/);
+  it("botón 'Acceder con código' visible desde el modo password (dentro de UnauthGate)", () => {
+    const gateSrc = readFileSync(
+      resolve(__dirname, "..", "..", "..", "app", "v2", "chat", "components", "UnauthGate.tsx"),
+      "utf8",
+    );
+    expect(gateSrc).toMatch(/Acceder con código/);
   });
 
   it("OtpForm.onAuthenticated NO fuerza retorno a password (Q2-R rectificado)", () => {

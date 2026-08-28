@@ -72,6 +72,10 @@ import { DeveloperPanel } from "./components/DeveloperPanel";
 // Hito 9.3.2-B-Q2 · Acceso passwordless por OTP email. Convive con
 // SessionArea (password); ninguno reemplaza al otro (contract §7 §11).
 import { OtpForm } from "./components/OtpForm";
+// Hito 9.3.2-B-Q2-R2 · Puerta unauth extraída para permitir pruebas
+// conductuales de la decisión sobre el propio componente productivo,
+// sin renderizar la máquina completa de sesión/bootstrap/polling.
+import { UnauthGate } from "./components/UnauthGate";
 
 type Message = {
   readonly messageId: string;
@@ -630,9 +634,12 @@ export default function VisibleConversationPage() {
         (`Initializing`/`RestoringSession`) mostramos un aviso neutro
         para no confundir al usuario.
       */}
-      {!session && sessionRestored && authMethod === "otp" && supabase && (
-        <OtpForm
+      {!session && (
+        <UnauthGate
           supabase={supabase}
+          sessionRestored={sessionRestored}
+          authMethod={authMethod}
+          setAuthMethod={setAuthMethod}
           onAuthenticated={() => {
             // Q2-R · Tras verificar el OTP y ejecutar onboarding OK,
             // limpiamos el aviso de expiración. NO forzamos retorno a
@@ -642,59 +649,16 @@ export default function VisibleConversationPage() {
             sessionExpiredRef.current = false;
             setSessionExpired(false);
           }}
-          onSwitchToPassword={() => setAuthMethod("password")}
+          sessionExpired={sessionExpired}
+          sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
+          signInEmail={signInEmail}
+          signInPassword={signInPassword}
+          onSignInEmailChange={setSignInEmail}
+          onSignInPasswordChange={setSignInPassword}
+          signInError={signInError}
+          signInBusy={signInBusy}
+          onSignIn={() => { void signIn(); }}
         />
-      )}
-      {!session && sessionRestored && authMethod === "password" && (
-        <>
-          <SessionArea
-            sessionExpired={sessionExpired}
-            sessionExpiredMessage={SESSION_EXPIRED_MESSAGE}
-            signInEmail={signInEmail}
-            signInPassword={signInPassword}
-            onSignInEmailChange={setSignInEmail}
-            onSignInPasswordChange={setSignInPassword}
-            signInError={signInError}
-            signInBusy={signInBusy}
-            onSignIn={() => { void signIn(); }}
-          />
-          <button
-            type="button"
-            onClick={() => setAuthMethod("otp")}
-            style={{
-              marginTop: "0.5rem",
-              padding: "0.4rem 0.9rem",
-              fontSize: "0.85rem",
-              fontWeight: 500,
-              color: "#0B0F19",
-              background: "transparent",
-              border: "1px solid #E2E8F0",
-              borderRadius: 8,
-              cursor: "pointer",
-              alignSelf: "flex-start",
-            }}
-            aria-label="Acceder con código enviado por email (método principal)"
-          >
-            Acceder con código
-          </button>
-        </>
-      )}
-      {!session && !sessionRestored && (
-        <section
-          aria-label="Restaurando sesión"
-          style={{
-            marginTop: "0.75rem",
-            padding: "1.25rem 1rem",
-            background: "#F8FAFC",
-            border: "1px solid #E2E8F0",
-            borderRadius: 10,
-            color: "#475569",
-            fontSize: "0.9rem",
-            textAlign: "center",
-          }}
-        >
-          Restaurando tu sesión…
-        </section>
       )}
 
       {session && (

@@ -1,128 +1,122 @@
 /**
- * SPABLA V2 · Fase 9 · Hito 9.3.2-B-Q2-R · page.tsx behavioural guard.
+ * SPABLA V2 · Fase 9 · Hito 9.3.2-B-Q2-R2 · Page unauth-gate behavioural.
  *
- * Verifica conductualmente que la página de chat, cuando NO hay
- * sesión, monta la vista OTP por defecto (método principal Q2-R §1)
- * y expone el acceso alternativo por contraseña sin destruir el
- * flujo existente.
+ * Renderiza el componente PRODUCTIVO `UnauthGate` (usado por
+ * `app/v2/chat/page.tsx` en el bloque `{!session && ...}`). Q2-R2
+ * rectifica Q2-R: se dejó de reproducir el subárbol equivalente en
+ * el test y se importa el mismo componente que la página monta en
+ * runtime.
  *
- * No es un test unit puro de la página completa (que arrastra
- * bootstrap/polling/websocket). Renderiza sólo un subárbol
- * equivalente que reproduce la decisión de `authMethod` inicial y
- * la transición OTP ↔ password, tomándose desde el propio código
- * fuente de `page.tsx` como oracle de la constante inicial.
+ * La orquestación (session/bootstrap/polling/refresh) sigue viviendo
+ * en `page.tsx`; renderizarla en happy-dom introduciría dependencias
+ * que no aportan a la decisión OTP↔password. `UnauthGate` es el
+ * componente productivo mínimo que contiene toda esa decisión.
  */
 
 // @vitest-environment happy-dom
 
 import { describe, it, expect, afterEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-
-afterEach(() => cleanup());
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { OtpForm } from "@/app/v2/chat/components/OtpForm";
-import { SessionArea } from "@/app/v2/chat/components/SessionArea";
+import { UnauthGate } from "@/app/v2/chat/components/UnauthGate";
 
-const PAGE_SRC = readFileSync(
-  resolve(__dirname, "page.tsx"),
-  "utf8",
-);
+afterEach(() => cleanup());
+
 const fakeClient = {} as SupabaseClient;
 
 /**
- * Reproduce EXACTAMENTE la política Q2-R:
- *   · authMethod inicial = "otp" (leído del source como oracle).
- *   · OTP → click "Acceder con contraseña" cambia a SessionArea.
- *   · Password → click "Acceder con código" vuelve a OTP.
- *   · onAuthenticated NO fuerza volver a password.
- *   · Al cerrar sesión (signOut simulado), el toggle vuelve a "otp".
+ * Envoltorio mínimo: expone los mismos setters que `page.tsx`
+ * inyecta en `UnauthGate` y permite simular el ciclo de vida de
+ * `sessionRestored` y `authMethod`. El default de `authMethod` es
+ * `"otp"` — idéntico a la decisión productiva de `page.tsx`.
  */
-function UnauthFixture({
-  onboardingCallback = () => undefined,
+function Harness({
+  initialSessionRestored = true,
+  simulateAuthenticated,
+  onLogout,
 }: {
-  onboardingCallback?: () => void;
+  initialSessionRestored?: boolean;
+  simulateAuthenticated?: (cb: () => void) => void;
+  onLogout?: () => void;
 }): React.JSX.Element {
   const [authMethod, setAuthMethod] = useState<"password" | "otp">("otp");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [sessionRestored, setSessionRestored] = useState(initialSessionRestored);
+  const [signInEmail, setSignInEmail] = useState("");
+  const [signInPassword, setSignInPassword] = useState("");
+  const onAuthenticated = useCallback(() => {
+    if (simulateAuthenticated) simulateAuthenticated(() => undefined);
+  }, [simulateAuthenticated]);
   return (
     <>
-      {authMethod === "otp" && (
-        <OtpForm
-          supabase={fakeClient}
-          onAuthenticated={onboardingCallback}
-          onSwitchToPassword={() => setAuthMethod("password")}
-        />
-      )}
-      {authMethod === "password" && (
-        <>
-          <SessionArea
-            sessionExpired={false}
-            sessionExpiredMessage=""
-            signInEmail={email}
-            signInPassword={password}
-            onSignInEmailChange={setEmail}
-            onSignInPasswordChange={setPassword}
-            signInError={null}
-            signInBusy={false}
-            onSignIn={() => undefined}
-          />
-          <button
-            type="button"
-            onClick={() => setAuthMethod("otp")}
-            aria-label="Volver a acceder con código"
-          >
-            Acceder con código
-          </button>
-        </>
-      )}
+      <UnauthGate
+        supabase={fakeClient}
+        sessionRestored={sessionRestored}
+        authMethod={authMethod}
+        setAuthMethod={setAuthMethod}
+        onAuthenticated={onAuthenticated}
+        sessionExpired={false}
+        sessionExpiredMessage=""
+        signInEmail={signInEmail}
+        signInPassword={signInPassword}
+        onSignInEmailChange={setSignInEmail}
+        onSignInPasswordChange={setSignInPassword}
+        signInError={null}
+        signInBusy={false}
+        onSignIn={() => undefined}
+      />
+      {/* Botones de utilidad exclusivamente para el harness — nunca
+          en producto. Simulan las transiciones que `page.tsx` haría
+          desde `onAuthStateChange` / `signOut`. */}
+      <button data-testid="harness-set-restored" onClick={() => setSessionRestored(true)}>
+        set-restored
+      </button>
+      <button
+        data-testid="harness-simulate-logout"
+        onClick={() => {
+          setAuthMethod("otp");
+          if (onLogout) onLogout();
+        }}
+      >
+        simulate-logout
+      </button>
     </>
   );
 }
 
-describe("page.tsx · OTP como método principal", () => {
-  it("static oracle · authMethod declara useState<...>('otp')", () => {
-    // La constante inicial es normativa: si un cambio la vuelve a
-    // 'password', este test falla explícitamente. La barrera no
-    // sustituye al test conductual; lo complementa.
-    expect(PAGE_SRC).toMatch(/useState<"password" \| "otp">\("otp"\)/);
-    // signOut restablece authMethod a "otp".
-    expect(PAGE_SRC).toMatch(/setAuthMethod\("otp"\)/);
-    // onAuthenticated NO fuerza volver a password.
-    const onAuthMatch = PAGE_SRC.match(/onAuthenticated=\{\(\) => \{[\s\S]{0,2000}?\}\}/);
-    expect(onAuthMatch).not.toBeNull();
-    expect(onAuthMatch![0]).not.toMatch(/setAuthMethod\("password"\)/);
-  });
-
-  it("behavioural · vista inicial (sin sesión) es OTP", () => {
-    render(<UnauthFixture />);
-    expect(screen.getByRole("heading", { name: /Acceder con código/i })).toBeTruthy();
-    expect(screen.getByLabelText(/^Email$/i)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Recibir código/i })).toBeTruthy();
-    // Botón alternativo a contraseña visible desde OTP
-    expect(screen.getByRole("button", { name: /Acceder con contraseña/i })).toBeTruthy();
-    // NO se ve el heading "Iniciar sesión" (password)
+describe("page.tsx · UnauthGate productivo · comportamiento real de la decisión", () => {
+  it("sesión no restaurada · muestra 'Restaurando tu sesión…'", () => {
+    render(<Harness initialSessionRestored={false} />);
+    expect(screen.getByLabelText(/Restaurando sesión/i)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /Acceder con código/i })).toBeNull();
     expect(screen.queryByRole("heading", { name: /Iniciar sesión$/i })).toBeNull();
   });
 
-  it("behavioural · click 'Acceder con contraseña' transita a SessionArea", async () => {
-    render(<UnauthFixture />);
+  it("tras restaurar sin sesión · monta OtpForm (método principal)", () => {
+    render(<Harness />);
+    expect(screen.getByRole("heading", { name: /Acceder con código/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Recibir código/i })).toBeTruthy();
+    // Vista OTP NO monta el campo Contraseña
+    expect(screen.queryByLabelText(/^Contraseña$/i)).toBeNull();
+    // Botón "Acceder con contraseña" siempre visible
+    expect(screen.getByRole("button", { name: /Acceder con contraseña/i })).toBeTruthy();
+  });
+
+  it("click 'Acceder con contraseña' · transita a SessionArea", async () => {
+    render(<Harness />);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Acceder con contraseña/i }));
       await Promise.resolve();
     });
     expect(screen.getByRole("heading", { name: /Iniciar sesión$/i })).toBeTruthy();
-    expect(screen.getByLabelText(/Contraseña/i)).toBeTruthy();
-    // El toggle inverso está disponible en la vista password
+    expect(screen.getByLabelText(/^Contraseña$/i)).toBeTruthy();
+    // Botón reverso disponible
     expect(screen.getByRole("button", { name: /Acceder con código/i })).toBeTruthy();
   });
 
-  it("behavioural · desde password click 'Acceder con código' vuelve a OTP", async () => {
-    render(<UnauthFixture />);
+  it("click 'Acceder con código' desde password · vuelve a OtpForm", async () => {
+    render(<Harness />);
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Acceder con contraseña/i }));
       await Promise.resolve();
@@ -132,10 +126,43 @@ describe("page.tsx · OTP como método principal", () => {
       await Promise.resolve();
     });
     expect(screen.getByRole("heading", { name: /Acceder con código/i })).toBeTruthy();
-    // El input `<label>Contraseña</label>` NO está presente — el
-    // botón secundario "Acceder con contraseña" sí puede estarlo si
-    // OtpForm lo expone, así que discriminamos por el label del
-    // input password concretamente.
     expect(screen.queryByLabelText(/^Contraseña$/i)).toBeNull();
+  });
+
+  it("logout · vuelve a OTP por defecto (simula el reset de authMethod que hace page.tsx.signOut)", async () => {
+    render(<Harness />);
+    // Cambio a password primero
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Acceder con contraseña/i }));
+      await Promise.resolve();
+    });
+    // Simulo el logout — el propio `page.tsx.signOut` ejecuta
+    // `setAuthMethod("otp")` (verificado antifraude); el harness
+    // reproduce esa acción.
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("harness-simulate-logout"));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("heading", { name: /Acceder con código/i })).toBeTruthy();
+    expect(screen.queryByLabelText(/^Contraseña$/i)).toBeNull();
+  });
+});
+
+describe("page.tsx · UnauthGate está realmente en el árbol productivo", () => {
+  it("page.tsx importa y usa UnauthGate en el bloque `{!session && …}`", () => {
+    // Este oracle acompaña — NO sustituye — a los tests
+    // conductuales de arriba. La conducta real vive en render()
+    // sobre `UnauthGate` (el mismo componente importado aquí y en
+    // `page.tsx`). Este oracle sólo verifica que la página no lo
+    // esquiva accidentalmente.
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const pageSrc = readFileSync(
+      resolve(__dirname, "page.tsx"),
+      "utf8",
+    );
+    expect(pageSrc).toMatch(/from "\.\/components\/UnauthGate"/);
+    expect(pageSrc).toMatch(/<UnauthGate[\s\S]{0,1200}?\/>/);
+    expect(pageSrc).toMatch(/authMethod=\{authMethod\}/);
   });
 });
