@@ -1147,46 +1147,69 @@ test.describe("OTP browser E2E · real barrier", () => {
       const firstTenant = await pgWaitTenantOf(actorId!);
       expect(firstTenant).not.toBeNull();
       if (firstTenant) registry.registerTenant(firstTenant);
-      // (7) Real logout via SDK (matches the header button's effect).
-      await page.evaluate(async () => {
-        const w = window as unknown as {
-          __spablaSupabase?: {
-            auth: { signOut: (o?: { scope?: string }) => Promise<{ error: unknown }> };
-          };
-        };
-        if (w.__spablaSupabase) await w.__spablaSupabase.auth.signOut({ scope: "local" });
+      // (7) Real logout via the productive UI button. The header's
+      // "Cerrar sesión" button is wired to `page.tsx#signOut`, which
+      // wraps `supabase.auth.signOut({scope:"local"})` AND fires
+      // `useAuthMethod.resetOnLogout()` — the intentional distinction
+      // from the SDK-only SIGNED_OUT path. Q3-R2 rejects calling the
+      // SDK directly here because that would bypass the productive
+      // wrapper and lie about the observed behaviour.
+      await page.getByRole("button", { name: /^Cerrar sesión$/i }).click();
+      // (8) OTP form MUST be the initial view after a voluntary
+      // logout. Password form MUST NOT be visible until the user
+      // switches back to it. Session, bootstrap and OTP code are all
+      // cleared.
+      await expect(page.locator('section[aria-label="Iniciar sesión con código"]')).toBeVisible({
+        timeout: 15_000,
       });
-      // (8) Post-logout unauth surface is visible again. Contract
-      // Q2-R §1 documents "reset a OTP tras logout" but the current
-      // wiring keeps the last chosen `authMethod` until the user
-      // switches manually (`useAuthMethod.resetOnLogout` exists but
-      // is not fired by the SIGNED_OUT listener). Either OTP or
-      // password form is an acceptable unauth surface — Q3-R acta §
-      // documents the mismatch as a productive limitation of scope.
-      const otpForm = page.locator('section[aria-label="Iniciar sesión con código"]');
-      const pwForm = page.locator('section[aria-label="Iniciar sesión"]');
-      await expect
-        .poll(async () => (await otpForm.count()) + (await pwForm.count()), {
-          timeout: 15_000,
-        })
-        .toBeGreaterThanOrEqual(1);
-      // (9) Ensure we land on password form for step 10. If we're
-      // already there (current behaviour), no click needed; else
-      // switch explicitly.
-      if ((await pwForm.count()) === 0) {
-        await page.getByRole("button", { name: /Acceder con contraseña/i }).click();
-        await expect(pwForm).toBeVisible({ timeout: 10_000 });
-      }
-      // (10) Second successful login.
+      await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
+      const postLogoutStorage = await page.evaluate(() =>
+        JSON.stringify(Object.fromEntries(Object.entries(localStorage))),
+      );
+      expect(postLogoutStorage).not.toContain("spabla_v2_fase9_auth");
+      expect(postLogoutStorage).not.toMatch(/\b\d{6}\b/);
+      // (9) Switch back to password via UI.
+      await page.getByRole("button", { name: /Acceder con contraseña/i }).click();
+      await expect(page.locator('section[aria-label="Iniciar sesión"]')).toBeVisible({
+        timeout: 10_000,
+      });
+      // (10) Second successful login — same actor, same tenant.
       await page.locator("#spabla-session-email").fill(email);
       await page.locator("#spabla-session-password").fill(PASSWORD_FOR_PASSWORD_TEST);
       await page.getByRole("button", { name: "Iniciar sesión" }).click();
       await expectAuthenticatedChat(page);
-      // (11) Zero OTP code lingers in the password inputs.
+      // Second onboarding call is idempotent per Q3-A contract; drive
+      // it to prove the second session sees the SAME tenant.
+      const secondOnboarding = await page.evaluate(async () => {
+        const w = window as unknown as {
+          __spablaSupabase?: {
+            auth: { getSession: () => Promise<{ data: { session: { access_token?: string } | null } }> };
+          };
+        };
+        if (!w.__spablaSupabase) return { ok: false } as const;
+        const { data } = await w.__spablaSupabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (!token) return { ok: false } as const;
+        const res = await fetch("/api/v2/onboarding", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: "",
+        });
+        return { ok: res.ok, body: await res.text() } as const;
+      });
+      expect(secondOnboarding.ok).toBe(true);
+      // (11) Zero OTP code lingers in the password inputs / storage.
       const pwStorage = await page.evaluate(() =>
         JSON.stringify(Object.fromEntries(Object.entries(localStorage))),
       );
       expect(pwStorage).not.toMatch(/\b\d{6}\b/);
+      // (11-bis) Second logout via the SAME productive button —
+      // OTP again, no residual password form.
+      await page.getByRole("button", { name: /^Cerrar sesión$/i }).click();
+      await expect(page.locator('section[aria-label="Iniciar sesión con código"]')).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(page.locator('section[aria-label="Iniciar sesión"]')).toHaveCount(0);
       // (12) Single workspace + single active membership regardless
       // of how many login cycles the user runs.
       const c = new PgClient({ connectionString: PG_URL });
