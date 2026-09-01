@@ -48,9 +48,8 @@ crear un tipo nuevo por escrito antes de escribirlo.
 | **Auditoría** | `docs/audit_reports/AUDIT_YYYY-MM-DD_*.md` | `AUDIT_2026-07-06_phase-4.md` |
 | **Decisión** (ADR) | `docs/decisions/DECISION_YYYY-MM-DD_*.md` | `DECISION_2026-07-06_no-async-bus.md` |
 
-Documentos legacy V1 (`architecture.md`, `product.md`, `roadmap.md`,
-`SOUND_SYSTEM.md`, etc.) NO caen bajo este estándar. Quedan como archivo
-histórico y no deben modificarse.
+Cualquier documento futuro que no siga la tabla anterior queda fuera de
+este estándar y debe alinearse antes de aceptarse.
 
 ---
 
@@ -78,7 +77,6 @@ histórico y no deben modificarse.
 - Visión, propuesta de valor, usuarios objetivo.
 - Casos de uso principales y de borde.
 - Métricas de éxito, objetivos de negocio.
-- Referencias a documentos legacy sólo como contexto histórico.
 
 **Arquitectura** contiene:
 - Diagrama lógico de bloques.

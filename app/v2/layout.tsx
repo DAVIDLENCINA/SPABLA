@@ -2,13 +2,12 @@ import type { Metadata } from "next";
 import type { CSSProperties, ReactNode } from "react";
 
 /**
- * SPABLA V2 — Fase 9 · Hito 9.1 · Nested layout.
+ * SPABLA V2 — Nested layout for the `/v2/**` subtree.
  *
- * The root layout paints the `<body>` deep-space blue (#02030A) for the V1
- * chat experience. The Fase 9 visible-conversation slice needs a stable
- * light surface so text and form controls stay legible on Safari / any
- * browser running in dark mode. We scope a light color-scheme + light
- * background to the `/v2/**` subtree only; no other route is affected.
+ * Provides a stable light surface so text and form controls stay
+ * legible on Safari and browsers running in dark mode. The color
+ * scheme, background and form-control palette are scoped to
+ * descendants of `.spabla-v2-scope`.
  */
 
 export const metadata: Metadata = {
@@ -25,7 +24,7 @@ const wrapperStyle: CSSProperties = {
 
 // Scoped rules that force form controls to a readable light palette
 // regardless of the user-agent color scheme. Restricted to descendants of
-// `.spabla-v2-scope` so V1 pages remain untouched.
+// `.spabla-v2-scope`.
 const scopedCss = `
 .spabla-v2-scope input,
 .spabla-v2-scope select,
