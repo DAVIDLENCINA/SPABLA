@@ -136,10 +136,15 @@ pg_dump \
 # source Supabase image bootstrap (default privileges granted to internal
 # roles such as `supabase_admin`, `supabase_auth_admin`, etc.) and are not
 # relevant to the multi-tenant surface we validate on the target.
-sed -i \
-  -e 's|^ALTER DEFAULT PRIVILEGES FOR ROLE|-- (restore-drill sanitized) &|' \
-  -e 's|^SET SESSION AUTHORIZATION|-- (restore-drill sanitized) &|' \
-  "${DUMP_PATH}"
+#
+# POSIX-portable rewrite: `sed -i` differs between GNU (no suffix arg
+# expected) and BSD/macOS (requires `-i ''`). Using an out-of-place
+# transform + atomic rename works identically on both without an
+# OS-specific branch.
+sed -e 's|^ALTER DEFAULT PRIVILEGES FOR ROLE|-- (restore-drill sanitized) &|' \
+    -e 's|^SET SESSION AUTHORIZATION|-- (restore-drill sanitized) &|' \
+    "${DUMP_PATH}" > "${DUMP_PATH}.sanitized"
+mv "${DUMP_PATH}.sanitized" "${DUMP_PATH}"
 
 DUMP_BYTES=$(wc -c < "${DUMP_PATH}" | tr -d ' ')
 DUMP_SHA=$(sha256sum "${DUMP_PATH}" | awk '{print $1}')
