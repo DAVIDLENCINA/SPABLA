@@ -1,0 +1,499 @@
+# SPABLA V2 — CI workflow for Fase 8 Hito 8.2.
+#
+# Two jobs:
+#   * engine — TypeScript + Vitest suite. Fast, always required for `engine/**`.
+#   * integration — Supabase local stack (Docker on ubuntu-latest runner) with
+#     migrations applied from empty and SQL test suites executed against the
+#     local Postgres.
+#
+# Zero productive secrets used. Zero connection to any productive Supabase
+# project. The Supabase CLI is pinned to the exact version 2.110.0 (Plan
+# Fase 8 §7.4 M1nuevo, Plan Hito 8.2 V1.2 §12). Prohibited: `latest`.
+#
+# GITHUB_TOKEN uses minimum read-only permissions.
+
+name: ci
+
+on:
+  push:
+    branches:
+      - "spabla-v2/**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Job A — engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Vitest suite (>= 639 tests)
+        run: npx vitest run
+
+      # Client-side test suite (root package). Runs against the root
+      # `vitest.client.config.ts` (environment=node, include limited to
+      # `app/**` and `lib/v2/client/**`, engine excluded). Keeps engine
+      # and client suites fully separated; no fourth CI job.
+      - name: Install root dependencies (for client tests)
+        working-directory: .
+        run: npm ci
+
+      - name: Client Vitest suite
+        working-directory: .
+        run: npm run test:client
+
+  integration:
+    name: Job B — Supabase integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Start Supabase local stack
+        run: supabase start
+
+      - name: Apply migration chain (empty -> baseline -> legacy -> reconciliation -> phase8 bootstrap)
+        run: bash scripts/ci/apply-migrations.sh
+
+      - name: Run SQL integration test suites
+        run: bash scripts/ci/run-integration-tests.sh
+
+      - name: Extract Supabase local env for TypeScript integration tests
+        run: |
+          set -euo pipefail
+          STATUS_JSON="$(supabase status -o json)"
+          URL="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["API_URL"])')"
+          ANON="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["ANON_KEY"])')"
+          SERVICE="$(printf '%s' "$STATUS_JSON" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["SERVICE_ROLE_KEY"])')"
+          echo "::add-mask::${ANON}"
+          echo "::add-mask::${SERVICE}"
+          {
+            echo "SPABLA_TEST_SUPABASE_URL=${URL}"
+            echo "SPABLA_TEST_SUPABASE_ANON_KEY=${ANON}"
+            echo "SPABLA_TEST_SUPABASE_SERVICE_ROLE_KEY=${SERVICE}"
+            # Hito 9.2.4 · The endpoint-level integration test in
+            # `app/api/v2/messages/route.integration.test.ts` imports
+            # `lib/v2/server/composition.ts`, which reads
+            # `NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY` from the process
+            # environment through `readAnonEnv()`. Export the same
+            # local-stack values here so the productive handler code
+            # can verify JWTs against Supabase local Auth.
+            echo "NEXT_PUBLIC_SUPABASE_URL=${URL}"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=${ANON}"
+            # `lib/v2/server/translation-runtime.ts` reads
+            # `SUPABASE_SERVICE_ROLE_KEY` from the process environment
+            # to instantiate the privileged TranslationStore client.
+            # Without it, the GET handler throws
+            # `translation_runtime_env_missing` and returns HTTP 500
+            # instead of the expected 200. Export the same
+            # already-extracted local value.
+            echo "SUPABASE_SERVICE_ROLE_KEY=${SERVICE}"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Node.js 24 for integration tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Install engine dependencies
+        working-directory: engine
+        run: npm ci
+
+      - name: Run engine integration tests against local Supabase
+        working-directory: engine
+        run: |
+          npx vitest run \
+            src/adapters/persistence/supabase/supabase-persistence.integration.test.ts \
+            src/adapters/persistence/supabase/fase9-visible-conversation.integration.test.ts \
+            src/adapters/persistence/usage/usage-emitter.integration.test.ts \
+            src/adapters/translation-store/supabase/supabase-translation-store.integration.test.ts
+
+      # Hito 9.2.4 · Client-integration tests that exercise the real
+      # `/api/v2/messages` HTTP handler against Supabase local. Runs in
+      # Job B so it has both the Supabase stack up and the env vars
+      # exported by the previous step. It reuses the root vitest
+      # client runner (`test:client`) — the AUTH-RECOVERY endpoint
+      # integration test skips silently when the env vars are absent.
+      - name: Install root dependencies (for client integration tests)
+        working-directory: .
+        run: npm ci
+
+      - name: Run client integration tests against local Supabase
+        working-directory: .
+        run: npm run test:client
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup
+
+  restore-drill:
+    name: Job C — phase-8 restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install PostgreSQL 17 client (psql, pg_dump)
+        run: |
+          set -euo pipefail
+
+          # Hito 9.2.5-H · Deterministic PostgreSQL 17 binary resolution.
+          #
+          # Hito 9.2.5-G removed the indefinite `apt-get update` hang by
+          # bounding every subcommand with `timeout` and retiring
+          # `apt-key`. That correction landed in commit fd675c1b and made
+          # the step fail fast — but exposed a second, distinct failure:
+          # the Ubuntu Noble GitHub runner ships `postgresql-client-16`
+          # preinstalled, whose `pg_dump` (16.14) beats PGDG's `pg_dump`
+          # (17.11 at `/usr/lib/postgresql/17/bin/pg_dump`) in the default
+          # PATH. `update-alternatives` from the PGDG package only touches
+          # the `psql` man page, not the binaries, so `pg_dump --version`
+          # continued reporting 16.14 even after the 17.11 client was
+          # installed correctly (see run 32281608611, Job C, exit 1).
+          #
+          # This version:
+          #   · Pins the exact absolute directory `/usr/lib/postgresql/17/bin`
+          #     as `PG17_BIN`. Every check, verification and subsequent
+          #     step uses this prefix; no reliance on `update-alternatives`,
+          #     symlinks, apt-get purge or global system mutation.
+          #   · Only skips provisioning when BOTH `${PG17_BIN}/psql` and
+          #     `${PG17_BIN}/pg_dump` exist AND both report version 17.
+          #     The pre-9.2.5-H early exit checked only the PATH-resolved
+          #     `psql`, which could pass while `pg_dump` remained 16.
+          #   · Persists PG17_BIN at the head of PATH for every subsequent
+          #     step of Job C via `echo "${PG17_BIN}" >> "${GITHUB_PATH}"`,
+          #     so the restore drill and `supabase` invocations pick up
+          #     the 17.x binaries transparently. `scripts/ci/restore-drill.sh`
+          #     is NOT modified.
+          #   · Tightens the acotamiento established in 9.2.5-G to keep the
+          #     documented worst-case well under 10 min (job cap 20 min):
+          #     fetch-key 30s, apt-update 60s, apt-install 120s, 2 attempts
+          #     per phase with a 5-second sleep, APT connection/read
+          #     timeout 20s and 1 internal retry, curl connect-timeout 10s
+          #     max-time 30s retry 1. Worst case with kill-after guards:
+          #     2·(30+10) + 5 + 2·(60+10) + 5 + 2·(120+10) + 5 = 495 s
+          #     ≈ 8 min 15 s.
+
+          PG17_BIN=/usr/lib/postgresql/17/bin
+          KEYRING=/usr/share/keyrings/pgdg-archive-keyring.gpg
+          KEY_URL=https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          KEY_TIMEOUT=30
+          UPDATE_TIMEOUT=60
+          INSTALL_TIMEOUT=120
+          MAX_ATTEMPTS=2
+
+          APT_OPTS=(
+            -o Acquire::http::Timeout=20
+            -o Acquire::https::Timeout=20
+            -o Acquire::Retries=1
+            -o Dpkg::Use-Pty=0
+          )
+
+          check_pg17_binaries_present() {
+            [ -x "${PG17_BIN}/psql" ] \
+              && [ -x "${PG17_BIN}/pg_dump" ] \
+              && "${PG17_BIN}/psql"    --version | grep -qE '\b17\.' \
+              && "${PG17_BIN}/pg_dump" --version | grep -qE '\b17\.'
+          }
+
+          if check_pg17_binaries_present; then
+            echo "[pg17] PGDG 17 client already present at ${PG17_BIN}"
+          else
+            echo "[pg17] provisioning PGDG PostgreSQL 17 client"
+
+            fetch_key() {
+              echo "[pg17] fetching PGDG signing key (bound ${KEY_TIMEOUT}s)"
+              sudo rm -f "${KEYRING}"
+              curl -fsSL --connect-timeout 10 \
+                   --max-time "${KEY_TIMEOUT}" \
+                   --retry 1 --retry-delay 3 \
+                   "${KEY_URL}" \
+                | sudo gpg --dearmor -o "${KEYRING}"
+              sudo chmod 0644 "${KEYRING}"
+            }
+
+            write_source_list() {
+              echo "[pg17] writing /etc/apt/sources.list.d/pgdg.list"
+              sudo sh -c "echo 'deb [signed-by=${KEYRING}] http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main' > /etc/apt/sources.list.d/pgdg.list"
+              cat /etc/apt/sources.list.d/pgdg.list
+            }
+
+            apt_update() {
+              echo "[pg17] apt-get update (bound ${UPDATE_TIMEOUT}s)"
+              sudo timeout --kill-after=10s "${UPDATE_TIMEOUT}s" \
+                apt-get "${APT_OPTS[@]}" update
+            }
+
+            apt_install() {
+              echo "[pg17] apt-get install postgresql-client-17 (bound ${INSTALL_TIMEOUT}s)"
+              sudo DEBIAN_FRONTEND=noninteractive timeout --kill-after=10s "${INSTALL_TIMEOUT}s" \
+                apt-get "${APT_OPTS[@]}" install -y --no-install-recommends postgresql-client-17
+            }
+
+            with_retries() {
+              local label="$1"
+              shift
+              local attempt=1
+              while [ "${attempt}" -le "${MAX_ATTEMPTS}" ]; do
+                echo "[pg17] ${label}: attempt ${attempt}/${MAX_ATTEMPTS}"
+                if "$@"; then
+                  echo "[pg17] ${label}: attempt ${attempt} OK"
+                  return 0
+                fi
+                echo "[pg17] ${label}: attempt ${attempt} FAILED" >&2
+                attempt=$((attempt + 1))
+                sleep 5
+              done
+              echo "[pg17] ${label}: exhausted ${MAX_ATTEMPTS} attempts — aborting" >&2
+              return 1
+            }
+
+            with_retries "fetch-key"   fetch_key
+            write_source_list
+            with_retries "apt-update"  apt_update
+            with_retries "apt-install" apt_install
+          fi
+
+          echo "[pg17] verifying ${PG17_BIN}/psql and ${PG17_BIN}/pg_dump"
+          test -x "${PG17_BIN}/psql"    || { echo "[pg17] fatal: ${PG17_BIN}/psql missing"    >&2; exit 1; }
+          test -x "${PG17_BIN}/pg_dump" || { echo "[pg17] fatal: ${PG17_BIN}/pg_dump missing" >&2; exit 1; }
+          "${PG17_BIN}/psql"    --version | grep -qE '\b17\.' || { echo "[pg17] fatal: ${PG17_BIN}/psql is not version 17"    >&2; exit 1; }
+          "${PG17_BIN}/pg_dump" --version | grep -qE '\b17\.' || { echo "[pg17] fatal: ${PG17_BIN}/pg_dump is not version 17" >&2; exit 1; }
+
+          # Prepend for the remaining commands of THIS step and for every
+          # subsequent step of the job. `GITHUB_PATH` is the canonical
+          # cross-step mechanism GitHub Actions provides; it takes effect
+          # for the next step onwards. `export PATH` is required to make
+          # the immediately-following verification lines below observe the
+          # 17 client in the same shell.
+          export PATH="${PG17_BIN}:${PATH}"
+          echo "${PG17_BIN}" >> "${GITHUB_PATH}"
+
+          echo "[pg17] resolved binaries in current step:"
+          echo "[pg17]   command -v psql    = $(command -v psql)"
+          echo "[pg17]   command -v pg_dump = $(command -v pg_dump)"
+          psql --version
+          pg_dump --version
+
+          # Fail the step (and therefore the whole job) if the exported
+          # PATH does NOT resolve to the pinned PG17_BIN. This is the last
+          # defence: subsequent steps rely on `psql`/`pg_dump` being 17.
+          [ "$(command -v psql)"    = "${PG17_BIN}/psql"    ] || { echo "[pg17] fatal: psql resolves to $(command -v psql), expected ${PG17_BIN}/psql"       >&2; exit 1; }
+          [ "$(command -v pg_dump)" = "${PG17_BIN}/pg_dump" ] || { echo "[pg17] fatal: pg_dump resolves to $(command -v pg_dump), expected ${PG17_BIN}/pg_dump" >&2; exit 1; }
+          psql    --version | grep -qE '\b17\.' || { echo "[pg17] fatal: psql --version is not 17"    >&2; exit 1; }
+          pg_dump --version | grep -qE '\b17\.' || { echo "[pg17] fatal: pg_dump --version is not 17" >&2; exit 1; }
+
+      - name: Start Supabase local stack (source)
+        run: supabase start
+
+      - name: Apply migration chain to source database
+        run: bash scripts/ci/apply-migrations.sh
+
+      - name: Run restore drill (dump source → restore in independent target → verify)
+        run: bash scripts/ci/restore-drill.sh
+
+      - name: Upload drill artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-8-restore-drill
+          path: ${{ runner.temp }}/phase8-drill-report.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup
+
+  # SPABLA V2 · Hito 9.3.1-Q3-E2E · Job D — barrera experimental de
+  # continuidad de sesión autenticada, 13 escenarios (Q2 §20), ejecutados
+  # sobre Chromium real vía Playwright. Este job es OBLIGATORIO para
+  # declarar GO promoción del hito. Prohibido `continue-on-error`,
+  # `allow-failure`, `|| true`, `retries` que enmascaren inestabilidad
+  # o skip condicional.
+  e2e-auth-continuity:
+    name: Job D — auth continuity browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium only
+        run: npx playwright install --with-deps chromium
+
+      - name: Run barrier (scripts/e2e/run-auth-continuity.sh --reset)
+        run: bash scripts/e2e/run-auth-continuity.sh --reset
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+  # SPABLA V2 · Hito 9.3.2-A-Q3 · Job E — atomic onboarding browser
+  # barrier (13 escenarios sobre Chromium real). Independiente de Job
+  # D para aislar failures y para permitir que ambas barreras corran
+  # en paralelo. Prohibido `continue-on-error`, `allow-failure`,
+  # `|| true`, `retries` que enmascaren inestabilidad o skip condicional.
+  e2e-onboarding:
+    name: Job E — onboarding browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium only
+        run: npx playwright install --with-deps chromium
+
+      - name: Run barrier (scripts/e2e/run-onboarding-e2e.sh --reset)
+        run: bash scripts/e2e/run-onboarding-e2e.sh --reset
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup || true
+
+  # SPABLA V2 · Hito 9.3.2-B-Q3 · Job F — real OTP browser barrier
+  # (9 escenarios: nuevo/existente/idempotencia/password/wrong/resend/
+  # expiración/concurrencia/anti-leak/aislamiento). Aislado del Job E
+  # para que un flake de uno no derribe al otro, y para que la barrera
+  # OTP pueda escalar independientemente. Prohibido `continue-on-error`,
+  # `allow-failure`, `|| true`, `retries` o skip condicional.
+  e2e-otp:
+    name: Job F — OTP browser E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker version
+        run: docker version
+
+      - name: Setup Supabase CLI (pinned 2.110.0)
+        uses: supabase/setup-cli@v1
+        with:
+          version: "2.110.0"
+
+      - name: Supabase CLI version
+        run: supabase --version
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium only
+        run: npx playwright install --with-deps chromium
+
+      - name: Run barrier (scripts/e2e/run-otp-browser-e2e.sh --reset)
+        run: bash scripts/e2e/run-otp-browser-e2e.sh --reset
+
+      - name: Stop Supabase local stack
+        if: always()
+        run: supabase stop --no-backup || true

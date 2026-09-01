@@ -1,0 +1,110 @@
+# Supabase project configuration — SPABLA V2, Fase 8, Hito 8.2.
+# Governs the LOCAL Supabase stack managed by `supabase start` (Docker) and by
+# `supabase db reset --local` in CI (`.github/workflows/ci.yml`). This file
+# configures the PROJECT (auth, storage, edge, api, db); it does NOT pin the
+# Supabase CLI binary version (Plan Fase 8 §7.4 M1nuevo). The CLI version is
+# pinned exclusively in `.github/workflows/ci.yml` via
+# `supabase-community/setup-cli@v1` with `version: "2.110.0"`.
+#
+# Zero productive `project_id` remote linkage. Zero remote URL, password, or
+# token. Zero `NEXT_PUBLIC_*`. All reserved schemas match the productive
+# remote inventoried on 2026-07-29 (Postgres 17.6, extensions in `extensions`).
+
+project_id = "spabla-hito-8-2-local"
+
+[api]
+enabled = true
+port = 54321
+# Hito 8.2 kept `spabla_v2` unexposed while the schema was being validated.
+# Hito 8.3 requires the productive `SupabasePersistence` adapter (Plan Fase 8
+# V1.3 §10.4) to reach `spabla_v2` via PostgREST under RLS with the
+# `authenticated` JWT of each actor. Exposing the schema in the LOCAL config
+# is the hito-8.3 gate anticipated by Plan Hito 8.2 §10 ("el acceso productivo
+# a `spabla_v2` se decidirá en el hito del adaptador con RLS y grants ya
+# verificados"). The remote productive project is not affected by this file.
+schemas = ["public", "graphql_public", "spabla_v2"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+# PostgreSQL major version. Remote runs 17.6; local stack matches so `SET TABLE`
+# semantics (Plan Hito 8.2 §5) and other PG17 features apply identically.
+major_version = 17
+
+[db.pooler]
+enabled = false
+port = 54329
+pool_mode = "transaction"
+default_pool_size = 20
+max_client_conn = 100
+
+[realtime]
+enabled = true
+# Realtime is enabled but the `supabase_realtime` publication is empty in
+# the FINAL state of the database: Hito 9.2.6 (V1-ERADICATION) retired
+# `public.messages` and `public.call_signals` from the publication via
+# `20260817000000_v1_runtime_retirement.sql`. The publication object itself
+# is preserved so a future V2 realtime feature can `ALTER PUBLICATION ... ADD
+# TABLE` without recreating it. Zero `spabla_v2.*` table participates in the
+# publication today; when that changes, both this comment and the
+# `v1_runtime_retirement_verification.test.sql` guardrail must be updated
+# together on the introducing hito.
+
+[studio]
+enabled = false
+port = 54323
+
+# Hito 9.3.2-B-Q2 · Local SMTP enabled so `supabase start` levanta el
+# contenedor Inbucket/Mailpit local en el puerto 54324. Necesario para
+# que el flujo OTP local (signInWithOtp → verifyOtp) tenga un destino
+# real donde leer el código durante tests de integración y desarrollo.
+# NO afecta a Supabase Cloud: la configuración productiva de SMTP se
+# gestiona exclusivamente en el Dashboard (bloqueo de producción, ver
+# `SPABLA_V2_FASE_9_HITO_9_3_2_B_OTP_CONTRACT.md` §13).
+[local_smtp]
+enabled = true
+
+[storage]
+enabled = false
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000"]
+jwt_expiry = 3600
+enable_signup = true
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = false
+enable_confirmations = false
+# Hito 9.3.2-B-Q3 · Expiración OTP corta para permitir tests E2E
+# reales de expiración en un CI acotado (60 s + margen ≈ 70 s).
+# NOTA CRÍTICA: éste es EXCLUSIVAMENTE el valor local. La
+# recomendación de producción es 300 s (contrato §3, audit Q1 §16)
+# y se gestiona ÚNICAMENTE en Supabase Cloud Dashboard. Este
+# `otp_expiry` afecta al stack local; NO al Cloud.
+otp_expiry = 60
+
+# Hito 9.3.2-B-Q2 · Plantilla OTP obligatoria. GoTrue usa la
+# categoría `magic_link` para el flujo `signInWithOtp` de email. La
+# plantilla contiene EXCLUSIVAMENTE `{{ .Token }}` (código de 6
+# dígitos) — cero `{{ .ConfirmationURL }}` para evitar el magic link
+# funcional (contract §4 OTP + Q1 §4 T17). Test estático
+# `lib/v2/client/otp-template.test.ts` bloquea cualquier regresión
+# que reintroduzca URLs de autenticación en el cuerpo.
+[auth.email.template.magic_link]
+subject = "SPABLA · tu código de acceso"
+content_path = "./supabase/templates/otp_email.html"
+
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false

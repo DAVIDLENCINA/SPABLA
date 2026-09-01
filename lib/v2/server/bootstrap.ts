@@ -1,0 +1,260 @@
+/**
+ * SPABLA V2 — Fase 9 · Hito 9.3.1-Q3 · Server-side bootstrap composer.
+ *
+ * Reads the caller's memberships and conversations under the
+ * authenticated Supabase client (bearing the caller's JWT) so RLS
+ * enforces isolation. NEVER uses service_role. Returns the deterministic
+ * selection defined by contract Q2 §10.
+ *
+ * Ordering rules (Q2 §10; refined by 9.3.2-A onboarding contract §11):
+ *   - `selectedTenantId`  = first ACTIVE membership by `created_at ASC`.
+ *   - `selectedConversationId` = first conversation of `selectedTenantId`
+ *     by `created_at ASC`.
+ *   - `canOperate` = `selectedTenantId !== null`. Q1-RR-SCOPE §11
+ *     removes the conversation requirement: a freshly onboarded actor
+ *     with an active membership but no conversation yet must be able
+ *     to operate (start the first conversation from the chat).
+ *
+ * Both `tenant_memberships` and `conversations` carry `created_at`
+ * columns per the phase-8 bootstrap migration (`20260730160000_phase8_bootstrap.sql`).
+ * `tenant_memberships.is_active` is `NOT NULL DEFAULT TRUE`.
+ *
+ * @internal — must not be imported from client bundles.
+ */
+
+import "server-only";
+
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+
+import type { CanonicalLocale } from "./onboarding";
+import {
+  buildLabelPresenter,
+  DEFAULT_LOCALE,
+} from "./onboarding-labels";
+
+const SCHEMA = "spabla_v2";
+
+/**
+ * Clave interna fija que la RPC `admin_ensure_personal_workspace`
+ * persiste en `tenants.name` para el personal workspace de cada actor
+ * (contract §9, I-14). NUNCA debe filtrarse al cliente: cuando el
+ * composer detecta esta clave en `tenants.name`, sustituye el valor
+ * por la etiqueta localizada del catálogo server-owned antes de
+ * devolverlo en el payload (§17-bis 8-10 · 15).
+ */
+const PERSONAL_WORKSPACE_INTERNAL_KEY = "workspace.personal.default";
+
+export type BootstrapActor = {
+  readonly actorId: string;
+  readonly email: string;
+};
+
+export type BootstrapMembership = {
+  readonly tenantId: string;
+  readonly tenantName: string;
+  readonly role: string;
+  readonly isActive: boolean;
+};
+
+export type BootstrapConversation = {
+  readonly conversationId: string;
+  readonly tenantId: string;
+  readonly language: string;
+  readonly createdAt: string;
+};
+
+export type BootstrapPayload = {
+  readonly actor: BootstrapActor;
+  readonly memberships: ReadonlyArray<BootstrapMembership>;
+  readonly selectedTenantId: string | null;
+  readonly conversations: ReadonlyArray<BootstrapConversation>;
+  readonly selectedConversationId: string | null;
+  readonly canOperate: boolean;
+};
+
+export type BootstrapDeps = {
+  /**
+   * Authenticated Supabase client (bearing the caller's JWT). RLS
+   * enforces membership visibility.
+   */
+  readonly authenticated: SupabaseClient;
+  /**
+   * Actor identifier extracted from the JWT (`sub`).
+   */
+  readonly actorId: string;
+  /**
+   * Actor email. Resolved from `auth.getUser()` at the handler boundary
+   * so this composer stays a pure query orchestrator.
+   */
+  readonly actorEmail: string;
+  /**
+   * Canonical locale used to project a presentation label for the
+   * personal workspace. Optional so pre-9.3.2-A-Q2-R callers keep
+   * working (they get the `DEFAULT_LOCALE` label). The handler
+   * normalises `Accept-Language` with `normaliseLocaleHint` before
+   * building deps; the client can never inject text through this
+   * channel (contract §17-bis 4-7).
+   */
+  readonly canonicalLocale?: CanonicalLocale;
+};
+
+/**
+ * Runs the two authoritative queries and applies the deterministic
+ * selection rules. Throws on infrastructure failures (caller maps to
+ * `503 unavailable` / `500 internal`).
+ */
+export async function buildBootstrapPayload(
+  deps: BootstrapDeps,
+): Promise<BootstrapPayload> {
+  const rawMemberships = await loadMemberships(deps.authenticated);
+  // 9.3.2-A-Q2-R: sustituir la clave interna `workspace.personal.default`
+  // por la etiqueta localizada del catálogo cerrado server-owned antes
+  // de devolver el payload. Cero cambio en la persistencia; cero
+  // dependencia del cliente para la selección del texto. La clave
+  // sigue existiendo en la base de datos y en las respuestas
+  // server-side sanitizadas — nunca en la superficie pública.
+  const memberships = projectPresentationLabels(rawMemberships, deps.canonicalLocale);
+
+  const active = memberships.filter((m) => m.isActive);
+  const selectedTenantId = active.length > 0 ? active[0].tenantId : null;
+
+  const conversations = selectedTenantId !== null
+    ? await loadConversations(deps.authenticated, selectedTenantId)
+    : [];
+
+  const selectedConversationId = conversations.length > 0
+    ? conversations[0].conversationId
+    : null;
+
+  // 9.3.2-A onboarding contract §11: canOperate no longer requires an
+  // existing conversation. A freshly onboarded actor with an active
+  // membership but zero conversations must be able to enter the chat
+  // and start the first conversation naturally.
+  const canOperate = selectedTenantId !== null;
+
+  return {
+    actor: { actorId: deps.actorId, email: deps.actorEmail },
+    memberships,
+    selectedTenantId,
+    conversations,
+    selectedConversationId,
+    canOperate,
+  };
+}
+
+/**
+ * Reemplaza `tenantName === "workspace.personal.default"` por la
+ * etiqueta localizada del catálogo cerrado server-owned. Cero
+ * modificación de las demás filas (tenants compartidos preservan
+ * su nombre visible tal cual). Cero mutación de la base de datos.
+ *
+ * @internal Cero exposición fuera del composer.
+ */
+function projectPresentationLabels(
+  memberships: ReadonlyArray<BootstrapMembership>,
+  canonicalLocale: CanonicalLocale | undefined,
+): ReadonlyArray<BootstrapMembership> {
+  const locale = canonicalLocale ?? DEFAULT_LOCALE;
+  const presenter = buildLabelPresenter();
+  const personalLabel = presenter.labelFor(locale);
+  return memberships.map((m) =>
+    m.tenantName === PERSONAL_WORKSPACE_INTERNAL_KEY
+      ? { ...m, tenantName: personalLabel }
+      : m,
+  );
+}
+
+async function loadMemberships(
+  client: SupabaseClient,
+): Promise<ReadonlyArray<BootstrapMembership>> {
+  const { data, error } = await client
+    .schema(SCHEMA)
+    .from("tenant_memberships")
+    .select("tenant_id, role, is_active, created_at, tenants ( id, name )")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new BootstrapQueryError("memberships_query_failed");
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const out: BootstrapMembership[] = [];
+  for (const row of rows as ReadonlyArray<Record<string, unknown>>) {
+    if (typeof row.tenant_id !== "string") continue;
+    if (typeof row.role !== "string") continue;
+    if (typeof row.is_active !== "boolean") continue;
+    const tenants = row.tenants as unknown;
+    let tenantName = "";
+    if (tenants !== null && typeof tenants === "object" && !Array.isArray(tenants)) {
+      const name = (tenants as Record<string, unknown>).name;
+      if (typeof name === "string") tenantName = name;
+    }
+    out.push({
+      tenantId: row.tenant_id,
+      tenantName,
+      role: row.role,
+      isActive: row.is_active,
+    });
+  }
+  return out;
+}
+
+async function loadConversations(
+  client: SupabaseClient,
+  tenantId: string,
+): Promise<ReadonlyArray<BootstrapConversation>> {
+  const { data, error } = await client
+    .schema(SCHEMA)
+    .from("conversations")
+    .select("id, tenant_id, language, created_at")
+    .eq("tenant_id", tenantId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw new BootstrapQueryError("conversations_query_failed");
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+  const out: BootstrapConversation[] = [];
+  for (const row of rows as ReadonlyArray<Record<string, unknown>>) {
+    if (typeof row.id !== "string") continue;
+    if (typeof row.tenant_id !== "string") continue;
+    if (typeof row.language !== "string") continue;
+    if (typeof row.created_at !== "string") continue;
+    out.push({
+      conversationId: row.id,
+      tenantId: row.tenant_id,
+      language: row.language,
+      createdAt: row.created_at,
+    });
+  }
+  return out;
+}
+
+export class BootstrapQueryError extends Error {
+  readonly kind: string;
+  constructor(kind: string) {
+    super(kind);
+    this.name = "BootstrapQueryError";
+    this.kind = kind;
+  }
+}
+
+/**
+ * Helper to construct the authenticated Supabase client from a raw JWT.
+ * Kept here so tests can build a client without importing composition
+ * internals. In productive use the route handler calls
+ * `buildRequestScopedPersistence(...)` (composition.ts) or an
+ * equivalent that produces the `authenticated` client under the same
+ * anon env vars.
+ */
+export function buildAuthenticatedClientFromToken(
+  supabaseUrl: string,
+  anonKey: string,
+  jwt: string,
+): SupabaseClient {
+  return createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
+  });
+}
